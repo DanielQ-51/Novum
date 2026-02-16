@@ -18,7 +18,7 @@ __device__ void cosine_pdf(const float4& wo_local, float& pdf)
 }
 
 
-__device__ void cosine_sample_f(curandState& localState, const float4& baseColor, float4& wo, float4& f_val, float& pdf)
+__device__ void cosine_sample_f(cudaRNGState& localState, const float4& baseColor, float4& wo, float4& f_val, float& pdf)
 {
     float u1 = curand_uniform(&localState);
 
@@ -38,7 +38,7 @@ __device__ void cosine_sample_f(curandState& localState, const float4& baseColor
     cosine_pdf(wo, pdf);
 }
 
-__device__ void cosine_emit(curandState& localState, float4& wo, float& pdf)
+__device__ void cosine_emit(cudaRNGState& localState, float4& wo, float& pdf)
 {
     float u1 = curand_uniform(&localState);
 
@@ -157,7 +157,7 @@ __device__ void microfacet_pdf(const float& roughness, const float4& wi, const f
     pdf = (D * h.z) / (denom);
 }
 
-__device__ void microfacet_metal_sample_f(curandState& localState, const float4& eta, const float4& k, float roughness, const float4& wi, 
+__device__ void microfacet_metal_sample_f(cudaRNGState& localState, const float4& eta, const float4& k, float roughness, const float4& wi, 
     float4& wo, float4& f_val, float& pdf)
 {
     float u1 = curand_uniform(&localState);
@@ -217,7 +217,7 @@ __device__ void smooth_dielectric_f(
 // -----------------------------------------------------------------------------
 // SAMPLE_F (importance sample the reflection/refract direction)
 // -----------------------------------------------------------------------------
-__device__ void smooth_dielectric_sample_f(curandState& localState,
+__device__ void smooth_dielectric_sample_f(cudaRNGState& localState,
     const float4& wi, float etaI, float etaT, float4& wo, float4& f_val, float& pdf)
 {
     float cosThetaI = wi.z; // always pos
@@ -301,7 +301,7 @@ __device__ void smooth_dielectric_pdf(
     }
 }
 // wi is always point away from the surface on the positive z hemisphere. since we flipped the intersect normal if it was a backface before converting to local
-__device__ void dumb_smooth_dielectric_sample_f(curandState& localState,
+__device__ void dumb_smooth_dielectric_sample_f(cudaRNGState& localState,
     const float4& wi, float etaSurface, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     float etaI, etaT;
@@ -367,7 +367,7 @@ __device__ void dumb_smooth_dielectric_sample_f(curandState& localState,
         }
     }
 }
-__device__ void thin_dielectric_sample_f(curandState& localState,
+__device__ void thin_dielectric_sample_f(cudaRNGState& localState,
     const float4& wi, float etaSurface, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     // 1. Setup IOR
@@ -556,7 +556,7 @@ __device__ void leaf_pdf(float ior, float currIOR, float roughness, float transm
     }
 }
 
-__device__ void leaf_sample_f(curandState& localState, const float4& wi, float ior, float currIOR, float roughness, const float4& albedo, float transmission, float4& wo, float4& f_val, float& pdf)
+__device__ void leaf_sample_f(cudaRNGState& localState, const float4& wi, float ior, float currIOR, float roughness, const float4& albedo, float transmission, float4& wo, float4& f_val, float& pdf)
 {
     float F = schlick_fresnel(wi.z, currIOR, ior);
 
@@ -695,7 +695,7 @@ __device__ void microfacet_dielectric_pdf(
     }
 }
 
-__device__ void microfacet_dielectric_sample_f(curandState& localState,
+__device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
     const float4& wi, float etaSurface, float roughness, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     float etaI, etaT;
@@ -819,7 +819,7 @@ __device__ void f_eval(const Material* materials, int materialID, float4* textur
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void sample_f_eval(curandState& localState, const Material* materials, int materialID, float4* textures, 
+__device__ void sample_f_eval(cudaRNGState& localState, const Material* materials, int materialID, float4* textures, 
     const float4& wi, float etaI, float etaT, bool backface, float4& wo, float4& f_val, float& pdf, const float2 uv, 
     int transportMode = TRANSPORTMODE_RADIANCE)
 {

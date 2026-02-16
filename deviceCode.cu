@@ -36,7 +36,7 @@ __host__ void updateConstants(RenderConfig& config)
     return;
 }
 
-__global__ void initRNG(curandState* states, int width, int height, unsigned long seed)
+__global__ void initRNG(cudaRNGState* states, int width, int height, unsigned long seed)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -70,7 +70,7 @@ __device__ void neePDF(Vertices* vertices, Triangle* scene, int lightNum, int li
     light_pdf = distanceSQR / (cosThetaLight * lightNum * area);
 }
 
-__device__ void nextEventEstimation(curandState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
+__device__ void nextEventEstimation(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
     Triangle* scene, Triangle* lights, int lightNum, const Intersection& intersect, const float4& wo, 
     float& light_pdf, float4& contribution, float4& surfaceToLight_local, float etaI, float etaT)
 {
@@ -141,7 +141,7 @@ __device__ void nextEventEstimation(curandState& localState, Material* materials
     }
 }
 
-__global__ void Li_naive_unidirectional (curandState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
+__global__ void Li_naive_unidirectional (cudaRNGState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
     Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -150,7 +150,7 @@ __global__ void Li_naive_unidirectional (curandState* rngStates, Camera camera, 
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
 
     Ray r = camera.generateCameraRay(localState, x, y);
     float4 Li = f4();
@@ -195,8 +195,8 @@ __host__ void launch_naive_unidirectional(int maxDepth, Camera camera, Material*
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
-    curandState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(curandState));
+    cudaRNGState* d_rngStates;
+    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
     unsigned long seed = 103033UL;
     initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
@@ -268,7 +268,7 @@ __host__ void launch_naive_unidirectional(int maxDepth, Camera camera, Material*
         std::cout << "Render executed with no CUDA error" << std::endl;
 }
 
-__global__ void Li_unidirectional (curandState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
+__global__ void Li_unidirectional (cudaRNGState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
     Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -277,7 +277,7 @@ __global__ void Li_unidirectional (curandState* rngStates, Camera camera, Materi
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
     Ray r = Ray();
     float4 beta = f4(1.0f, 1.0f, 1.0f);
     float4 Li = f4();
@@ -532,8 +532,8 @@ __host__ void launch_unidirectional(int maxDepth, Camera camera, Material* mater
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
-    curandState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(curandState));
+    cudaRNGState* d_rngStates;
+    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
     unsigned long seed = 103033UL;
     initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
@@ -605,7 +605,7 @@ __host__ void launch_unidirectional(int maxDepth, Camera camera, Material* mater
         std::cout << "Render executed with no CUDA error" << std::endl;
 }
 
-__device__ bool BDPTnextEventEstimation(curandState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
+__device__ bool BDPTnextEventEstimation(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
     Triangle* scene, Triangle* lights, int lightNum, int materialID, float4 shadingPos, const float4 toShadingPos_local, const float4 shadingPos_normal,
     const float2 uv, float& light_pdf, float4& contribution, float4& shadingPos_to_lightPos, int& lightInd, float& cosLight, float& pdf_emit, 
     float etaI, float etaT, float sceneRadius)
@@ -734,7 +734,7 @@ __device__ bool BDPTnextEventEstimation(curandState& localState, Material* mater
 }
 
 // populates the section of eyePath buffer specified by the arguments. Also asigns the length of the path
-__device__ void generateEyePath(curandState& localState, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
+__device__ void generateEyePath(cudaRNGState& localState, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
     Triangle* lights, int lightNum, int w, int h, int x, int y, float sceneRadius, PathVertices* eyePath, int& pathLength) 
 {
     pathLength = 1;
@@ -939,7 +939,7 @@ __device__ void generateEyePath(curandState& localState, Camera camera, Material
     }
 }
 
-__device__ void generateFirstLightPathVertex(curandState& localState, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
+__device__ void generateFirstLightPathVertex(cudaRNGState& localState, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
     Triangle* lights, int lightNum, int w, int h, int x, int y, float4 sceneCenter, float sceneRadius, PathVertices* lightPath, float& pdf_solidAngle, float& cosine, float4& out_wi) 
 {
     int firstIdx = pathBufferIdx(w, h, x, y, 0);
@@ -1065,7 +1065,7 @@ __device__ void generateFirstLightPathVertex(curandState& localState, int maxDep
     }
 }
 
-__device__ void generateLightPath(curandState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
+__device__ void generateLightPath(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
     Triangle* lights, int lightNum, int w, int h, int x, int y, float4 sceneCenter, float sceneRadius, PathVertices* lightPath, int& pathLength) 
 {
     pathLength = 1;
@@ -1276,7 +1276,7 @@ __device__ void generateLightPath(curandState& localState, Material* materials, 
 }
 
 // performs the randomwalk from a sampled light, and takes care of the vertex connection sttage where light is made to directly hit the camera lense.
-__global__ void lightPathTracing (curandState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
+__global__ void lightPathTracing (cudaRNGState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
     int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4* colors, float4* overlay) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1285,7 +1285,7 @@ __global__ void lightPathTracing (curandState* rngStates, Camera camera, PathVer
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
 
     int lightPathLength;
     generateLightPath(localState, materials, textures, BVH, BVHindices, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, sceneCenter, sceneRadius, lightPath, lightPathLength);
@@ -1431,7 +1431,7 @@ __global__ void lightPathTracing (curandState* rngStates, Camera camera, PathVer
  Therefore, we must always complete the partial mis weight by applying a recursive ratio corresponding
  to the reverse/fwd pdf of vi, in addition to any other terms representing other strategies.
  */
-__device__ bool connectPath(curandState& localState, int t, int s, int x, int y, int w, int h, Camera camera, int maxEyeDepth, int maxLightDepth, Material* materials, BVHnode* BVH, int* BVHindices, Vertices* vertices, 
+__device__ bool connectPath(cudaRNGState& localState, int t, int s, int x, int y, int w, int h, Camera camera, int maxEyeDepth, int maxLightDepth, Material* materials, BVHnode* BVH, int* BVHindices, Vertices* vertices, 
     Triangle* scene, Triangle* lights, int lightNum, float4* textures, float sceneRadius, int eyePathLength, int lightPathLength, PathVertices* eyePath, PathVertices* lightPath, float4& contribution, float& misWeight)
 {
     int eyePathIDX = pathBufferIdx(w, h, x, y, t - 1);
@@ -1754,7 +1754,7 @@ __device__ bool connectPath(curandState& localState, int t, int s, int x, int y,
 }
 
 
-__global__ void Li_bidirectional(curandState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
+__global__ void Li_bidirectional(cudaRNGState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
     int eyeDepth, int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4* colors, float4* overlay) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1763,7 +1763,7 @@ __global__ void Li_bidirectional(curandState* rngStates, Camera camera, PathVert
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
     
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
 
     int eyePathLength = 0; // measures number of pathvertices, not segments
     int lightPathLength = lightPathLengths[pixelIdx]; // measures number of pathvertices, not segments
@@ -1815,8 +1815,8 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
     cudaStreamCreate(&stream);
 
     // RNG Setup
-    curandState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(curandState));
+    cudaRNGState* d_rngStates;
+    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
     unsigned long seed = 103033UL;
     initRNG<<<gridSize, blockSize, 0, stream>>>(d_rngStates, w, h, seed);
     
@@ -1944,7 +1944,7 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
     }
 }
 
-__device__ void generateVCMLightPath(curandState& localState, int x, int y, int w, int h, VCMPathVertices lightPath, Photons photons, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
+__device__ void generateVCMLightPath(cudaRNGState& localState, int x, int y, int w, int h, VCMPathVertices lightPath, Photons photons, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
     int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, float4 sceneCenter, float sceneRadius, 
     float mergeRadius, float4* overlay, int& pathLength, int* globalPhotonIndex)
 {
@@ -2175,26 +2175,27 @@ __device__ void generateVCMLightPath(curandState& localState, int x, int y, int 
         // Save Data. We use set functions because the light path struct is highly optimized for memory footprint and contains a ton of shenanigans
         //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+
+        // light path data (for connections)
+
+        setPos(lightPath, currIdx, currPos);
+        setNormal(lightPath, currIdx, currNormal);
+        setWo(lightPath, currIdx, currWo);
+        setBeta(lightPath, currIdx, currBeta);
+        setUV(lightPath, currIdx, currUV);
+
+        // the boolean flags and light index and material IDs are all packed into one uint. -2 is a flag to say no light
+        setAllInfo(lightPath, currIdx, currDelta, currBackface, -2, currMatID);
+
+        setD_vcm(lightPath, currIdx, curr_d_vcm);
+        setD_vc(lightPath, currIdx, curr_d_vc);
+        //setD_vm(lightPath, currIdx, curr_d_vm);
+
+        // photon data (for merging)
         if (!currDelta)
         {
-            // light path data (for connections)
-
-            setPos(lightPath, currIdx, currPos);
-            setNormal(lightPath, currIdx, currNormal);
-            setWo(lightPath, currIdx, currWo);
-            setBeta(lightPath, currIdx, currBeta);
-            setUV(lightPath, currIdx, currUV);
-
-            // the boolean flags and light index and material IDs are all packed into one uint. -2 is a flag to say no light
-            setAllInfo(lightPath, currIdx, currDelta, currBackface, -2, currMatID);
-
-            setD_vcm(lightPath, currIdx, curr_d_vcm);
-            setD_vc(lightPath, currIdx, curr_d_vc);
-            //setD_vm(lightPath, currIdx, curr_d_vm);
-
-            // photon data (for merging)
             int photonInd = atomicAdd(globalPhotonIndex, 1);
-        
+    
             if (photonInd < w * h * maxDepth)
             {
                 setPos(photons, photonInd, currPos);
@@ -2207,8 +2208,7 @@ __device__ void generateVCMLightPath(curandState& localState, int x, int y, int 
                 setD_vm(photons, photonInd, curr_d_vm);
             }
         }
-        else 
-            --depth; // avoid saving useless photons/light path vertices
+        
         
         
         //---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2226,7 +2226,7 @@ __device__ void generateVCMLightPath(curandState& localState, int x, int y, int 
     }
 }
 
-__global__ void doLightPass(curandState* rngStates, Camera camera, VCMPathVertices lightPath, Photons photons, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
+__global__ void doLightPass(cudaRNGState* rngStates, Camera camera, VCMPathVertices lightPath, Photons photons, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
     int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int w, int h, float4 sceneCenter, float sceneRadius, 
     float mergeRadius, float4* colors, float4* overlay, int* globalPhotonIndex) 
 {
@@ -2236,7 +2236,7 @@ __global__ void doLightPass(curandState* rngStates, Camera camera, VCMPathVertic
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
 
     int lightPathLength;
     generateVCMLightPath(localState, x, y, w, h, lightPath, photons, materials, textures, BVH, BVHindices, lightDepth, 
@@ -2434,7 +2434,7 @@ __device__ __noinline__ bool connectImplicitHit(
 }
 
 __device__ __noinline__ bool connectNEE(
-    curandState& localState,
+    cudaRNGState& localState,
     float4 eyePos,
     float4 eyeNorm,
     float4 eyethroughput,
@@ -2522,7 +2522,7 @@ __device__ __noinline__ bool connectNEE(
 
 // assumes that both surfaces are not delta
 __device__ __noinline__ bool connectGeneral(
-    curandState& localState,
+    cudaRNGState& localState,
     float4 eyePos,
     float4 eyeNorm,
     float4 eyeThroughput,
@@ -2660,7 +2660,7 @@ __device__ __noinline__ bool connectGeneral(
     return true;
 }
 
-__global__ void doEyePass(curandState* rngStates, Camera camera, VCMPathVertices lightPath, int* lightPathLengths, Photons photons_sorted, unsigned int* cell_start, unsigned int* cell_end, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
+__global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertices lightPath, int* lightPathLengths, Photons photons_sorted, unsigned int* cell_start, unsigned int* cell_end, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
     int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int w, int h, float4 sceneCenter, float sceneRadius, float4 sceneMin, int hashTableSize,
     float mergeRadius, float4* colors, float4* overlay, int photonCount)
 {
@@ -2670,7 +2670,7 @@ __global__ void doEyePass(curandState* rngStates, Camera camera, VCMPathVertices
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    curandState localState = rngStates[pixelIdx];
+    cudaRNGState localState = rngStates[pixelIdx];
 
     float eta_vcm = (float)(w * h) * PI * mergeRadius * mergeRadius;
 
@@ -3281,8 +3281,8 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
-    curandState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(curandState));
+    cudaRNGState* d_rngStates;
+    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
     unsigned long seed = 103033UL;
     initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
@@ -3370,6 +3370,8 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
         
         int photonCount;
         cudaMemcpy(&photonCount, d_global_photon_counter, sizeof(int), cudaMemcpyDeviceToHost);
+
+        //printf("photons: %d\n", photonCount);
 
         buildHashGrid(
             *photons, 

@@ -265,7 +265,7 @@ struct Camera
 
 
     // returns a camera ray with normalized direction
-    __device__ Ray generateCameraRay(curandState& localState, int x, int y)
+    __device__ Ray generateCameraRay(cudaRNGState& localState, int x, int y)
     {
         Ray r;
         float aspect = (float)w / (float)h;

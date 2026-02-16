@@ -34,6 +34,8 @@ __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
 constexpr bool DO_PROGRESSIVERENDER = true;
 
+typedef curandStatePhilox4_32_10_t cudaRNGState;
+
 inline __host__ __device__ __forceinline__ float4 f4(float x, float y, float z, float w = 0.0f) {
     return make_float4(x, y, z, w);
 }
@@ -265,7 +267,7 @@ __host__ __device__ __forceinline__ float4 rotateZ(const float4& v, float angle)
     );
 }
 
-__device__ __forceinline__ float4 sampleSphere(curandState& localState, float R)
+__device__ __forceinline__ float4 sampleSphere(cudaRNGState& localState, float R)
 {
     float u = curand_uniform(&localState);
     float v = curand_uniform(&localState);

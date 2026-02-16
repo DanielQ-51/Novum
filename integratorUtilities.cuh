@@ -442,7 +442,7 @@ __device__ inline float4 sampleSky(float4 direction)
 
     //float4 c_horizon = 2.2f* f4(1.0f, 0.8f, 0.2f);
     //float4 c_zenith  = f4(0.4f, 0.4f, 0.8f);
-    float4 c_horizon = 1.0f * f4(1.0f, 0.4f, 0.2f);
+    float4 c_horizon = 3.0f * f4(0.8f, 0.8f, 0.7f);
     //float4 c_horizon = 1.0f * f4(1.0f, 1.0f, 0.2f);
     float4 c_zenith  = f4(0.3f, 0.4f, 0.8f);
     //float4 c_zenith  = f4(0.9f, 0.9f, 0.2f);

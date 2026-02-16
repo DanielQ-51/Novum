@@ -232,7 +232,7 @@ int buildBVH(vector<BVHnode>& nodes, vector<int>& indices, vector<float4>& centr
     return nodeIndex;
 }
 
-int initRender(string configPath, int renderNumber)
+int initRender(string configPath, int renderNumber, string animatedObjPath = "invalid")
 {
     RenderConfig config;
     loadConfig(configPath, config);
@@ -372,6 +372,8 @@ int initRender(string configPath, int renderNumber)
     images.push_back(loadBMPToImage("textures/enkiduchibitexture.bmp", false));
     images.push_back(loadBMPToImage("textures/leaftex2.bmp", false));
     images.push_back(loadBMPToImage("textures/leafautumn.bmp", false));
+    images.push_back(loadBMPToImage("textures/wood.bmp", false));
+    images.push_back(loadBMPToImage("textures/wall.bmp", false));
 
     for (Image i : images)
     {
@@ -394,11 +396,14 @@ int initRender(string configPath, int renderNumber)
     // Creating Materials
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+    Material wood = Material::Leaf(startIndices[4], widths[4], heights[4], 1.5f, 0.3f, f4(), 0.00f);
+    Material wall = Material::DiffuseTextured(startIndices[5], widths[5], heights[5]);
     Material lambertTextured = Material::DiffuseTextured(startIndices[0], widths[0], heights[0]);
     Material lambert2Textured = Material::DiffuseTextured(startIndices[1], widths[1], heights[1]);
 
     Material lambertBlue = Material::Diffuse(f4(0.4f,0.4f,0.8f));
     Material lambertGrey = Material::Diffuse(f4(0.8f,0.8f,0.8f));
+    Material lambertGreyBlue = Material::Diffuse(f4(0.6f,0.6f,0.7f));
     Material lambertWhite = Material::Diffuse(f4(0.9f,0.9f,0.9f));
     Material lambertGreen = Material::Diffuse(f4(0.2f,0.6f,0.6f));
     Material lambertRed = Material::Diffuse(f4(0.90f,0.1f,0.1f));
@@ -415,9 +420,14 @@ int initRender(string configPath, int renderNumber)
     float4 k_gold   = f4(3.1f, 2.7f, 1.9f);   // imaginary part, absorption
     float roughness_polished = 0.05f;  
     float roughness_rough = 0.15f;  
+    float roughness_rougher = 0.35f;  
 
     Material gold = Material::Metal(eta_gold, eta_gold, roughness_polished);
+    Material gold15 = Material::Metal(eta_gold, eta_gold, roughness_rough);
     Material steel = Material::Metal(eta_steel, eta_steel, roughness_rough);
+    Material steelSmooth = Material::Metal(eta_steel, eta_steel, roughness_polished);
+    Material steel25 = Material::Metal(eta_steel, eta_steel, 0.25f);
+    Material roughSteel = Material::Metal(eta_steel, eta_steel, roughness_rougher);
 
     float ior = 1.5f;
 
@@ -439,6 +449,7 @@ int initRender(string configPath, int renderNumber)
     Material sky = Material::Diffuse(f4(0.4f, 0.4f, 1.00f));
 
     Material mirror = Material::Mirror();
+    Material thinGlass = Material::ThinDielectric(1.5f);
 
     mats.push_back(air); // index 0
 
@@ -465,6 +476,14 @@ int initRender(string configPath, int renderNumber)
     mats.push_back(lambert95); // index 21
     mats.push_back(lambert50); // index 22
     mats.push_back(lambertVeryGreen); // index 23
+    mats.push_back(wood); // index 24
+    mats.push_back(lambertGreyBlue); // index 25
+    mats.push_back(wall); // index 26
+    mats.push_back(roughSteel); // index 27
+    mats.push_back(thinGlass); // index 28
+    mats.push_back(steelSmooth); // index 29
+    mats.push_back(steel25); // index 30
+    mats.push_back(gold15); // index 31
 
     Material* mats_d;
 
@@ -473,12 +492,18 @@ int initRender(string configPath, int renderNumber)
 
     for (MeshConfig c : config.meshes)
     {
-        if (lengthSquared(c.emissionColor) > 0.0f)
-            readObjSimple(c.path, points, normals, colors, uvs, mesh, lightsvec, f4(), 
-                c.emissionMultiplier * c.emissionColor, c.materialID, f4(0.0f, -0.01f * renderNumber, 0.0f));
-        else
+        //if (lengthSquared(c.emissionColor) > 0.0f)
+        //    readObjSimple(c.path, points, normals, colors, uvs, mesh, lightsvec, f4(), 
+        //        c.emissionMultiplier * c.emissionColor, c.materialID, f4(0.0f, -0.01f * renderNumber, 0.0f));
+        //else
             readObjSimple(c.path, points, normals, colors, uvs, mesh, lightsvec, f4(), 
                 c.emissionMultiplier * c.emissionColor, c.materialID);
+    }
+
+    if (false && animatedObjPath != "invalid" && config.name == "watersim")
+    {
+        readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, f4(), 
+                f4(), 10);
     }
 
     Vertices* verts;
@@ -903,7 +928,9 @@ int initRender(string configPath, int renderNumber)
     delete[] host_colors;
     delete[] host_overlay;
 
-    std::string filename = "renders/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
+    std::string filename = "renders/wateranim3/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
+    image.saveImageBMP(filename);
+    filename = "render.bmp";
     image.saveImageBMP(filename);
     image.saveImageCSV_MONO(0);
 
@@ -924,9 +951,17 @@ int initRender(string configPath, int renderNumber)
 
 int main ()
 {
-    string configName = "configs/config.rendertron";
-    for (int i = 0; i < 75; i++)
-        initRender(configName, i);
+    string configName = "configs/lightbulbinterreflect.rendertron";
+    //for (int i = 0; i <= 150; i++)
+    //    initRender(configName, i);
+
+    initRender(configName, 0); 
+
+    for (int i = 125; i <= 250; ++i) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "scenedata/watersim/tenbillionobj/wateranim%04d.obj", i);
+        initRender(configName, i, buf); 
+    }
 
     cout << "All Renders Finished" << endl;
     return 0;
@@ -939,7 +974,7 @@ void readObjSimple(string filename, vector<float4>& points, vector<float4>& norm
     std::ifstream file(filename);
 
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open OBJ file\n";
+        std::cerr << "Error: Could not open OBJ file with path " << filename << endl;;
         return;
     }
     int startIndex = points.size();
@@ -982,7 +1017,7 @@ void readObjSimple(string filename, vector<float4>& points, vector<float4>& norm
             }
             float4 n = make_float4((float)x, (float)y, (float)z, 0.0f);
     
-            float lenSq = n.x*n.x + n.y*n.y + n.z*n.z;
+            float lenSq = lengthSquared(n);
             if (lenSq < 1e-12f) {
                 n = make_float4(0.0f, 1.0f, 0.0f, 0.0f);
             }

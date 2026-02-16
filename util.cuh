@@ -25,10 +25,12 @@
 #include <sstream>
 
 __device__ __constant__ float EPSILON = 0.00001f;
-__device__ __constant__ float RAY_EPSILON = 0.001f;
+__device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 5.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 15.0f;
+__device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 5.0f;
+__device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
 constexpr bool DO_PROGRESSIVERENDER = true;
 
@@ -218,7 +220,6 @@ inline __host__ __device__ __forceinline__ void setFloat4Component(float4 &v, in
         case 1: v.y = value; break;
         case 2: v.z = value; break;
         case 3: v.w = value; break;
-        // optionally handle invalid index
     }
 }
 
@@ -377,6 +378,78 @@ __device__ __forceinline__ float4 unpackOct(uint32_t p) {
     float y = fmaxf(-1.0f, packedY / 32767.0f);
 
     // 3. Map back to Sphere
+    float3 v;
+    v.x = x;
+    v.y = y;
+    v.z = 1.0f - (fabsf(x) + fabsf(y));
+
+    float t = fmaxf(-v.z, 0.0f);
+    v.x += (v.x >= 0.0f) ? -t : t;
+    v.y += (v.y >= 0.0f) ? -t : t;
+
+    float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
+}
+
+__device__ __forceinline__ uint32_t packOctFlags(float4 v, bool flag1, bool flag2)
+{
+    // 1. Octahedral Projection
+    float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
+    float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
+
+    float2 res;
+    res.x = v.x * invL1;
+    res.y = v.y * invL1;
+
+    // 2. Reflect folds if in lower hemisphere
+    if (v.z < 0.0f) {
+        float tempX = res.x;
+        float tempY = res.y;
+        res.x = (1.0f - fabsf(tempY)) * signNotZero(tempX);
+        res.y = (1.0f - fabsf(tempX)) * signNotZero(tempY);
+    }
+
+    // 3. SNORM Quantization (15-bit)
+    // Map [-1, 1] -> [-16383, 16383]
+    // We use 16383.0f because that is the max value for a signed 15-bit integer (2^14 - 1).
+    int32_t x = __float2int_rn(fminf(fmaxf(res.x, -1.0f), 1.0f) * 16383.0f);
+    int32_t y = __float2int_rn(fminf(fmaxf(res.y, -1.0f), 1.0f) * 16383.0f);
+
+    // 4. Bit Packing
+    // Mask x and y to ensure they fit in 15 bits (0x7FFF), then shift.
+    uint32_t packedX = (uint32_t)(x & 0x7FFF);
+    uint32_t packedY = (uint32_t)(y & 0x7FFF);
+    
+    // Shift flags to positions 30 and 31
+    uint32_t packedF1 = (uint32_t)flag1 << 30;
+    uint32_t packedF2 = (uint32_t)flag2 << 31;
+
+    return packedX | (packedY << 15) | packedF1 | packedF2;
+}
+
+/**
+ * Unpacks the 3D vector and writes the flags to the provided pointers.
+ */
+__device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* flag2) {
+    // 1. Extract Flags
+    if (flag1) *flag1 = (p >> 30) & 1;
+    if (flag2) *flag2 = (p >> 31) & 1;
+
+    // 2. Unpack SNORMs with Sign Extension
+    // We need to interpret the 15-bit values as signed integers.
+    // The "Shift Left then Shift Right" trick propagates the sign bit.
+    
+    // X is bottom 15 bits. Shift left 17 (32-15), then arithmetic shift right 17.
+    int32_t packedX = ((int32_t)(p << 17)) >> 17;
+    
+    // Y is bits 15-29. Shift left 2 (remove flags), then arithmetic shift right 17 (remove X).
+    int32_t packedY = ((int32_t)(p << 2)) >> 17;
+
+    // 3. Convert back to float [-1, 1]
+    float x = fmaxf(-1.0f, packedX / 16383.0f);
+    float y = fmaxf(-1.0f, packedY / 16383.0f);
+
+    // 4. Map back to Sphere (Standard Octahedral Decode)
     float3 v;
     v.x = x;
     v.y = y;

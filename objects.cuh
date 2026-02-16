@@ -288,14 +288,42 @@ struct Camera
         
         if (aperture > 0.0f)
         {
-            float r_rnd = curand_uniform(&localState); 
-            float theta = 2.0f * 3.141592f * curand_uniform(&localState);
-            
-            float radius = aperture * sqrtf(r_rnd);
-            float lensU = radius * cosf(theta);
-            float lensV = radius * sinf(theta);
+            // --- CONFIGURATION ---
+            int blades = 6;             // 6 = Hexagon, 5 = Pentagon, etc.
+            float rotation = 0.0f;      // Rotate the bokeh shape (in radians)
+            // ---------------------
 
-            // Use precomputed right/up vectors! 
+            float r1 = curand_uniform(&localState); 
+            float r2 = curand_uniform(&localState);
+
+            // 1. Pick which "slice" (blade) of the aperture we are in
+            float bladeIdx = floorf(r1 * (float)blades);
+            
+            // 2. Map r1 to the range [0, 1] within that specific slice
+            // This effectively re-uses the random number to save a generator call
+            float r1_local = r1 * (float)blades - bladeIdx;
+
+            // 3. Calculate the angles for the two vertices of this triangle slice
+            float twoPi = 6.283185f;
+            float theta1 = ((bladeIdx) / (float)blades) * twoPi + rotation;
+            float theta2 = ((bladeIdx + 1.0f) / (float)blades) * twoPi + rotation;
+
+            // 4. Calculate the vertex positions on the aperture rim
+            // We use aperture radius as the scale
+            float2 v1 = make_float2(cosf(theta1), sinf(theta1));
+            float2 v2 = make_float2(cosf(theta2), sinf(theta2));
+
+            // 5. Uniformly sample the triangle defined by Center(0,0), V1, V2
+            // sqrtf(r2) ensures we sample area uniformly (less density near center)
+            float radiusScale = aperture * sqrtf(r2);
+            
+            // Linear interpolation between the two rim vertices
+            float2 p = (v1 * (1.0f - r1_local) + v2 * r1_local) * radiusScale;
+
+            float lensU = p.x;
+            float lensV = p.y;
+
+            // Apply to camera basis vectors
             lensOffset = (right * lensU) + (up * lensV);
         }
 
@@ -599,7 +627,8 @@ enum MaterialType {
     MAT_MICROFACETDIELECTRIC = 3,
     MAT_LEAF = 4,
     MAT_FLOWER = 5,
-    MAT_DELTAMIRROR = 6
+    MAT_DELTAMIRROR = 6,
+    MAT_THINDIELECTRIC = 7
 };
 
 struct Material
@@ -695,6 +724,23 @@ struct Material
     __host__ static Material SmoothDielectric(float ior = 1.5f, const float4& k = f4(), int pri = 0) {
         Material m;
         m.type = MAT_SMOOTHDIELECTRIC;
+        m.hasTexture = false;
+
+        m.ior = ior;
+        m.albedo = f4(1.0f);
+
+        m.priority = pri;
+        m.isSpecular = true;
+        m.boundary = true;
+
+        m.absorption = k;
+        m.thinWalled = false;
+        return m;
+    }
+
+    __host__ static Material ThinDielectric(float ior = 1.5f, const float4& k = f4(), int pri = 0) {
+        Material m;
+        m.type = MAT_THINDIELECTRIC;
         m.hasTexture = false;
 
         m.ior = ior;
@@ -1190,12 +1236,12 @@ __device__ __forceinline__ void setPos(Photons& ps, int idx, float4 p)
     ps.pos_z[idx] = p.z;
 }
 
-__device__ __forceinline__ float4 getNormal(const Photons& x, int idx) {
-    return unpackOct(x.packedNormal[idx]);
+__device__ __forceinline__ void getNormalInfo(const Photons& x, int idx, float4& normal, bool& backface) {
+    normal = unpackOctFlags(x.packedNormal[idx], &backface, nullptr);
 }
 
-__device__ __forceinline__ void setNormal(Photons& x, int idx, float4 n) {
-    x.packedNormal[idx] = packOct(n);
+__device__ __forceinline__ void setNormalInfo(Photons& x, int idx, float4 n, bool backface) {
+    x.packedNormal[idx] = packOctFlags(n, backface, false);
 }
 
 __device__ __forceinline__ float4 getWi(const Photons& x, int idx) {

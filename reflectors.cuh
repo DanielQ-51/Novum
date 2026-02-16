@@ -367,6 +367,59 @@ __device__ void dumb_smooth_dielectric_sample_f(curandState& localState,
         }
     }
 }
+__device__ void thin_dielectric_sample_f(curandState& localState,
+    const float4& wi, float etaSurface, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
+{
+    // 1. Setup IOR
+    // A thin wall is effectively a sheet suspended in air (1.0).
+    // The interaction "Air -> Material -> Air" is symmetric, so we don't swap 
+    // IORs based on backface. We always calculate F for Air(1.0) hitting Surface(eta).
+    float etaI = 1.0f;
+    float etaT = etaSurface;
+
+    float cosThetaI = fminf(fmaxf(wi.z, EPSILON), 1.0f);
+
+    // 2. Calculate Single-Interface Fresnel
+    float F_single = schlick_fresnel(cosThetaI, etaI, etaT);
+
+    // 3. Adjust for Thin-Walled "Double Reflection"
+    // F_thin accounts for the infinite series of internal bounces 
+    // (front reflection + transmitted-then-back-reflected light).
+    // Formula: R = 2F / (1 + F)
+    float F = (2.0f * F_single) / (1.0f + F_single);
+
+    // 4. Sample
+    if (curand_uniform(&localState) < F) 
+    {
+        // --- REFLECTION ---
+        // Standard reflection vector
+        wo = f4(-wi.x, -wi.y, wi.z);
+        
+        float cosThetaO = wo.z; 
+        
+        pdf = F;
+        
+        // BSDF = F * (1 / |cosTheta|)
+        f_val = f4(F / fmaxf(cosThetaO, EPSILON));
+    } 
+    else 
+    {
+        // --- TRANSMISSION ---
+        // Pass straight through (wo = -wi).
+        // No refraction bending.
+        wo = f4(-wi.x, -wi.y, -wi.z);
+
+        float cosThetaO = wo.z; 
+
+        pdf = 1.0f - F;
+
+        // BSDF = (1-F) * (1 / |cosTheta|)
+        // Note: No 'eta * eta' scaling because the ray starts and ends 
+        // in the same medium (Air), so radiance is conserved naturally.
+        float denom = fmaxf(fabsf(cosThetaO), EPSILON);
+        f_val = f4((1.0f - F) / denom);
+    }
+}
 
 __device__ void sampleTexture(const Material& mat, float4* textures, const float2 uv, float4& albedo)
 {
@@ -441,8 +494,6 @@ __device__ void leaf_f(const float4& albedo, float ior, float currIOR, float rou
         float G = G_Smith(wi, wo, h, alpha);
 
         float4 f_cuticle = f4(D * G * microfacet_F / fmaxf(4.0f * nDotWi * nDotWo, EPSILON));
-
-        //if (D * G * microfacet_F < 0.0f) printf("negative numerator");
 
         if (microfacet_F < 0.0f) printf("negative microfacetF");
 
@@ -542,6 +593,185 @@ __device__ void leaf_sample_f(curandState& localState, const float4& wi, float i
     leaf_pdf(ior, currIOR, roughness, transmission, wi, wo, pdf);
 }
 
+__device__ void microfacet_dielectric_f(
+    float etaI, float etaT, float roughness, 
+    const float4& wi, const float4& wo, float4& f_val)
+{
+    // Determine if this is reflection or transmission based on hemispheres
+    bool is_reflection = wo.z * wi.z > 0.0f;
+    
+    float cosThetaWi = wi.z;
+    float cosThetaWo = wo.z;
+    float alpha = roughness * roughness;
+
+    if (is_reflection) 
+    {
+        // Reflection: Half vector is standard half-angle
+        float4 h = normalize(wi + wo);
+        if (h.z <= 0.0f) h = -h; // Ensure h points into upper hemisphere
+
+        // Calculate D, G, F
+        float D = D_GGX(h, alpha);
+        float G = G_Smith(wi, wo, h, alpha);
+        
+        // Fresnel term (using dot(wi, h))
+        float F = schlick_fresnel(dot(wi, h), etaI, etaT);
+
+        // Microfacet Reflection Formula
+        // f_r = (D * G * F) / (4 * cosThetaWi * cosThetaWo)
+        float denom = 4.0f * fabsf(cosThetaWi * cosThetaWo);
+        f_val = f4((D * G * F) / fmaxf(denom, EPSILON));
+    }
+    else 
+    {
+        // Transmission: Half vector depends on IOR
+        // Walter et al. 2007 Eq. 16
+        // h = - normalize(etaI * wi + etaT * wo)
+        float4 h = normalize(etaI * wi + etaT * wo);
+        if (h.z < 0.0f) h = -h; // Flip to align with normal
+
+        float D = D_GGX(h, alpha);
+        float G = G_Smith(wi, wo, h, alpha);
+        float F = schlick_fresnel(dot(wi, h), etaI, etaT);
+
+        float wiDotH = dot(wi, h);
+        float woDotH = dot(wo, h);
+
+        // Microfacet Transmission Formula
+        // f_t = ( |wi.h| * |wo.h| * etaT^2 * D * G * (1-F) ) / ( |wi.n| * |wo.n| * (etaI * wi.h + etaT * wo.h)^2 )
+        
+        float sqrtDenom = etaI * wiDotH + etaT * woDotH;
+        float denom = fmaxf(fabsf(cosThetaWi * cosThetaWo), EPSILON) * sqrtDenom * sqrtDenom;
+        
+        // Note: We include etaT^2 here as per standard derivation, 
+        // but see sample_f for final adjoint/transport handling.
+        float num = fabsf(wiDotH * woDotH) * (etaT * etaT) * D * G * (1.0f - F);
+        
+        f_val = f4(num / fmaxf(denom, EPSILON));
+    }
+}
+
+__device__ void microfacet_dielectric_pdf(
+    float etaI, float etaT, float roughness, 
+    const float4& wi, const float4& wo, float& pdf)
+{
+    bool is_reflection = wo.z * wi.z > 0.0f;
+    float alpha = roughness * roughness;
+
+    if (is_reflection)
+    {
+        float4 h = normalize(wi + wo);
+        if (h.z < 0.0f) h = -h;
+
+        // Jacobian d_wh / d_wo = 1 / (4 * wo.h)
+        float D = D_GGX(h, alpha);
+        float F = schlick_fresnel(dot(wi, h), etaI, etaT);
+        
+        // We weigh the PDF by F because we chose reflection with probability F
+        float pdf_h = (D * h.z); 
+        float denom = 4.0f * fabsf(dot(wo, h));
+        
+        pdf = F * (pdf_h / fmaxf(denom, EPSILON));
+    }
+    else
+    {
+        float4 h = normalize(etaI * wi + etaT * wo);
+        if (h.z < 0.0f) h = -h;
+
+        float D = D_GGX(h, alpha);
+        float F = schlick_fresnel(dot(wi, h), etaI, etaT);
+        float pdf_h = (D * h.z);
+
+        // Jacobian for refraction
+        // d_wh / d_wo = (etaT^2 * |wo.h|) / (etaI * wi.h + etaT * wo.h)^2
+        float wiDotH = dot(wi, h);
+        float woDotH = dot(wo, h);
+        float sqrtDenom = etaI * wiDotH + etaT * woDotH;
+        
+        float jacobian = (etaT * etaT * fabsf(woDotH)) / fmaxf(sqrtDenom * sqrtDenom, EPSILON);
+
+        // We weigh PDF by (1-F) because we chose transmission with probability (1-F)
+        pdf = (1.0f - F) * pdf_h * jacobian;
+    }
+}
+
+__device__ void microfacet_dielectric_sample_f(curandState& localState,
+    const float4& wi, float etaSurface, float roughness, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
+{
+    float etaI, etaT;
+    if (backface)
+    {
+        etaI = etaSurface;
+        etaT = 1.0f;
+    }
+    else
+    {
+        etaI = 1.0f;
+        etaT = etaSurface;
+    }
+
+    // 1. Sample Microfacet Normal (h) using GGX
+    float u1 = curand_uniform(&localState);
+    float alpha = roughness * roughness;
+    float phi = 2.0f * PI * curand_uniform(&localState);
+    
+    // Standard GGX sampling (matching leaf_sample_f implementation)
+    float cosTheta = sqrtf((1.0f - u1) / (1.0f + (alpha * alpha - 1.0f) * u1));
+    float sinTheta = sqrtf(fmaxf(1.0f - cosTheta * cosTheta, 0.0f));
+
+    float4 h;
+    h.x = sinTheta * cosf(phi);
+    h.y = sinTheta * sinf(phi);
+    h.z = cosTheta; 
+    
+    // Ensure h aligns with wi to avoid artifacts
+    if (dot(wi, h) < 0.0f) h = -h;
+
+    // 2. Fresnel and Selection
+    float wiDotH = dot(wi, h);
+    float F = schlick_fresnel(fabsf(wiDotH), etaI, etaT);
+
+    if (curand_uniform(&localState) < F) 
+    {
+        // --- Reflection ---
+        wo = 2.0f * wiDotH * h - wi;
+    } 
+    else 
+    {
+        // --- Transmission (Refraction) ---
+        float eta = etaI / etaT;
+        float c = dot(wi, h);
+        float term = 1.0f - eta * eta * (1.0f - c * c);
+
+        // Check for Total Internal Reflection (TIR)
+        if (term < 0.0f) 
+        {
+            // TIR: Default to reflection (probability of TIR is handled by F going to 1.0 usually, 
+            // but for safety in microfacet sampling, we reflect)
+            wo = 2.0f * c * h - wi;
+        }
+        else
+        {
+            // Refract vector
+            wo = (eta * c - sqrtf(term)) * h - eta * wi;
+        }
+    }
+
+    // 3. Evaluate f and pdf
+    microfacet_dielectric_f(etaI, etaT, roughness, wi, wo, f_val);
+    microfacet_dielectric_pdf(etaI, etaT, roughness, wi, wo, pdf);
+
+    // 4. Adjoint / Transport Mode Handling
+    // Matching 'dumb_smooth_dielectric' convention:
+    // If we transmitted (signs differ) and we are in Radiance mode, scale by eta^2.
+    // (eta = etaI / etaT)
+    if (wo.z * wi.z < 0.0f && transportMode == TRANSPORTMODE_RADIANCE)
+    {
+        float eta = etaI / etaT;
+        f_val *= eta * eta;
+    }
+}
+
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
 __device__ void f_eval(const Material* materials, int materialID, float4* textures,
@@ -580,6 +810,10 @@ __device__ void f_eval(const Material* materials, int materialID, float4* textur
     else if (mat.type == MAT_DELTAMIRROR)
     {
         mirror_f(f_val, wo);
+    }
+    else if (mat.type == MAT_MICROFACETDIELECTRIC)
+    {
+        microfacet_dielectric_f(etaI, etaT, mat.roughness, -wi, wo, f_val);
     }
 }
 
@@ -626,6 +860,14 @@ __device__ void sample_f_eval(curandState& localState, const Material* materials
     {
         mirror_sample_f(-wi, wo, f_val, pdf);
     }
+    else if (mat.type == MAT_THINDIELECTRIC)
+    {
+        thin_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_MICROFACETDIELECTRIC)
+    {
+        microfacet_dielectric_sample_f(localState, -wi, mat.ior, mat.roughness, backface, transportMode, wo, f_val, pdf);
+    }
 }
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
@@ -662,5 +904,9 @@ __device__ void pdf_eval(Material* materials, int materialID, float4* textures, 
     else if (mat.type == MAT_DELTAMIRROR)
     {
         mirror_pdf(pdf);
+    }
+    else if (mat.type == MAT_MICROFACETDIELECTRIC)
+    {
+        microfacet_dielectric_pdf(etaI, etaT, mat.roughness, -wi, wo, pdf);
     }
 }

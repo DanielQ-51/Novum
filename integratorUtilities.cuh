@@ -5,7 +5,12 @@
 #include <random>
 #include <ctime>
 
-__device__ inline bool triangleIntersect(Vertices* verts, Triangle* tri, const Ray& r, float4& barycentric, float& tval)
+__device__ inline bool triangleIntersect(
+    Vertices* verts, 
+    Triangle* tri, 
+    const Ray& r, 
+    float4& barycentric, 
+    float& tval)
 {
     float4 tria = verts->positions[tri->aInd];
     float4 trib = verts->positions[tri->bInd];
@@ -16,7 +21,7 @@ __device__ inline bool triangleIntersect(Vertices* verts, Triangle* tri, const R
     float4 h = cross3(r.direction, e2);
     float a = dot(h, e1);
 
-    if (fabsf(a) < 1e-12f) 
+    if (fabsf(a) < EPSILON) 
         return false;
     
     float f = 1.0/a;
@@ -81,14 +86,63 @@ __device__ inline bool aabbIntersect(const Ray& r, float4 minCorner, float4 maxC
     return (tmax >= tmin) && (tmax > 0.0f);
 }
 
+__device__ inline bool aabbIntersect(const Ray& r, float4 minCorner, float4 maxCorner, float4 invDir, float& tmin, float& tmax)
+{
+    tmin = -1e30f; // initialize to -infinity
+    tmax = 1e30f;  // initialize to +infinity
+
+    // Compute inverse ray direction once
+    /*float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );*/
+
+    // X axis
+    float tx1 = (minCorner.x - r.origin.x) * invDir.x;
+    float tx2 = (maxCorner.x - r.origin.x) * invDir.x;
+    float tx_min = fminf(tx1, tx2);
+    float tx_max = fmaxf(tx1, tx2);
+    tmin = fmaxf(tmin, tx_min);
+    tmax = fminf(tmax, tx_max);
+
+    // Y axis
+    float ty1 = (minCorner.y - r.origin.y) * invDir.y;
+    float ty2 = (maxCorner.y - r.origin.y) * invDir.y;
+    float ty_min = fminf(ty1, ty2);
+    float ty_max = fmaxf(ty1, ty2);
+    tmin = fmaxf(tmin, ty_min);
+    tmax = fminf(tmax, ty_max);
+
+    // Z axis
+    float tz1 = (minCorner.z - r.origin.z) * invDir.z;
+    float tz2 = (maxCorner.z - r.origin.z) * invDir.z;
+    float tz_min = fminf(tz1, tz2);
+    float tz_max = fmaxf(tz1, tz2);
+    tmin = fmaxf(tmin, tz_min);
+    tmax = fminf(tmax, tz_max);
+    
+    return (tmax >= tmin) && (tmax > 0.0f);
+}
+
 __device__ inline void BVHSceneIntersect(const Ray& r, BVHnode* BVH, int* BVHindices, Vertices* verts, Triangle* scene, Intersection& intersect, float max_t = 999999.0f, int skipTri = -1)
 {
     intersect.valid = false;
     float min_t = 3.402823466e+38f;
+    int bestTriInd = -1;
+    float4 bestBarycentric = f4(-1.0f);
 
-    int nodeStack[128];
+    int nodeStack[64];
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
 
     while (stackTop > 0)
     {
@@ -111,34 +165,8 @@ __device__ inline void BVHSceneIntersect(const Ray& r, BVHnode* BVH, int* BVHind
                 if (hitTri && (t < min_t) && (t < max_t))
                 {
                     min_t = t; // Update the closest-hit distance
-                    intersect.point = r.at(t);
-                    intersect.color = verts->colors[tri->aInd] * barycentric.z + 
-                                        verts->colors[tri->bInd] * barycentric.x + 
-                                        verts->colors[tri->cInd] * barycentric.y;
-                    intersect.normal = normalize(verts->normals[tri->naInd] * barycentric.z + 
-                                        verts->normals[tri->nbInd] * barycentric.x + 
-                                        verts->normals[tri->ncInd] * barycentric.y);
-
-                    intersect.uv = verts->uvs[tri->uvaInd] * barycentric.z + 
-                        verts->uvs[tri->uvbInd] * barycentric.x + 
-                        verts->uvs[tri->uvcInd] * barycentric.y;
-                    if (dot(intersect.normal, r.direction) > 0.0f) 
-                    {
-                        intersect.normal = -intersect.normal;
-                        intersect.backface = true;
-                    }
-                    else 
-                    {
-                        intersect.backface = false;
-                    }
-                        
-                    intersect.materialID = tri->materialID;
-                    intersect.emission = tri->emission;
-                    intersect.valid = true;
-                    //intersect.tri = *tri; // could be bad for performance
-                    intersect.triIDX = idx;
-
-                    intersect.dist = t;
+                    bestTriInd = idx;
+                    bestBarycentric = barycentric;
                 }
             }
         }
@@ -152,11 +180,11 @@ __device__ inline void BVHSceneIntersect(const Ray& r, BVHnode* BVH, int* BVHind
 
                 // Test left child if it exists
                 if (node.left >= 0)
-                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
 
                 // Test right child if it exists
                 if (node.right >= 0)
-                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
 
                 // If both children were hit, push the farther one first
                 if (hitLeft && hitRight)
@@ -183,13 +211,52 @@ __device__ inline void BVHSceneIntersect(const Ray& r, BVHnode* BVH, int* BVHind
             }
         }
     }
+
+    if (bestTriInd != -1)
+    {
+        Triangle* tri = &scene[bestTriInd];
+        intersect.point = r.at(min_t);
+        intersect.color = verts->colors[tri->aInd] * bestBarycentric.z + 
+                            verts->colors[tri->bInd] * bestBarycentric.x + 
+                            verts->colors[tri->cInd] * bestBarycentric.y;
+        intersect.normal = normalize(verts->normals[tri->naInd] * bestBarycentric.z + 
+                            verts->normals[tri->nbInd] * bestBarycentric.x + 
+                            verts->normals[tri->ncInd] * bestBarycentric.y);
+
+        intersect.uv = verts->uvs[tri->uvaInd] * bestBarycentric.z + 
+            verts->uvs[tri->uvbInd] * bestBarycentric.x + 
+            verts->uvs[tri->uvcInd] * bestBarycentric.y;
+        if (dot(intersect.normal, r.direction) > 0.0f) 
+        {
+            intersect.normal = -intersect.normal;
+            intersect.backface = true;
+        }
+        else 
+        {
+            intersect.backface = false;
+        }
+            
+        intersect.materialID = tri->materialID;
+        intersect.emission = tri->emission;
+        intersect.valid = true;
+        intersect.triIDX = bestTriInd;
+
+        intersect.dist = min_t;
+    }
 }
 
 __device__ inline void BVHShadowRay(const Ray& r, BVHnode* BVH, int* BVHindices, Vertices* verts, Triangle* scene, Material* materials, float4& throughputScale, float max_t, int skip_tri)
 {
-    int nodeStack[128];
+    int nodeStack[64];
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
 
     throughputScale = f4(1.0f);
     while (stackTop > 0)
@@ -254,11 +321,11 @@ __device__ inline void BVHShadowRay(const Ray& r, BVHnode* BVH, int* BVHindices,
 
                 // Test left child if it exists
                 if (node.left >= 0)
-                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
 
                 // Test right child if it exists
                 if (node.right >= 0)
-                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
 
                 // If both children were hit, push the farther one first
                 if (hitLeft && hitRight)

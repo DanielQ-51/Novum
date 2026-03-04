@@ -23,18 +23,19 @@
 #include <curand_kernel.h>
 #include <algorithm>
 #include <sstream>
+#include "rng.cuh"
 
 __device__ __constant__ float EPSILON = 0.00001f;
 __device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 15.0f;
-__device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 5.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 10.0f;
+__device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 15.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
-constexpr bool DO_PROGRESSIVERENDER = true;
+constexpr float h_PI = 3.141592f;
 
-typedef curandStatePhilox4_32_10_t cudaRNGState;
+constexpr bool DO_PROGRESSIVERENDER = true;
 
 inline __host__ __device__ __forceinline__ float4 f4(float x, float y, float z, float w = 0.0f) {
     return make_float4(x, y, z, w);
@@ -490,4 +491,10 @@ __host__ inline int GetNextPrime(int n) {
 __host__ inline float calculateMergeRadius(float initialRadius, float alpha, int currSample)
 {
     return initialRadius * sqrtf( 1.0f / powf(currSample + 1, alpha));
+}
+
+__device__ __forceinline__ inline float eta_vcm_to_mergeRadius(float eta_vcm, int numPhotonLightPath)
+{
+    // eta_vcm = mergeRadius * mergeRadius * PI * numPhotonLightPath
+    return sqrtf(eta_vcm / (PI * numPhotonLightPath));
 }

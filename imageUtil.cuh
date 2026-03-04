@@ -7,10 +7,12 @@ class Image
 {
 private:
     float4 toneMap(float4 c);
+    float4 aces_fitted(float4 c);
     float4 gammaCorrect(float4 c);
     std::vector<float4> postProcessImage();
 public:
     bool postProcess;
+    bool use_fitted_aces = true;
     Image(int w, int h);
     ~Image();
 

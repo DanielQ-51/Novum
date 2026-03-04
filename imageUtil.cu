@@ -12,6 +12,7 @@ Uses a 1d vector of pixels instead of 2d for minor optimization.
 #include <string>
 #include <iostream>
 #include <iomanip>
+#include <array>
 
 #include "imageUtil.cuh"
 #include "util.cuh"
@@ -199,6 +200,42 @@ std::vector<float4> Image::data()
     return pixels;
 }
 
+static const std::array<float4, 3> aces_input_matrix =
+{
+    f4(0.59719f, 0.35458f, 0.04823f),
+    f4(0.07600f, 0.90834f, 0.01566f),
+    f4(0.02840f, 0.13383f, 0.83777f)
+};
+
+static const std::array<float4, 3> aces_output_matrix =
+{
+    f4( 1.60475f, -0.53108f, -0.07367f),
+    f4(-0.10208f,  1.10813f, -0.00605f),
+    f4(-0.00327f, -0.07276f,  1.07602f)
+};
+
+float4 mul(const std::array<float4, 3>& m, const float4& v)
+{
+    float x = m[0].x * v.x + m[0].y * v.y + m[0].z * v.z;
+    float y = m[1].x * v.x + m[1].y * v.y + m[1].z * v.z;
+    float z = m[2].x * v.x + m[2].y * v.y + m[2].z * v.z;
+    return f4(x, y, z);
+}
+
+float4 rtt_and_odt_fit(float4 v)
+{
+    float4 a = v * (v + f4(0.0245786f)) - f4(0.000090537f);
+    float4 b = v * (0.983729f * v + f4(0.4329510f)) + f4(0.238081f);
+    return a / b;
+}
+
+float4 Image::aces_fitted(float4 c)
+{
+    c = mul(aces_input_matrix, c);
+    c = rtt_and_odt_fit(c);
+    return mul(aces_output_matrix, c);
+}
+
 float4 Image::toneMap(float4 color)
 {
     const float A = 2.51f;
@@ -226,7 +263,7 @@ std::vector<float4> Image::postProcessImage()
     std::vector<float4> processed;
     for (int i = 0; i < width * height; i++)
     {
-        processed.push_back(gammaCorrect(toneMap(pixels[i])));
+        processed.push_back(gammaCorrect(use_fitted_aces ? aces_fitted(pixels[i]) : toneMap(pixels[i])));
     }
     return processed;
 }

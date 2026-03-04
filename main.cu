@@ -500,10 +500,10 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
                 c.emissionMultiplier * c.emissionColor, c.materialID);
     }
 
-    if (false && animatedObjPath != "invalid" && config.name == "watersim")
+    if (animatedObjPath != "invalid" && config.name == "watersim")
     {
         readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, f4(), 
-                f4(), 10);
+                f4(), 10, f4(0.0f, -0.9f, 0.0f));
     }
 
     Vertices* verts;
@@ -748,9 +748,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         //cudaMalloc(&photons_d, sizeof(Photons));
 
         Photons tempPhotons;
-        cudaMalloc(&tempPhotons.pos_x, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons.pos_y, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons.pos_z, sizeof(float) * totalPhotons);
+        cudaMalloc(&tempPhotons.pos_plus_vm, sizeof(float4) * totalPhotons);
+        //cudaMalloc(&tempPhotons.pos_y, sizeof(float) * totalPhotons);
+        //cudaMalloc(&tempPhotons.pos_z, sizeof(float) * totalPhotons);
         cudaMalloc(&tempPhotons.packedWi, sizeof(unsigned int) * totalPhotons);
         //cudaMalloc(&tempPhotons.packedPower, sizeof(unsigned int) * totalPhotons);
         cudaMalloc(&tempPhotons.beta_x, sizeof(half) * totalPhotons);
@@ -759,11 +759,11 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaMalloc(&tempPhotons.packedNormal, sizeof(unsigned int) * totalPhotons);
         //cudaMalloc(&tempPhotons.d_vc, sizeof(float) * totalPhotons);
         cudaMalloc(&tempPhotons.d_vcm, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons.d_vm, sizeof(float) * totalPhotons);
+        //cudaMalloc(&tempPhotons.d_vm, sizeof(float) * totalPhotons);
 
-        cudaMemset(tempPhotons.pos_x, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons.pos_y, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons.pos_z, 0, sizeof(float) * totalPhotons);
+        cudaMemset(tempPhotons.pos_plus_vm, 0, sizeof(float4) * totalPhotons);
+        //cudaMemset(tempPhotons.pos_y, 0, sizeof(float) * totalPhotons);
+        //cudaMemset(tempPhotons.pos_z, 0, sizeof(float) * totalPhotons);
         cudaMemset(tempPhotons.beta_x, 0, sizeof(half) * totalPhotons);
         cudaMemset(tempPhotons.beta_y, 0, sizeof(half) * totalPhotons);
         cudaMemset(tempPhotons.beta_z, 0, sizeof(half) * totalPhotons);
@@ -772,7 +772,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaMemset(tempPhotons.packedNormal, 0, sizeof(unsigned int) * totalPhotons);
         //cudaMemset(tempPhotons.d_vc, 0, sizeof(float) * totalPhotons);
         cudaMemset(tempPhotons.d_vcm, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons.d_vm, 0, sizeof(float) * totalPhotons);
+        //cudaMemset(tempPhotons.d_vm, 0, sizeof(float) * totalPhotons);
 
         //cudaMemcpy(photons_d, &tempPhotons, sizeof(Photons), cudaMemcpyHostToDevice);
 
@@ -780,9 +780,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         //cudaMalloc(&photons_sorted_d, sizeof(Photons));
 
         Photons tempPhotons1;
-        cudaMalloc(&tempPhotons1.pos_x, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons1.pos_y, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons1.pos_z, sizeof(float) * totalPhotons);
+        cudaMalloc(&tempPhotons1.pos_plus_vm, sizeof(float4) * totalPhotons);
+        //cudaMalloc(&tempPhotons1.pos_y, sizeof(float) * totalPhotons);
+        //cudaMalloc(&tempPhotons1.pos_z, sizeof(float) * totalPhotons);
         cudaMalloc(&tempPhotons1.packedWi, sizeof(unsigned int) * totalPhotons);
         cudaMalloc(&tempPhotons1.beta_x, sizeof(half) * totalPhotons);
         cudaMalloc(&tempPhotons1.beta_y, sizeof(half) * totalPhotons);
@@ -790,11 +790,11 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaMalloc(&tempPhotons1.packedNormal, sizeof(unsigned int) * totalPhotons);
         //cudaMalloc(&tempPhotons1.d_vc, sizeof(float) * totalPhotons);
         cudaMalloc(&tempPhotons1.d_vcm, sizeof(float) * totalPhotons);
-        cudaMalloc(&tempPhotons1.d_vm, sizeof(float) * totalPhotons);
+        //cudaMalloc(&tempPhotons1.d_vm, sizeof(float) * totalPhotons);
 
-        cudaMemset(tempPhotons1.pos_x, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons1.pos_y, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons1.pos_z, 0, sizeof(float) * totalPhotons);
+        cudaMemset(tempPhotons1.pos_plus_vm, 0, sizeof(float) * totalPhotons);
+        //cudaMemset(tempPhotons1.pos_y, 0, sizeof(float) * totalPhotons);
+        //cudaMemset(tempPhotons1.pos_z, 0, sizeof(float) * totalPhotons);
         cudaMemset(tempPhotons1.packedWi, 0, sizeof(unsigned int) * totalPhotons);
         cudaMemset(tempPhotons1.beta_x, 0, sizeof(half) * totalPhotons);
         cudaMemset(tempPhotons1.beta_y, 0, sizeof(half) * totalPhotons);
@@ -802,7 +802,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaMemset(tempPhotons1.packedNormal, 0, sizeof(unsigned int) * totalPhotons);
         //cudaMemset(tempPhotons1.d_vc, 0, sizeof(float) * totalPhotons);
         cudaMemset(tempPhotons1.d_vcm, 0, sizeof(float) * totalPhotons);
-        cudaMemset(tempPhotons1.d_vm, 0, sizeof(float) * totalPhotons);
+        //cudaMemset(tempPhotons1.d_vm, 0, sizeof(float) * totalPhotons);
 
         //cudaMemcpy(photons_sorted_d, &tempPhotons1, sizeof(Photons), cudaMemcpyHostToDevice);
         
@@ -842,9 +842,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
         //cudaFree(photons_d);
         
-        cudaFree(tempPhotons.pos_x);
-        cudaFree(tempPhotons.pos_y);
-        cudaFree(tempPhotons.pos_z);
+        cudaFree(tempPhotons.pos_plus_vm);
+        //cudaFree(tempPhotons.pos_y);
+        //cudaFree(tempPhotons.pos_z);
         cudaFree(tempPhotons.beta_x);
         cudaFree(tempPhotons.beta_y);
         cudaFree(tempPhotons.beta_z);
@@ -852,13 +852,13 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaFree(tempPhotons.packedNormal);
         cudaFree(tempPhotons.d_vcm);
         //cudaFree(tempPhotons.d_vc);
-        cudaFree(tempPhotons.d_vm);
+        //cudaFree(tempPhotons.d_vm);
 
         //cudaFree(photons_sorted_d);
         
-        cudaFree(tempPhotons1.pos_x);
-        cudaFree(tempPhotons1.pos_y);
-        cudaFree(tempPhotons1.pos_z);
+        cudaFree(tempPhotons1.pos_plus_vm);
+        //cudaFree(tempPhotons1.pos_y);
+        //cudaFree(tempPhotons1.pos_z);
         cudaFree(tempPhotons1.beta_x);
         cudaFree(tempPhotons1.beta_y);
         cudaFree(tempPhotons1.beta_z);
@@ -866,7 +866,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaFree(tempPhotons1.packedNormal);
         cudaFree(tempPhotons1.d_vcm);
         //cudaFree(tempPhotons1.d_vc);
-        cudaFree(tempPhotons1.d_vm);
+        //cudaFree(tempPhotons1.d_vm);
     }
     
 
@@ -928,7 +928,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     delete[] host_colors;
     delete[] host_overlay;
 
-    std::string filename = "renders/wateranim3/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
+    std::string filename = "renders/wateranim4/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
     image.saveImageBMP(filename);
     filename = "render.bmp";
     image.saveImageBMP(filename);
@@ -951,19 +951,21 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
 int main ()
 {
-    string configName = "configs/lightbulbinterreflect.rendertron";
+    string configName = "configs/watersim.rendertron";
     //for (int i = 0; i <= 150; i++)
     //    initRender(configName, i);
 
-    initRender(configName, 0); 
+    //initRender(configName, 0); 
 
-    for (int i = 125; i <= 250; ++i) {
+    for (int i = 30; i <= 250; ++i) {
         char buf[128];
         snprintf(buf, sizeof(buf), "scenedata/watersim/tenbillionobj/wateranim%04d.obj", i);
         initRender(configName, i, buf); 
     }
 
     cout << "All Renders Finished" << endl;
+
+    RNGManager::cleanup();
     return 0;
 }
 

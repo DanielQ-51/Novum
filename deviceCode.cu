@@ -21,6 +21,11 @@ __device__ __constant__ bool BDPT_DRAWPATH;
 __device__ __constant__ bool BDPT_DOMIS;
 __device__ __constant__ bool BDPT_PAINTWEIGHT;
 
+__device__ __constant__ float eta_vcm;
+__device__ __constant__ float sceneRadius;
+__device__ __constant__ float4 sceneCenter;
+__device__ __constant__ float4 sceneMin;
+
 __host__ void updateConstants(RenderConfig& config)
 {
     cudaMemcpyToSymbol(BDPT_LIGHTTRACE, &config.bdptLightTrace, sizeof(bool));
@@ -36,6 +41,7 @@ __host__ void updateConstants(RenderConfig& config)
     return;
 }
 
+/*
 __global__ void initRNG(cudaRNGState* states, int width, int height, unsigned long seed)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -44,7 +50,7 @@ __global__ void initRNG(cudaRNGState* states, int width, int height, unsigned lo
 
     int idx = y * width + x;
     curand_init(seed, idx, 0, &states[idx]);  
-}
+} */
 
 __device__ void neePDF(Vertices* vertices, Triangle* scene, int lightNum, int lightTriInd, const Intersection& intersect, 
     float& light_pdf, float etaI, float etaT, const Intersection* newIntersect)
@@ -199,7 +205,8 @@ __host__ void launch_naive_unidirectional(int maxDepth, Camera camera, Material*
     cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
     unsigned long seed = 103033UL;
-    initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
+    //initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
+    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
     cudaDeviceSynchronize();
 
     size_t freeB, totalB;
@@ -536,7 +543,8 @@ __host__ void launch_unidirectional(int maxDepth, Camera camera, Material* mater
     cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
     unsigned long seed = 103033UL;
-    initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
+    //initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
+    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
     cudaDeviceSynchronize();
 
     size_t freeB, totalB;
@@ -715,7 +723,7 @@ __device__ bool BDPTnextEventEstimation(cudaRNGState& localState, Material* mate
             float pdf_chooseLightPoint_solidAngle = pdf_chooseLight * pdf_dir_solidAngle;
             pdf_emit = pdf_chooseLightPoint_solidAngle; // emit pdf, directional
             //use the same disk sampling used in the light vertex generation
-            float pdf_pos_area = 1.0f / (PI * sceneRadius * sceneRadius);
+            //float pdf_pos_area = 1.0f / (PI * sceneRadius * sceneRadius);
             light_pdf = pdf_chooseLightPoint_solidAngle;
 
             float4 towardLight_local;
@@ -768,9 +776,6 @@ __device__ void generateEyePath(cudaRNGState& localState, Camera camera, Materia
     eyePath->d_vc[firstIdx] = 0.0f;
     eyePath->d_vcm[firstIdx] = 0.0f;
 
-    // stores the accumulated mis ratios in the form ratio(1+ratio(1+ratio...))
-    float currMIS = 0.0f;
-
     float prev_d_vcm = -1.0f;
     float prev_d_vc = -1.0f;
 
@@ -791,7 +796,7 @@ __device__ void generateEyePath(cudaRNGState& localState, Camera camera, Materia
             return;
         }
         float4 geomN = intersect.normal;
-        bool doubleSided = materials[intersect.materialID].type == MAT_SMOOTHDIELECTRIC || materials[intersect.materialID].type == MAT_LEAF; // or check flag
+        //bool doubleSided = materials[intersect.materialID].type == MAT_SMOOTHDIELECTRIC || materials[intersect.materialID].type == MAT_LEAF; // or check flag
         eyePath->uv[currIdx] = intersect.uv;
         eyePath->beta[currIdx] = currThroughput;
 
@@ -1091,9 +1096,6 @@ __device__ void generateLightPath(cudaRNGState& localState, Material* materials,
     lightPath->d_vc[firstIdx] = 0.0f;
     lightPath->d_vcm[firstIdx] = 0.0f;
 
-    // stores the accumulated mis ratios in the form ratio(1+ratio(1+ratio...))
-    float currMIS = 0.0f;
-
     float prev_d_vcm = -1.0f;
     float prev_d_vc = -1.0f;
 
@@ -1147,7 +1149,6 @@ __device__ void generateLightPath(cudaRNGState& localState, Material* materials,
 
         // previous pdf (solid angle) * abs of dot product of current normal with incoming direction into the current surface divided by distance squared
         float pdfFwd_area; 
-        float denom; 
 
         pdfFwd_area = prevPDF_solidAngle * fabsf(wo_local.z) / distanceSQR;
         lightPath->pdfFwd[currIdx] = pdfFwd_area;
@@ -1818,7 +1819,8 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
     cudaRNGState* d_rngStates;
     cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
     unsigned long seed = 103033UL;
-    initRNG<<<gridSize, blockSize, 0, stream>>>(d_rngStates, w, h, seed);
+    //initRNG<<<gridSize, blockSize, 0, stream>>>(d_rngStates, w, h, seed);
+    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
     
     // Path Lengths
     int* d_pathLengths = nullptr;
@@ -1944,12 +1946,23 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
     }
 }
 
-__device__ void generateVCMLightPath(cudaRNGState& localState, int x, int y, int w, int h, VCMPathVertices lightPath, Photons photons, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
-    int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, float4 sceneCenter, float sceneRadius, 
-    float mergeRadius, float4* overlay, int& pathLength, int* globalPhotonIndex)
+__device__ void generateVCMLightPath(
+    cudaRNGState& localState, 
+    int x, int y, int w, int h, 
+    VCMPathVertices lightPath, 
+    Photons photons, 
+    Material* materials, 
+    float4* textures, 
+    BVHnode* BVH, int* BVHindices, 
+    int maxDepth, 
+    Vertices* vertices, int vertNum, 
+    Triangle* scene, int triNum, 
+    Triangle* lights, int lightNum,
+    float4* overlay, 
+    int& pathLength, 
+    int* globalPhotonIndex
+)
 {
-    float eta_vcm = (float)(w * h) * PI * mergeRadius * mergeRadius;
-
     pathLength = 0;
 
     // the convention is that light index -1 is the environment, and that lightNum doesnt include the environment
@@ -2198,14 +2211,14 @@ __device__ void generateVCMLightPath(cudaRNGState& localState, int x, int y, int
     
             if (photonInd < w * h * maxDepth)
             {
-                setPos(photons, photonInd, currPos);
+                setPackedPosVM(photons, photonInd, currPos, curr_d_vm);
                 setWi(photons, photonInd, currWo);
                 setNormalInfo(photons, photonInd, currNormal, currBackface);
                 setBeta(photons, photonInd, currBeta);
 
                 setD_vcm(photons, photonInd, curr_d_vcm);
                 //setD_vc(photons, photonInd, curr_d_vc);
-                setD_vm(photons, photonInd, curr_d_vm);
+                //setD_vm(photons, photonInd, curr_d_vm);
             }
         }
         
@@ -2226,9 +2239,23 @@ __device__ void generateVCMLightPath(cudaRNGState& localState, int x, int y, int
     }
 }
 
-__global__ void doLightPass(cudaRNGState* rngStates, Camera camera, VCMPathVertices lightPath, Photons photons, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
-    int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int w, int h, float4 sceneCenter, float sceneRadius, 
-    float mergeRadius, float4* colors, float4* overlay, int* globalPhotonIndex) 
+__global__ void doLightPass(
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    VCMPathVertices lightPath, 
+    Photons photons, 
+    int* lightPathLengths, 
+    Material* materials, float4* textures, 
+    BVHnode* BVH, int* BVHindices, 
+    int lightDepth, 
+    Vertices* vertices, int vertNum, 
+    Triangle* scene, int triNum, 
+    Triangle* lights, int lightNum, 
+    int w, int h,
+    float4* colors, 
+    float4* overlay, 
+    int* globalPhotonIndex
+) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -2239,14 +2266,25 @@ __global__ void doLightPass(cudaRNGState* rngStates, Camera camera, VCMPathVerti
     cudaRNGState localState = rngStates[pixelIdx];
 
     int lightPathLength;
-    generateVCMLightPath(localState, x, y, w, h, lightPath, photons, materials, textures, BVH, BVHindices, lightDepth, 
-        vertices, vertNum, scene, triNum, lights, lightNum, sceneCenter, sceneRadius, mergeRadius, overlay, 
-        lightPathLength, globalPhotonIndex);
+    generateVCMLightPath(
+        localState, 
+        x, y, w, h, 
+        lightPath, 
+        photons, 
+        materials, 
+        textures, 
+        BVH, BVHindices, 
+        lightDepth, 
+        vertices, vertNum, 
+        scene, triNum, 
+        lights, lightNum, 
+        overlay, 
+        lightPathLength, 
+        globalPhotonIndex
+    );
     
     //printf("end path gen\n");
     lightPathLengths[pixelIdx] = lightPathLength;
-
-    float eta_vcm = (float)(w * h) * PI * mergeRadius * mergeRadius;
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Perform special case of the connection: what if the light ray just connected straight to the camera?
@@ -2452,8 +2490,6 @@ __device__ __noinline__ bool connectNEE(
     int* BVHindices, 
     Vertices* vertices,
     Triangle* scene,
-    float sceneRadius,
-    float eta_vcm,
     float4& unweightedContribution,
     float& misWeight
 )
@@ -2545,7 +2581,6 @@ __device__ __noinline__ bool connectGeneral(
     int* BVHindices, 
     Vertices* vertices,
     Triangle* scene,
-    float eta_vcm,
     float4& unweightedContribution,
     float& misWeight
 )
@@ -2660,9 +2695,25 @@ __device__ __noinline__ bool connectGeneral(
     return true;
 }
 
-__global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertices lightPath, int* lightPathLengths, Photons photons_sorted, unsigned int* cell_start, unsigned int* cell_end, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
-    int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int w, int h, float4 sceneCenter, float sceneRadius, float4 sceneMin, int hashTableSize,
-    float mergeRadius, float4* colors, float4* overlay, int photonCount)
+__global__ void doEyePass(
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    VCMPathVertices lightPath, 
+    int* lightPathLengths, 
+    Photons photons_sorted, unsigned int* cell_start, unsigned int* cell_end, 
+    Material* materials, 
+    float4* textures, 
+    BVHnode* BVH, int* BVHindices, 
+    int maxDepth, 
+    Vertices* vertices, int vertNum, 
+    Triangle* scene, int triNum, 
+    Triangle* lights, int lightNum, 
+    int w, int h, 
+    int hashTableSize,
+    float4* colors, 
+    float4* overlay,
+    int photonCount
+)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -2671,8 +2722,6 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
     int pixelIdx = y*w + x;
 
     cudaRNGState localState = rngStates[pixelIdx];
-
-    float eta_vcm = (float)(w * h) * PI * mergeRadius * mergeRadius;
 
     Ray r = camera.generateCameraRay(localState, x, y);
 
@@ -2879,7 +2928,6 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
                 curr_d_vc, curr_d_vcm, 
                 prevPos,
                 lights, lightNum, materials, textures, BVH, BVHindices, vertices, scene,
-                sceneRadius, eta_vcm,
                 unweightedContribution, misWeight
             );
             float4 contribution;
@@ -2910,7 +2958,6 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
 
             float4 unweightedContribution = f4(0.0f);
             float misWeight = 0.0f;
-            bool validConnection = false;
 
             int lightLightInd;
             int lightMatID;
@@ -2938,7 +2985,6 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
                 lightPos, lightNorm, lightThroughput, lightWo, lightUV, lightMatID,
                 lightD_vc, lightD_vcm,
                 materials, textures, BVH, BVHindices, vertices, scene,
-                eta_vcm,
                 unweightedContribution, misWeight
             );
 
@@ -2969,8 +3015,10 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
         // Perform Merging.
         //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+        //printf("etavcm: %f radius: %f", eta_vcm, eta_vcm_to_mergeRadius(eta_vcm, w * h));
         if (!currDelta && VCM_DOMERGE && materials[currMatID].roughness >= MERGE_ROUGHNESS_BOUND)
         {
+            float mergeRadius = eta_vcm_to_mergeRadius(eta_vcm, w * h);
             int3 centerIndex = GetGridIndex(currPos, sceneMin, mergeRadius);
             float radiusSq = mergeRadius * mergeRadius;
 
@@ -2995,7 +3043,13 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
                         if (start == 0xFFFFFFFF) continue;
 
                         for (int i = start; i < end; ++i) {
-                            float4 photonPos = getPos(photons_sorted, i);
+
+                            // We extract the d_vm from the packed photon position. We don't need to zero out the fourth
+                            // channel of the position since our code ignores the fourth channel of any float4 if it is 
+                            // not supposed to be populated
+                            float4 photonPos = getPackedPosVM(photons_sorted, i);
+                            float lightD_vm = photonPos.w;
+
                             float4 photonNorm;
                             bool photonBackface;
                             getNormalInfo(photons_sorted, i, photonNorm, photonBackface);
@@ -3009,7 +3063,7 @@ __global__ void doEyePass(cudaRNGState* rngStates, Camera camera, VCMPathVertice
 
                             if (distSq <= radiusSq && dot(photonNorm, currNormal) > 0.9f) {
                                 float lightD_vcm = getD_vcm(photons_sorted, i);
-                                float lightD_vm = getD_vm(photons_sorted, i);
+                                //float lightD_vm = getD_vm(photons_sorted, i);
 
                                 float4 photonToPrev = getWi(photons_sorted, i);
                                 float4 eyeToPrev = prevPos - currPos;
@@ -3120,9 +3174,7 @@ __global__ void reorderPhotons(
     /*
     It is not neccesary to unpack the values, we just copy them over directly
     */
-    photons_sorted.pos_x[i] = photons.pos_x[src];
-    photons_sorted.pos_y[i] = photons.pos_y[src];
-    photons_sorted.pos_z[i] = photons.pos_z[src];
+    photons_sorted.pos_plus_vm[i] = photons.pos_plus_vm[src];
     photons_sorted.beta_x[i] = photons.beta_x[src];
     photons_sorted.beta_y[i] = photons.beta_y[src];
     photons_sorted.beta_z[i] = photons.beta_z[src];
@@ -3130,7 +3182,7 @@ __global__ void reorderPhotons(
     photons_sorted.packedNormal[i] = photons.packedNormal[src];
     //photons_sorted.d_vc[i] = photons.d_vc[src];
     photons_sorted.d_vcm[i] = photons.d_vcm[src];
-    photons_sorted.d_vm[i] = photons.d_vm[src];
+    //photons_sorted.d_vm[i] = photons.d_vm[src];
 }
 
 __global__ void buildTable(
@@ -3277,17 +3329,22 @@ __global__ void paintGridBox(
 }
 
 __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVertices* lightPath, Photons* photons, Photons* photons_sorted, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4 sceneMin, float4* colors, float4* overlay, bool postProcess, float mergeRadiusPower, float initialRadiusMultiplier)
+    Triangle* lights, int lightNum, int numSample, int w, int h, float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, float4* colors, float4* overlay, bool postProcess, float mergeRadiusPower, float initialRadiusMultiplier)
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
+
+    // Constants setup
+    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float4));
+    cudaMemcpyToSymbol(sceneMin, &(h_sceneMin), sizeof(float4));
+    cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
+    
+    // RNG Setup
     cudaRNGState* d_rngStates;
     cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
+    RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
 
-    unsigned long seed = 103033UL;
-    initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
-    cudaDeviceSynchronize();
-
+    // set up device buffers for VCM and display
     int* d_pathLengths = nullptr;
 
     cudaMalloc(&d_pathLengths, w * h * sizeof(int));
@@ -3296,6 +3353,7 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
     float4* d_finalOutput;
     cudaMalloc(&d_finalOutput, w * h * sizeof(float4));
 
+    // set up buffers used to create the hash table
     int maxPhotonCount = w * h * lightDepth;
 
     unsigned int* d_hash_keys_in;
@@ -3324,7 +3382,7 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
 
     int* d_global_photon_counter;
     cudaMalloc(&d_global_photon_counter, sizeof(int));
-
+    
     size_t freeB, totalB;
     cudaMemGetInfo(&freeB, &totalB);
     printf("Free: %.2f MB of %.2f MB\n",
@@ -3332,22 +3390,21 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    float saveIntervalSeconds = 5.0f;
-    int saveIntervalSamples = 5;
+    //float saveIntervalSeconds = 5.0f;
+    int saveIntervalSamples = 200;
     Image image = Image(w, h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(w * h);
 
-    std::cout << "Running Kernels" << std::endl;
-    std::cout << "first radius: " << calculateMergeRadius(sceneRadius * initialRadiusMultiplier, mergeRadiusPower, 0) << std::endl;
-    std::cout << "sec radius: " << calculateMergeRadius(sceneRadius * initialRadiusMultiplier, mergeRadiusPower, 1) << std::endl;
-    std::cout << "third radius: " << calculateMergeRadius(sceneRadius * initialRadiusMultiplier, mergeRadiusPower, 2) << std::endl;
+    std::cout << "Begin Render" << std::endl;
     
     float mergeRadius;
-    std::vector<float4> probePos = generateRandomProbes(3000, sceneCenter, sceneRadius);
+    float h_eta_vcm;
     for (int currSample = 0; currSample < numSample; currSample++)
     {
-        mergeRadius = calculateMergeRadius(sceneRadius * initialRadiusMultiplier, mergeRadiusPower, currSample);
+        mergeRadius = calculateMergeRadius(h_sceneRadius * initialRadiusMultiplier, mergeRadiusPower, currSample);
+        h_eta_vcm = mergeRadius * mergeRadius * (w * h * h_PI);
+        cudaMemcpyToSymbol(eta_vcm, &(h_eta_vcm), sizeof(float));
         
         cudaMemset(d_global_photon_counter, 0, sizeof(int));
         doLightPass<<<gridSize, blockSize>>>(
@@ -3363,15 +3420,12 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             scene, triNum,
             lights, lightNum,
             w, h,
-            sceneCenter, sceneRadius, mergeRadius,
             colors, overlay,
             d_global_photon_counter
         );
         
         int photonCount;
         cudaMemcpy(&photonCount, d_global_photon_counter, sizeof(int), cudaMemcpyDeviceToHost);
-
-        //printf("photons: %d\n", photonCount);
 
         buildHashGrid(
             *photons, 
@@ -3385,7 +3439,7 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             temp_storage_bytes,
             d_cell_start,
             d_cell_end,
-            sceneMin, 
+            h_sceneMin,
             mergeRadius, 
             hashTableSize
         );
@@ -3399,9 +3453,8 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             BVH, BVHindices,
             eyeDepth,
             vertices, vertNum, scene, triNum, lights, lightNum,
-            w, h, 
-            sceneCenter, sceneRadius, sceneMin,
-            hashTableSize, mergeRadius,
+            w, h,
+            hashTableSize,
             colors, overlay,
             photonCount
         );
@@ -3410,10 +3463,6 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
         if (DO_PROGRESSIVERENDER)
             cudaDeviceSynchronize();
 
-        //auto now = std::chrono::steady_clock::now();
-        //auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSaveTime).count();
-
-        //if (elapsed >= saveIntervalSeconds && DO_PROGRESSIVERENDER) 
         if (currSample % saveIntervalSamples == 0 && DO_PROGRESSIVERENDER) 
         {
             cleanAndFormatImage<<<gridSize, blockSize>>>(
@@ -3431,7 +3480,6 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             std::string filename = "render.bmp";
             image.saveImageBMP(filename);
             image.saveImageCSV_MONO(0);
-            //lastSaveTime = now;
             printf("saved progress at %d samples.\n", currSample);
 
             cudaMemset(overlay, 0, w * h * sizeof(float4));

@@ -1032,7 +1032,6 @@ struct VCMPathVertices
     unsigned int* packedInfo;
     
     float* d_vc;
-    //float* d_vm;
     float* d_vcm;
 };
 
@@ -1207,9 +1206,11 @@ Struct containing photon data for vcm. TODO: IMPLEMENT BACKFACE FLAG HERE. CRUCI
 */
 struct Photons
 {
-    float* pos_x;
-    float* pos_y;
-    float* pos_z;
+    //float* pos_x;
+    //float* pos_y;
+    //float* pos_z;
+
+    float4* pos_plus_vm;
 
     // current to previous
     unsigned int* packedWi;
@@ -1219,21 +1220,33 @@ struct Photons
     half* beta_y;
     half* beta_z;
 
-    //float* d_vc;
-    float* d_vm; 
+    //float* d_vm; 
     float* d_vcm;
 };
 
 __device__ __forceinline__ float4 getPos(const Photons& ps, int idx) 
 {
-    return f4(ps.pos_x[idx], ps.pos_y[idx], ps.pos_z[idx], 0.0f);
+    return f4(ps.pos_plus_vm[idx].x, ps.pos_plus_vm[idx].y, ps.pos_plus_vm[idx].z, 0.0f);
+}
+
+__device__ __forceinline__ float4 getPackedPosVM(const Photons& ps, int idx) 
+{
+    return ps.pos_plus_vm[idx];
 }
 
 __device__ __forceinline__ void setPos(Photons& ps, int idx, float4 p) 
 {
-    ps.pos_x[idx] = p.x;
-    ps.pos_y[idx] = p.y;
-    ps.pos_z[idx] = p.z;
+    ps.pos_plus_vm[idx].x = p.x;
+    ps.pos_plus_vm[idx].y = p.y;
+    ps.pos_plus_vm[idx].z = p.z;
+}
+
+__device__ __forceinline__ void setPackedPosVM(Photons& ps, int idx, float4 p, float vm) 
+{
+    ps.pos_plus_vm[idx].x = p.x;
+    ps.pos_plus_vm[idx].y = p.y;
+    ps.pos_plus_vm[idx].z = p.z;
+    ps.pos_plus_vm[idx].w = vm;
 }
 
 __device__ __forceinline__ void getNormalInfo(const Photons& x, int idx, float4& normal, bool& backface) {
@@ -1262,12 +1275,13 @@ __device__ __forceinline__ void setBeta(Photons& x, int idx, float4 b) {
     x.beta_z[idx] = __float2half(b.z);
 }
 
+// dont call this function
 __device__ __forceinline__ float getD_vm(const Photons& x, int idx) {
-    return x.d_vm[idx];
+    return x.pos_plus_vm[idx].w;
 }
 
 __device__ __forceinline__ void setD_vm(Photons& x, int idx, float val) {
-    x.d_vm[idx] = val;
+    x.pos_plus_vm[idx].z = val;
 }
 
 __device__ __forceinline__ float getD_vcm(const Photons& x, int idx) {

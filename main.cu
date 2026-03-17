@@ -240,7 +240,8 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
 
-    std::cout << "Began render number " << renderNumber << ": \"" << config.name << "\"\n\n";
+    std::cout << "------------------------------------------------------------------------------------------------------ \n" << 
+        "Began render number " << renderNumber << ": \"" << config.name << "\"\n\n";
 
     std::cout << "Current time: " 
               << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S")
@@ -701,12 +702,79 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     {
         launch_naive_unidirectional(maxDepth, camera, mats_d, textures_d, BVH, BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, true, w, h, out_colors);
     }
-    else if (integratorChoice == VCM || integratorChoice == SPPM)
+    else if (integratorChoice == SPPM)
+    {
+        int totalPhotons = w * h * lightPathDepth;
+
+        Photons tempPhotons;
+        cudaMalloc(&tempPhotons.pos_plus_vm, sizeof(float4) * totalPhotons);
+        cudaMalloc(&tempPhotons.packedWi, sizeof(unsigned int) * totalPhotons);
+        cudaMalloc(&tempPhotons.beta_x, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons.beta_y, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons.beta_z, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons.packedNormal, sizeof(unsigned int) * totalPhotons);
+        cudaMalloc(&tempPhotons.d_vcm, sizeof(float) * totalPhotons);
+
+        cudaMemset(tempPhotons.pos_plus_vm, 0, sizeof(float4) * totalPhotons);
+        cudaMemset(tempPhotons.beta_x, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons.beta_y, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons.beta_z, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons.packedWi, 0, sizeof(unsigned int) * totalPhotons);
+        cudaMemset(tempPhotons.packedNormal, 0, sizeof(unsigned int) * totalPhotons);
+        cudaMemset(tempPhotons.d_vcm, 0, sizeof(float) * totalPhotons);
+
+        Photons tempPhotons1;
+        cudaMalloc(&tempPhotons1.pos_plus_vm, sizeof(float4) * totalPhotons);
+        cudaMalloc(&tempPhotons1.packedWi, sizeof(unsigned int) * totalPhotons);
+        cudaMalloc(&tempPhotons1.beta_x, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons1.beta_y, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons1.beta_z, sizeof(half) * totalPhotons);
+        cudaMalloc(&tempPhotons1.packedNormal, sizeof(unsigned int) * totalPhotons);
+        cudaMalloc(&tempPhotons1.d_vcm, sizeof(float) * totalPhotons);
+
+        cudaMemset(tempPhotons1.pos_plus_vm, 0, sizeof(float) * totalPhotons);
+        cudaMemset(tempPhotons1.packedWi, 0, sizeof(unsigned int) * totalPhotons);
+        cudaMemset(tempPhotons1.beta_x, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons1.beta_y, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons1.beta_z, 0, sizeof(half) * totalPhotons);
+        cudaMemset(tempPhotons1.packedNormal, 0, sizeof(unsigned int) * totalPhotons);
+        cudaMemset(tempPhotons1.d_vcm, 0, sizeof(float) * totalPhotons);
+
+        launch_SPPM(
+            eyePathDepth, lightPathDepth, 
+            camera, 
+            &tempPhotons, &tempPhotons1, 
+            mats_d, textures_d, 
+            BVH, BVHindices, 
+            verts, points.size(), 
+            scene, mesh.size(), 
+            lights, lightsvec.size(), sampleCount, 
+            w, h, 
+            sceneCenter, sceneRadius, sceneMin,
+            out_colors, out_overlay,
+            config.postProcess, VCMMergeConstant, VCMInitialMergeRadiusMultiplier
+        );
+
+
+        cudaFree(tempPhotons.pos_plus_vm);
+        cudaFree(tempPhotons.beta_x);
+        cudaFree(tempPhotons.beta_y);
+        cudaFree(tempPhotons.beta_z);
+        cudaFree(tempPhotons.packedWi);
+        cudaFree(tempPhotons.packedNormal);
+        cudaFree(tempPhotons.d_vcm);
+        
+        cudaFree(tempPhotons1.pos_plus_vm);
+        cudaFree(tempPhotons1.beta_x);
+        cudaFree(tempPhotons1.beta_y);
+        cudaFree(tempPhotons1.beta_z);
+        cudaFree(tempPhotons1.packedWi);
+        cudaFree(tempPhotons1.packedNormal);
+        cudaFree(tempPhotons1.d_vcm);
+    }
+    else if (integratorChoice == VCM)
     {
         int totalLightPathVertices = w * h * lightPathDepth;
-
-        //VCMPathVertices* lightPath_d;
-        //cudaMalloc(&lightPath_d, sizeof(VCMPathVertices));
 
         VCMPathVertices tempPaths;
 
@@ -951,13 +1019,13 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
 int main ()
 {
-    string configName = "configs/watersim.rendertron";
+    string configName = "configs/dragon.rendertron";
     //for (int i = 0; i <= 150; i++)
     //    initRender(configName, i);
 
-    //initRender(configName, 0); 
+    initRender(configName, 0); 
 
-    for (int i = 30; i <= 250; ++i) {
+    for (int i = 250; i <= 250; ++i) {
         char buf[128];
         snprintf(buf, sizeof(buf), "scenedata/watersim/tenbillionobj/wateranim%04d.obj", i);
         initRender(configName, i, buf); 

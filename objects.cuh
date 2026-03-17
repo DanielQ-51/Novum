@@ -265,7 +265,7 @@ struct Camera
 
 
     // returns a camera ray with normalized direction
-    __device__ Ray generateCameraRay(cudaRNGState& localState, int x, int y)
+    __device__ __forceinline__ Ray generateCameraRay(cudaRNGState& localState, int x, int y)
     {
         Ray r;
         float aspect = (float)w / (float)h;
@@ -284,51 +284,53 @@ struct Camera
         float4 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
 
         // 3. Sample the Lens (Aperture)
+        /*
         float4 lensOffset = f4(0.0f, 0.0f, 0.0f, 0.0f);
         
-        if (aperture > 0.0f)
-        {
-            // --- CONFIGURATION ---
-            int blades = 6;             // 6 = Hexagon, 5 = Pentagon, etc.
-            float rotation = 0.0f;      // Rotate the bokeh shape (in radians)
-            // ---------------------
+        int blades = 6;             // 6 = Hexagon, 5 = Pentagon, etc.
+        float rotation = 0.0f;      // Rotate the bokeh shape (in radians)
+        // ---------------------
 
-            float r1 = curand_uniform(&localState); 
-            float r2 = curand_uniform(&localState);
+        float r1 = curand_uniform(&localState); 
+        float r2 = curand_uniform(&localState);
 
-            // 1. Pick which "slice" (blade) of the aperture we are in
-            float bladeIdx = floorf(r1 * (float)blades);
-            
-            // 2. Map r1 to the range [0, 1] within that specific slice
-            // This effectively re-uses the random number to save a generator call
-            float r1_local = r1 * (float)blades - bladeIdx;
+        // 1. Pick which "slice" (blade) of the aperture we are in
+        float bladeIdx = floorf(r1 * (float)blades);
+        
+        // 2. Map r1 to the range [0, 1] within that specific slice
+        // This effectively re-uses the random number to save a generator call
+        float r1_local = r1 * (float)blades - bladeIdx;
 
-            // 3. Calculate the angles for the two vertices of this triangle slice
-            float twoPi = 6.283185f;
-            float theta1 = ((bladeIdx) / (float)blades) * twoPi + rotation;
-            float theta2 = ((bladeIdx + 1.0f) / (float)blades) * twoPi + rotation;
+        // 3. Calculate the angles for the two vertices of this triangle slice
+        float twoPi = 6.283185f;
+        float theta1 = ((bladeIdx) / (float)blades) * twoPi + rotation;
+        float theta2 = ((bladeIdx + 1.0f) / (float)blades) * twoPi + rotation;
 
-            // 4. Calculate the vertex positions on the aperture rim
-            // We use aperture radius as the scale
-            float2 v1 = make_float2(cosf(theta1), sinf(theta1));
-            float2 v2 = make_float2(cosf(theta2), sinf(theta2));
+        // 4. Calculate the vertex positions on the aperture rim
+        // We use aperture radius as the scale
+        float2 v1 = make_float2(cosf(theta1), sinf(theta1));
+        float2 v2 = make_float2(cosf(theta2), sinf(theta2));
 
-            // 5. Uniformly sample the triangle defined by Center(0,0), V1, V2
-            // sqrtf(r2) ensures we sample area uniformly (less density near center)
-            float radiusScale = aperture * sqrtf(r2);
-            
-            // Linear interpolation between the two rim vertices
-            float2 p = (v1 * (1.0f - r1_local) + v2 * r1_local) * radiusScale;
+        // 5. Uniformly sample the triangle defined by Center(0,0), V1, V2
+        // sqrtf(r2) ensures we sample area uniformly (less density near center)
+        float radiusScale = aperture * sqrtf(r2);
+        
+        // Linear interpolation between the two rim vertices
+        float2 p = (v1 * (1.0f - r1_local) + v2 * r1_local) * radiusScale;
 
-            float lensU = p.x;
-            float lensV = p.y;
+        float lensU = p.x;
+        float lensV = p.y;
 
-            // Apply to camera basis vectors
-            lensOffset = (right * lensU) + (up * lensV);
-        }
+        // Apply to camera basis vectors
+        lensOffset = (right * lensU) + (up * lensV);
+        
+
+        lensOffset = aperture > 0.0f ? f4() : lensOffset;
+        */
 
         // 4. Final Ray Construction
-        r.origin = cameraOrigin + lensOffset;
+        //r.origin = cameraOrigin + lensOffset;
+        r.origin = cameraOrigin;
         r.direction = normalize(focalPoint - r.origin);
 
         return r;
@@ -352,23 +354,23 @@ struct Camera
         
     }
 
-    __host__ __device__ float4 getForwardVector() const
+    __host__ __device__ __forceinline__ float4 getForwardVector() const
     {
         return forward;
     }
 
-    __host__ __device__ float4 getRightVector() const
+    __host__ __device__ __forceinline__ float4 getRightVector() const
     {
         return right;
     }
 
-    __host__ __device__ float4 getUpVector() const
+    __host__ __device__ __forceinline__ float4 getUpVector() const
     {
         return up;
     }
 
     // dark magic
-    __device__ bool worldToRaster(const float4& pointWorld, float2& pixelPos)
+    __device__ __forceinline__ bool worldToRaster(const float4& pointWorld, float2& pixelPos)
     {
         float4 dir = pointWorld - cameraOrigin;
 
@@ -728,6 +730,7 @@ struct Material
 
         m.ior = ior;
         m.albedo = f4(1.0f);
+        m.roughness = 0.0f;
 
         m.priority = pri;
         m.isSpecular = true;
@@ -745,6 +748,7 @@ struct Material
 
         m.ior = ior;
         m.albedo = f4(1.0f);
+        m.roughness = 0.0f;
 
         m.priority = pri;
         m.isSpecular = true;
@@ -832,6 +836,7 @@ struct Material
         m.hasTransMap = false;
 
         m.isSpecular = true;
+        m.roughness = 0.0f;
 
         return m;
     }
@@ -1058,7 +1063,7 @@ __device__ __forceinline__ void getAllInfo(
     int& matID
 ) 
 {
-    unsigned int info = x.packedInfo[idx];
+    unsigned int info = __ldg(&x.packedInfo[idx]);
 
     // Bit 0: isDelta
     isDelta = (info & 1u);
@@ -1083,7 +1088,7 @@ __device__ __forceinline__ void getAllInfo(
 }
 
 __device__ __forceinline__ int getLightIndex(const VCMPathVertices& x, int idx) {
-    unsigned int rawLight = (x.packedInfo[idx] >> 2) & MASK_LIGHT;
+    unsigned int rawLight = (__ldg(&x.packedInfo[idx]) >> 2) & MASK_LIGHT;
 
     if (rawLight == RAW_LIGHT_NONE) return -1;
     if (rawLight == RAW_LIGHT_ENV)  return -2;
@@ -1104,11 +1109,11 @@ __device__ __forceinline__ void setLightIndex(VCMPathVertices& x, int idx, int v
 }
 
 __device__ __forceinline__ int getMaterialID(const VCMPathVertices& x, int idx) {
-    return (x.packedInfo[idx] >> 22) & MASK_MAT;
+    return (__ldg(&x.packedInfo[idx]) >> 22) & MASK_MAT;
 }
 
 __device__ __forceinline__ void setMaterialID(VCMPathVertices& x, int idx, int val) {
-    unsigned int current = x.packedInfo[idx];
+    unsigned int current = __ldg(&x.packedInfo[idx]);
     current &= ~(MASK_MAT << 22); 
     
     current |= (unsigned int)(val & MASK_MAT) << 22;
@@ -1116,22 +1121,22 @@ __device__ __forceinline__ void setMaterialID(VCMPathVertices& x, int idx, int v
 }
 
 __device__ __forceinline__ bool getIsDelta(const VCMPathVertices& x, int idx) {
-    return (x.packedInfo[idx] & 1u);
+    return (__ldg(&x.packedInfo[idx]) & 1u);
 }
 
 __device__ __forceinline__ bool getIsBackface(const VCMPathVertices& x, int idx) {
-    return (x.packedInfo[idx] >> 1) & 1u;
+    return (__ldg(&x.packedInfo[idx]) >> 1) & 1u;
 }
 
 __device__ __forceinline__ void setIsDelta(VCMPathVertices& x, int idx, bool val) {
-    unsigned int current = x.packedInfo[idx];
+    unsigned int current = __ldg(&x.packedInfo[idx]);
     current &= ~MASK_DELTA; // Clear bit
     current |= (val ? 1u : 0u);
     x.packedInfo[idx] = current;
 }
 
 __device__ __forceinline__ void setIsBackface(VCMPathVertices& x, int idx, bool val) {
-    unsigned int current = x.packedInfo[idx];
+    unsigned int current = __ldg(&x.packedInfo[idx]);
     current &= ~MASK_BACKFACE;
     current |= (val ? 1u : 0u) << 1;
     x.packedInfo[idx] = current;
@@ -1139,7 +1144,11 @@ __device__ __forceinline__ void setIsBackface(VCMPathVertices& x, int idx, bool 
 
 __device__ __forceinline__ float4 getPos(const VCMPathVertices& verts, int idx) 
 {
-    return f4(verts.pos_x[idx], verts.pos_y[idx], verts.pos_z[idx], 0.0f);
+    return f4(
+        __ldg(&verts.pos_x[idx]), 
+        __ldg(&verts.pos_y[idx]), 
+        __ldg(&verts.pos_z[idx]), 
+        0.0f);
 }
 
 __device__ __forceinline__ void setPos(VCMPathVertices& verts, int idx, float4 p) 
@@ -1150,7 +1159,7 @@ __device__ __forceinline__ void setPos(VCMPathVertices& verts, int idx, float4 p
 }
 
 __device__ __forceinline__ float4 getNormal(const VCMPathVertices& x, int idx) {
-    return unpackOct(x.packedNormal[idx]);
+    return unpackOct(__ldg(&x.packedNormal[idx]));
 }
 
 __device__ __forceinline__ void setNormal(VCMPathVertices& x, int idx, float4 n) {
@@ -1158,7 +1167,7 @@ __device__ __forceinline__ void setNormal(VCMPathVertices& x, int idx, float4 n)
 }
 
 __device__ __forceinline__ float4 getWo(const VCMPathVertices& x, int idx) {
-    return unpackOct(x.packedWo[idx]);
+    return unpackOct(__ldg(&x.packedWo[idx]));
 }
 
 __device__ __forceinline__ void setWo(VCMPathVertices& x, int idx, float4 wo) {
@@ -1167,7 +1176,11 @@ __device__ __forceinline__ void setWo(VCMPathVertices& x, int idx, float4 wo) {
 
 __device__ __forceinline__ float4 getBeta(const VCMPathVertices& x, int idx) {
     //return fromRGB9E5(x.packedBeta[idx]);
-    return f4(__half2float(x.beta_x[idx]), __half2float(x.beta_y[idx]), __half2float(x.beta_z[idx]), 0.0f);
+    return f4(
+        __half2float(__ldg(&x.beta_x[idx])), 
+        __half2float(__ldg(&x.beta_y[idx])), 
+        __half2float(__ldg(&x.beta_z[idx])), 
+        0.0f);
 }
 
 __device__ __forceinline__ void setBeta(VCMPathVertices& x, int idx, float4 b) {
@@ -1178,7 +1191,7 @@ __device__ __forceinline__ void setBeta(VCMPathVertices& x, int idx, float4 b) {
 }
 
 __device__ __forceinline__ float2 getUV(const VCMPathVertices& x, int idx) {
-    return __half22float2(x.packedUV[idx]);
+    return __half22float2(__ldg(&x.packedUV[idx]));
 }
 
 __device__ inline void setUV(VCMPathVertices& x, int idx, float2 uv) {
@@ -1186,7 +1199,7 @@ __device__ inline void setUV(VCMPathVertices& x, int idx, float2 uv) {
 }
 
 __device__ __forceinline__ float getD_vc(const VCMPathVertices& x, int idx) {
-    return x.d_vc[idx];
+    return __ldg(&x.d_vc[idx]);
 }
 
 __device__ __forceinline__ void setD_vc(VCMPathVertices& x, int idx, float val) {
@@ -1194,7 +1207,7 @@ __device__ __forceinline__ void setD_vc(VCMPathVertices& x, int idx, float val) 
 }
 
 __device__ __forceinline__ float getD_vcm(const VCMPathVertices& x, int idx) {
-    return x.d_vcm[idx];
+    return __ldg(&x.d_vcm[idx]);
 }
 
 __device__ __forceinline__ void setD_vcm(VCMPathVertices& x, int idx, float val) {
@@ -1202,17 +1215,12 @@ __device__ __forceinline__ void setD_vcm(VCMPathVertices& x, int idx, float val)
 }
 
 /*
-Struct containing photon data for vcm. TODO: IMPLEMENT BACKFACE FLAG HERE. CRUCIAL IF YOU PUT DOUBLE SIDED MATERIALS!!!!
+Struct containing photon data for vcm.
 */
 struct Photons
 {
-    //float* pos_x;
-    //float* pos_y;
-    //float* pos_z;
-
     float4* pos_plus_vm;
 
-    // current to previous
     unsigned int* packedWi;
     unsigned int* packedNormal;
     
@@ -1220,18 +1228,19 @@ struct Photons
     half* beta_y;
     half* beta_z;
 
-    //float* d_vm; 
     float* d_vcm;
 };
 
 __device__ __forceinline__ float4 getPos(const Photons& ps, int idx) 
 {
-    return f4(ps.pos_plus_vm[idx].x, ps.pos_plus_vm[idx].y, ps.pos_plus_vm[idx].z, 0.0f);
+    float4 p = __ldg(&ps.pos_plus_vm[idx]);
+    p.w = 0.0f;
+    return p;
 }
 
 __device__ __forceinline__ float4 getPackedPosVM(const Photons& ps, int idx) 
 {
-    return ps.pos_plus_vm[idx];
+    return __ldg(&ps.pos_plus_vm[idx]);
 }
 
 __device__ __forceinline__ void setPos(Photons& ps, int idx, float4 p) 
@@ -1250,7 +1259,7 @@ __device__ __forceinline__ void setPackedPosVM(Photons& ps, int idx, float4 p, f
 }
 
 __device__ __forceinline__ void getNormalInfo(const Photons& x, int idx, float4& normal, bool& backface) {
-    normal = unpackOctFlags(x.packedNormal[idx], &backface, nullptr);
+    normal = unpackOctFlags(__ldg(&x.packedNormal[idx]), &backface, nullptr);
 }
 
 __device__ __forceinline__ void setNormalInfo(Photons& x, int idx, float4 n, bool backface) {
@@ -1258,7 +1267,7 @@ __device__ __forceinline__ void setNormalInfo(Photons& x, int idx, float4 n, boo
 }
 
 __device__ __forceinline__ float4 getWi(const Photons& x, int idx) {
-    return unpackOct(x.packedWi[idx]);
+    return unpackOct(__ldg(&x.packedWi[idx]));
 }
 
 __device__ __forceinline__ void setWi(Photons& x, int idx, float4 wi) {
@@ -1266,7 +1275,11 @@ __device__ __forceinline__ void setWi(Photons& x, int idx, float4 wi) {
 }
 
 __device__ __forceinline__ float4 getBeta(const Photons& x, int idx) {
-    return f4(__half2float(x.beta_x[idx]), __half2float(x.beta_y[idx]), __half2float(x.beta_z[idx]), 0.0f);
+    return f4(
+        __half2float(__ldg(&x.beta_x[idx])), 
+        __half2float(__ldg(&x.beta_y[idx])), 
+        __half2float(__ldg(&x.beta_z[idx])), 
+        0.0f);
 }
 
 __device__ __forceinline__ void setBeta(Photons& x, int idx, float4 b) {
@@ -1277,15 +1290,15 @@ __device__ __forceinline__ void setBeta(Photons& x, int idx, float4 b) {
 
 // dont call this function
 __device__ __forceinline__ float getD_vm(const Photons& x, int idx) {
-    return x.pos_plus_vm[idx].w;
+    return __ldg(&x.pos_plus_vm[idx]).w;
 }
 
 __device__ __forceinline__ void setD_vm(Photons& x, int idx, float val) {
-    x.pos_plus_vm[idx].z = val;
+    x.pos_plus_vm[idx].w = val;
 }
 
 __device__ __forceinline__ float getD_vcm(const Photons& x, int idx) {
-    return x.d_vcm[idx];
+    return __ldg(&x.d_vcm[idx]);
 }
 
 __device__ __forceinline__ void setD_vcm(Photons& x, int idx, float val) {

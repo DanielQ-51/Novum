@@ -421,7 +421,7 @@ __device__ void thin_dielectric_sample_f(cudaRNGState& localState,
     }
 }
 
-__device__ void sampleTexture(const Material& mat, float4* textures, const float2 uv, float4& albedo)
+__device__ void sampleTexture(const Material& mat, const float4* __restrict__ textures, const float2 uv, float4& albedo)
 {
     int width = mat.width;
     int height = mat.height;
@@ -455,10 +455,10 @@ __device__ void sampleTexture(const Material& mat, float4* textures, const float
     // 5. Fetch texels
     // Note: Depending on memory layout, these 4 reads are likely uncoalesced 
     // and will cause significant memory latency.
-    float4 c00 = textures[mat.startInd + y0 * width + x0];
-    float4 c10 = textures[mat.startInd + y0 * width + x1];
-    float4 c01 = textures[mat.startInd + y1 * width + x0];
-    float4 c11 = textures[mat.startInd + y1 * width + x1];
+    float4 c00 = __ldg(&textures[mat.startInd + y0 * width + x0]);
+    float4 c10 = __ldg(&textures[mat.startInd + y0 * width + x1]);
+    float4 c01 = __ldg(&textures[mat.startInd + y1 * width + x0]);
+    float4 c11 = __ldg(&textures[mat.startInd + y1 * width + x1]);
 
     // 6. Interpolate (Lerp)
     // Using mix/lerp helper functions is usually cleaner:
@@ -774,7 +774,7 @@ __device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void f_eval(const Material* materials, int materialID, float4* textures,
+__device__ void f_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
     const float4& wi, const float4& wo, float etaI, float etaT, float4& f_val, const float2 uv,
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
@@ -819,7 +819,7 @@ __device__ void f_eval(const Material* materials, int materialID, float4* textur
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void sample_f_eval(cudaRNGState& localState, const Material* materials, int materialID, float4* textures, 
+__device__ void sample_f_eval(cudaRNGState& localState, const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, 
     const float4& wi, float etaI, float etaT, bool backface, float4& wo, float4& f_val, float& pdf, const float2 uv, 
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
@@ -872,7 +872,7 @@ __device__ void sample_f_eval(cudaRNGState& localState, const Material* material
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void pdf_eval(Material* materials, int materialID, float4* textures, const float4& wi, const float4& wo, 
+__device__ void pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, const float4& wi, const float4& wo, 
     float etaI, float etaT, float& pdf, const float2 uv)
 {
     const Material& mat = materials[materialID];

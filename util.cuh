@@ -25,12 +25,14 @@
 #include <sstream>
 #include "rng.cuh"
 
-__device__ __constant__ float EPSILON = 0.00001f;
+// need to set epsilon low for small scale scenes for some reason, likely due to rejection of min distance?
+// ideally should be decoupled from ray epsilon type things; look into this
+__device__ __constant__ float EPSILON = 0.0000001f;
 __device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 10.0f;
-__device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 15.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 350.0f;
+__device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
 constexpr float h_PI = 3.141592f;

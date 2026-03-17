@@ -26,6 +26,9 @@ __device__ __constant__ float sceneRadius;
 __device__ __constant__ float4 sceneCenter;
 __device__ __constant__ float4 sceneMin;
 
+__device__ __constant__ int w;
+__device__ __constant__ int h;
+
 __host__ void updateConstants(RenderConfig& config)
 {
     cudaMemcpyToSymbol(BDPT_LIGHTTRACE, &config.bdptLightTrace, sizeof(bool));
@@ -52,7 +55,7 @@ __global__ void initRNG(cudaRNGState* states, int width, int height, unsigned lo
     curand_init(seed, idx, 0, &states[idx]);  
 } */
 
-__device__ void neePDF(Vertices* vertices, Triangle* scene, int lightNum, int lightTriInd, const Intersection& intersect, 
+__device__ void neePDF(const Vertices* __restrict__ vertices, const Triangle* __restrict__ scene, int lightNum, int lightTriInd, const Intersection& intersect, 
     float& light_pdf, float etaI, float etaT, const Intersection* newIntersect)
 {
     Triangle l = scene[lightTriInd];
@@ -76,8 +79,8 @@ __device__ void neePDF(Vertices* vertices, Triangle* scene, int lightNum, int li
     light_pdf = distanceSQR / (cosThetaLight * lightNum * area);
 }
 
-__device__ void nextEventEstimation(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
-    Triangle* scene, Triangle* lights, int lightNum, const Intersection& intersect, const float4& wo, 
+__device__ void nextEventEstimation(cudaRNGState& localState, const Material* __restrict__ materials, const float4* __restrict__ textures, const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, const Vertices* __restrict__ vertices,
+    const Triangle* __restrict__ scene, const Triangle* __restrict__ lights, int lightNum, const Intersection& intersect, const float4& wo, 
     float& light_pdf, float4& contribution, float4& surfaceToLight_local, float etaI, float etaT)
 {
     contribution = f4(0.0f,0.0f,0.0f);
@@ -147,8 +150,25 @@ __device__ void nextEventEstimation(cudaRNGState& localState, Material* material
     }
 }
 
-__global__ void Li_naive_unidirectional (cudaRNGState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
+__global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    bool useMIS, 
+    int w, int h, 
+    float4* __restrict__ colors
+)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -196,8 +216,24 @@ __global__ void Li_naive_unidirectional (cudaRNGState* rngStates, Camera camera,
     rngStates[pixelIdx] = localState;
 }
 
-__host__ void launch_naive_unidirectional(int maxDepth, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
+__host__ void launch_naive_unidirectional(
+    int maxDepth, 
+    Camera camera, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    bool useMIS, 
+    int w, int h, 
+    float4* __restrict__ colors
+)
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
@@ -275,8 +311,25 @@ __host__ void launch_naive_unidirectional(int maxDepth, Camera camera, Material*
         std::cout << "Render executed with no CUDA error" << std::endl;
 }
 
-__global__ void Li_unidirectional (cudaRNGState* rngStates, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
+__global__ void __launch_bounds__(256, 2) Li_unidirectional (
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    bool useMIS, 
+    int w, int h, 
+    float4* __restrict__ colors
+)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -534,8 +587,24 @@ __global__ void Li_unidirectional (cudaRNGState* rngStates, Camera camera, Mater
     rngStates[pixelIdx] = localState;
 }
 
-__host__ void launch_unidirectional(int maxDepth, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, bool useMIS, int w, int h, float4* colors)
+__host__ void launch_unidirectional(
+    int maxDepth, 
+    Camera camera, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    bool useMIS, 
+    int w, int h, 
+    float4* __restrict__ colors
+)
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
@@ -613,10 +682,29 @@ __host__ void launch_unidirectional(int maxDepth, Camera camera, Material* mater
         std::cout << "Render executed with no CUDA error" << std::endl;
 }
 
-__device__ bool BDPTnextEventEstimation(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices,
-    Triangle* scene, Triangle* lights, int lightNum, int materialID, float4 shadingPos, const float4 toShadingPos_local, const float4 shadingPos_normal,
-    const float2 uv, float& light_pdf, float4& contribution, float4& shadingPos_to_lightPos, int& lightInd, float& cosLight, float& pdf_emit, 
-    float etaI, float etaT, float sceneRadius)
+__device__ bool BDPTnextEventEstimation(
+    cudaRNGState& localState, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices,
+    const Triangle* __restrict__ scene, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int materialID, 
+    float4 shadingPos, 
+    const float4 toShadingPos_local, 
+    const float4 shadingPos_normal,
+    const float2 uv, 
+    float& light_pdf, 
+    float4& contribution, 
+    float4& shadingPos_to_lightPos, 
+    int& lightInd, 
+    float& cosLight, 
+    float& pdf_emit, 
+    float etaI, float etaT
+)
 {
     int totalLightNum = SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum; // +1 for the sky
     lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (totalLightNum)), totalLightNum - 1) - 1) : 
@@ -742,8 +830,24 @@ __device__ bool BDPTnextEventEstimation(cudaRNGState& localState, Material* mate
 }
 
 // populates the section of eyePath buffer specified by the arguments. Also asigns the length of the path
-__device__ void generateEyePath(cudaRNGState& localState, Camera camera, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int w, int h, int x, int y, float sceneRadius, PathVertices* eyePath, int& pathLength) 
+__device__ void generateEyePath(
+    cudaRNGState& localState, 
+    Camera camera, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int w, int h, int x, int y, 
+    PathVertices* eyePath, 
+    int& pathLength
+) 
 {
     pathLength = 1;
     Ray r = camera.generateCameraRay(localState, x, y);
@@ -944,8 +1048,21 @@ __device__ void generateEyePath(cudaRNGState& localState, Camera camera, Materia
     }
 }
 
-__device__ void generateFirstLightPathVertex(cudaRNGState& localState, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int w, int h, int x, int y, float4 sceneCenter, float sceneRadius, PathVertices* lightPath, float& pdf_solidAngle, float& cosine, float4& out_wi) 
+__device__ void generateFirstLightPathVertex(
+    cudaRNGState& localState, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int w, int h, int x, int y, 
+    PathVertices* lightPath, 
+    float& pdf_solidAngle, 
+    float& cosine, 
+    float4& out_wi
+) 
 {
     int firstIdx = pathBufferIdx(w, h, x, y, 0);
 
@@ -1070,8 +1187,23 @@ __device__ void generateFirstLightPathVertex(cudaRNGState& localState, int maxDe
     }
 }
 
-__device__ void generateLightPath(cudaRNGState& localState, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, int maxDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int w, int h, int x, int y, float4 sceneCenter, float sceneRadius, PathVertices* lightPath, int& pathLength) 
+__device__ void generateLightPath(
+    cudaRNGState& localState, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int w, int h, int x, int y, 
+    PathVertices* lightPath, 
+    int& pathLength
+) 
 {
     pathLength = 1;
     int firstIdx = pathBufferIdx(w, h, x, y, 0);
@@ -1082,7 +1214,7 @@ __device__ void generateLightPath(cudaRNGState& localState, Material* materials,
 
     float4 currThroughput = f4(1.0f);
 
-    generateFirstLightPathVertex(localState, maxDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, sceneCenter, sceneRadius, lightPath, prevPDF_solidAngle, prev_cosine, start_wi);
+    generateFirstLightPathVertex(localState, maxDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, lightPath, prevPDF_solidAngle, prev_cosine, start_wi);
 
     currThroughput = lightPath->beta[firstIdx];
 
@@ -1277,8 +1409,28 @@ __device__ void generateLightPath(cudaRNGState& localState, Material* materials,
 }
 
 // performs the randomwalk from a sampled light, and takes care of the vertex connection sttage where light is made to directly hit the camera lense.
-__global__ void lightPathTracing (cudaRNGState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
-    int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4* colors, float4* overlay) 
+__global__ void __launch_bounds__(256, 2) lightPathTracing (
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    PathVertices* eyePath, 
+    PathVertices* lightPath, 
+    int* lightPathLengths, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int lightDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    int w, int h, 
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay
+) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1289,7 +1441,7 @@ __global__ void lightPathTracing (cudaRNGState* rngStates, Camera camera, PathVe
     cudaRNGState localState = rngStates[pixelIdx];
 
     int lightPathLength;
-    generateLightPath(localState, materials, textures, BVH, BVHindices, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, sceneCenter, sceneRadius, lightPath, lightPathLength);
+    generateLightPath(localState, materials, textures, BVH, BVHindices, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, lightPath, lightPathLength);
 
     lightPathLengths[pixelIdx] = lightPathLength;
 
@@ -1432,8 +1584,27 @@ __global__ void lightPathTracing (cudaRNGState* rngStates, Camera camera, PathVe
  Therefore, we must always complete the partial mis weight by applying a recursive ratio corresponding
  to the reverse/fwd pdf of vi, in addition to any other terms representing other strategies.
  */
-__device__ bool connectPath(cudaRNGState& localState, int t, int s, int x, int y, int w, int h, Camera camera, int maxEyeDepth, int maxLightDepth, Material* materials, BVHnode* BVH, int* BVHindices, Vertices* vertices, 
-    Triangle* scene, Triangle* lights, int lightNum, float4* textures, float sceneRadius, int eyePathLength, int lightPathLength, PathVertices* eyePath, PathVertices* lightPath, float4& contribution, float& misWeight)
+__device__ bool connectPath(
+    cudaRNGState& localState, 
+    int t, int s, 
+    int x, int y, int w, int h, 
+    Camera camera, 
+    int maxEyeDepth, 
+    int maxLightDepth, 
+    const Material* __restrict__ materials, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    const Triangle* __restrict__ scene, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    const float4* __restrict__ textures, 
+    int eyePathLength, 
+    int lightPathLength, 
+    PathVertices* eyePath, 
+    PathVertices* lightPath, 
+    float4& contribution, 
+    float& misWeight)
 {
     int eyePathIDX = pathBufferIdx(w, h, x, y, t - 1);
     int eyePathPREVIDX = pathBufferIdx(w, h, x, y, t - 2);
@@ -1485,7 +1656,7 @@ __device__ bool connectPath(cudaRNGState& localState, int t, int s, int x, int y
         // sets eyeToLight, lightPDF_area, lightInd, cosLight, neecontributionunweighted
         bool occluded = BDPTnextEventEstimation(localState, materials, textures, BVH, BVHindices, vertices, scene, lights, lightNum, eyePath->materialID[eyePathIDX], 
             eyePath->pt[eyePathIDX], prevToCurr_local, eyePath->n[eyePathIDX], eyePath->uv[eyePathIDX], pdf_connect, nee_contribution_unweighted, eyeToLight, 
-            lightInd, cosLight, pdf_emit_SA, etaI, etaT, sceneRadius);
+            lightInd, cosLight, pdf_emit_SA, etaI, etaT);
         if (occluded)
         {
             return true;
@@ -1755,8 +1926,28 @@ __device__ bool connectPath(cudaRNGState& localState, int t, int s, int x, int y
 }
 
 
-__global__ void Li_bidirectional(cudaRNGState* rngStates, Camera camera, PathVertices* eyePath, PathVertices* lightPath, int* lightPathLengths, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, 
-    int eyeDepth, int lightDepth, Vertices* vertices, int vertNum, Triangle* scene, int triNum, Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4* colors, float4* overlay) 
+__global__ void __launch_bounds__(256, 2) Li_bidirectional(
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    PathVertices* eyePath, 
+    PathVertices* lightPath, 
+    int* lightPathLengths, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    int eyeDepth, int lightDepth, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, 
+    int numSample, 
+    int w, int h, 
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay
+) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1771,7 +1962,7 @@ __global__ void Li_bidirectional(cudaRNGState* rngStates, Camera camera, PathVer
 
     // light path is already computed from the previous kernel
     generateEyePath(localState, camera, materials, textures, BVH, BVHindices, eyeDepth, vertices, vertNum, scene, triNum, lights, 
-        lightNum, w, h, x, y, sceneRadius, eyePath, eyePathLength);
+        lightNum, w, h, x, y, eyePath, eyePathLength);
 
     float4 fullContribution = f4(0.0f);
 
@@ -1784,7 +1975,7 @@ __global__ void Li_bidirectional(cudaRNGState* rngStates, Camera camera, PathVer
             float misWeight = 0.0f; // set in connect path
 
             if (!connectPath(localState, t, s, x, y, w, h, camera, eyeDepth, lightDepth, materials, BVH, BVHindices, vertices, scene, lights, lightNum, 
-                textures, sceneRadius, eyePathLength, lightPathLength, eyePath, lightPath, unweighted_contribution, misWeight) && BDPT_DRAWPATH)
+                textures, eyePathLength, lightPathLength, eyePath, lightPath, unweighted_contribution, misWeight) && BDPT_DRAWPATH)
             {
                 drawPath(overlay, eyePath, camera, x, y, w, eyePathLength, eyeDepth, f4(curand_uniform(&localState), curand_uniform(&localState), curand_uniform(&localState)));
             }
@@ -1804,12 +1995,33 @@ __global__ void Li_bidirectional(cudaRNGState* rngStates, Camera camera, PathVer
     rngStates[pixelIdx] = localState;
 }
 
-__host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, PathVertices* eyePath, PathVertices* lightPath, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, int w, int h, float4 sceneCenter, float sceneRadius, float4* colors, float4* overlay, bool postProcess)
+__host__ void launch_bidirectional(
+    int eyeDepth, 
+    int lightDepth, 
+    Camera camera, 
+    PathVertices* eyePath, 
+    PathVertices* lightPath, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, int numSample, int w, int h, 
+    float4 h_sceneCenter, float h_sceneRadius, 
+    float4* __restrict__ colors, float4* __restrict__ overlay, 
+    bool postProcess
+)
 {
     // --- SETUP ---
     dim3 blockSize(16, 16);  
     dim3 gridSize((w + 15) / 16, (h + 15) / 16);
+
+    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float4));
+    cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
 
     // Create a CUDA Stream (Required for Graphs)
     cudaStream_t stream;
@@ -1863,13 +2075,13 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
             lightPathTracing<<<gridSize, blockSize, 0, stream>>>(
                 d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
                 lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
-                sceneCenter, sceneRadius, colors, overlay
+                colors, overlay
             );
 
             Li_bidirectional<<<gridSize, blockSize, 0, stream>>>(
                 d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
                 eyeDepth, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
-                sceneCenter, sceneRadius, colors, overlay
+                colors, overlay
             );
 
             cudaStreamEndCapture(stream, &graph);
@@ -1877,10 +2089,8 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
             graphCreated = true;
         }
 
-        // 2. LAUNCH GRAPH (Fast!)
         cudaGraphLaunch(instance, stream);
 
-        // 3. CHECK SAVE INTERVAL (Every ~50 samples to save CPU cycles)
         if (DO_PROGRESSIVERENDER && currSample % 25 == 0) {
             cudaStreamSynchronize(stream);
 
@@ -1948,17 +2158,17 @@ __host__ void launch_bidirectional(int eyeDepth, int lightDepth, Camera camera, 
 
 __device__ void generateVCMLightPath(
     cudaRNGState& localState, 
-    int x, int y, int w, int h, 
+    int x, int y,
     VCMPathVertices lightPath, 
     Photons photons, 
-    Material* materials, 
-    float4* textures, 
-    BVHnode* BVH, int* BVHindices, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
     int maxDepth, 
-    Vertices* vertices, int vertNum, 
-    Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum,
-    float4* overlay, 
+    const Vertices* __restrict__ vertices, int vertNum, 
+    const Triangle* __restrict__ scene, int triNum, 
+    const Triangle* __restrict__ lights, int lightNum,
+    float4* __restrict__ overlay, 
     int& pathLength, 
     int* globalPhotonIndex
 )
@@ -2191,21 +2401,23 @@ __device__ void generateVCMLightPath(
 
         // light path data (for connections)
 
-        setPos(lightPath, currIdx, currPos);
-        setNormal(lightPath, currIdx, currNormal);
-        setWo(lightPath, currIdx, currWo);
-        setBeta(lightPath, currIdx, currBeta);
-        setUV(lightPath, currIdx, currUV);
+        if (!DO_SPPM)
+        {
+            setPos(lightPath, currIdx, currPos);
+            setNormal(lightPath, currIdx, currNormal);
+            setWo(lightPath, currIdx, currWo);
+            setBeta(lightPath, currIdx, currBeta);
+            setUV(lightPath, currIdx, currUV);
 
-        // the boolean flags and light index and material IDs are all packed into one uint. -2 is a flag to say no light
-        setAllInfo(lightPath, currIdx, currDelta, currBackface, -2, currMatID);
+            // the boolean flags and light index and material IDs are all packed into one uint. -2 is a flag to say no light
+            setAllInfo(lightPath, currIdx, currDelta, currBackface, -2, currMatID);
 
-        setD_vcm(lightPath, currIdx, curr_d_vcm);
-        setD_vc(lightPath, currIdx, curr_d_vc);
-        //setD_vm(lightPath, currIdx, curr_d_vm);
+            setD_vcm(lightPath, currIdx, curr_d_vcm);
+            setD_vc(lightPath, currIdx, curr_d_vc);
+        }
 
         // photon data (for merging)
-        if (!currDelta)
+        if (!currDelta && VCM_DOMERGE)
         {
             int photonInd = atomicAdd(globalPhotonIndex, 1);
     
@@ -2217,8 +2429,7 @@ __device__ void generateVCMLightPath(
                 setBeta(photons, photonInd, currBeta);
 
                 setD_vcm(photons, photonInd, curr_d_vcm);
-                //setD_vc(photons, photonInd, curr_d_vc);
-                //setD_vm(photons, photonInd, curr_d_vm);
+
             }
         }
         
@@ -2239,21 +2450,20 @@ __device__ void generateVCMLightPath(
     }
 }
 
-__global__ void doLightPass(
+__global__ void __launch_bounds__(256, 2) doLightPass(
     cudaRNGState* rngStates, 
     Camera camera, 
     VCMPathVertices lightPath, 
     Photons photons, 
     int* lightPathLengths, 
-    Material* materials, float4* textures, 
-    BVHnode* BVH, int* BVHindices, 
+    const Material* __restrict__ materials, const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
     int lightDepth, 
-    Vertices* vertices, int vertNum, 
-    Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, 
-    int w, int h,
-    float4* colors, 
-    float4* overlay, 
+    const Vertices* __restrict__ vertices, int vertNum, 
+    const Triangle* __restrict__ scene, int triNum, 
+    const Triangle* __restrict__ lights, int lightNum, 
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay, 
     int* globalPhotonIndex
 ) 
 {
@@ -2268,7 +2478,7 @@ __global__ void doLightPass(
     int lightPathLength;
     generateVCMLightPath(
         localState, 
-        x, y, w, h, 
+        x, y, 
         lightPath, 
         photons, 
         materials, 
@@ -2420,9 +2630,9 @@ __device__ __noinline__ bool connectImplicitHit(
     float d_vcm,
     float4 prevPos,
     bool prevDelta,
-    Triangle* lights, 
+    const Triangle* __restrict__ lights, 
     int lightNum,
-    Vertices* vertices,
+    const Vertices* __restrict__ vertices,
     float4& unweightedContribution,
     float& misWeight
 )
@@ -2482,14 +2692,14 @@ __device__ __noinline__ bool connectNEE(
     float d_vc,
     float d_vcm,
     float4 prevPos,
-    Triangle* lights, 
+    const Triangle* __restrict__ lights, 
     int lightNum,
-    Material* materials, 
-    float4* textures,
-    BVHnode* BVH, 
-    int* BVHindices, 
-    Vertices* vertices,
-    Triangle* scene,
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures,
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices,
+    const Triangle* __restrict__ scene,
     float4& unweightedContribution,
     float& misWeight
 )
@@ -2514,7 +2724,7 @@ __device__ __noinline__ bool connectNEE(
     bool occluded = BDPTnextEventEstimation(localState, materials, textures, BVH, BVHindices, 
         vertices, scene, lights, lightNum, eyeMatID, eyePos, prevToCurr_local, eyeNorm, 
         eyeUV, pdf_connect, nee_contribution_unweighted, eyeToLight, lightInd, cosLight, 
-        pdf_emit_SA, etaI, etaT, sceneRadius);
+        pdf_emit_SA, etaI, etaT);
 
     if (occluded)
         return false;
@@ -2575,12 +2785,12 @@ __device__ __noinline__ bool connectGeneral(
     int lightMatID,
     float lightD_vc,
     float lightD_vcm,
-    Material* materials, 
-    float4* textures,
-    BVHnode* BVH, 
-    int* BVHindices, 
-    Vertices* vertices,
-    Triangle* scene,
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures,
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices,
+    const Triangle* __restrict__ scene,
     float4& unweightedContribution,
     float& misWeight
 )
@@ -2695,23 +2905,24 @@ __device__ __noinline__ bool connectGeneral(
     return true;
 }
 
-__global__ void doEyePass(
+__global__ void __launch_bounds__(256, 2) doEyePass(
     cudaRNGState* rngStates, 
     Camera camera, 
-    VCMPathVertices lightPath, 
-    int* lightPathLengths, 
-    Photons photons_sorted, unsigned int* cell_start, unsigned int* cell_end, 
-    Material* materials, 
-    float4* textures, 
-    BVHnode* BVH, int* BVHindices, 
+    const VCMPathVertices lightPath, 
+    const int* __restrict__ lightPathLengths, 
+    const Photons photons_sorted, 
+    const unsigned int* __restrict__ cell_start, 
+    const unsigned int* __restrict__ cell_end, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
     int maxDepth, 
-    Vertices* vertices, int vertNum, 
-    Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, 
-    int w, int h, 
+    const Vertices* __restrict__ vertices, int vertNum, 
+    const Triangle* __restrict__ scene, int triNum, 
+    const Triangle* __restrict__ lights, int lightNum,
     int hashTableSize,
-    float4* colors, 
-    float4* overlay,
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay,
     int photonCount
 )
 {
@@ -2946,7 +3157,6 @@ __global__ void doEyePass(
             colorSum += contribution;
         }
         
-
         // run against every light vertex. There are lightPathLengths[pixelIdx] + 1 light vertices, 
         // all but one of which (the one on the light) are actually stored in the buffer (indexed 0 to lightPathLengths[pixelIdx]-1)
         for (int s = 2; s <= lightPathLengths[pixelIdx] + 1; s++)
@@ -3037,8 +3247,8 @@ __global__ void doEyePass(
                         );
 
                         unsigned int hash = HashGridIndex(neighborIndex, hashTableSize);
-                        unsigned int start = cell_start[hash];
-                        unsigned int end   = cell_end[hash];
+                        unsigned int start = __ldg(&cell_start[hash]);
+                        unsigned int end   = __ldg(&cell_end[hash]);
 
                         if (start == 0xFFFFFFFF) continue;
 
@@ -3122,6 +3332,7 @@ __global__ void doEyePass(
             if (DO_SPPM) // SPPM only gathers density one time
                 break;
         }
+
         //---------------------------------------------------------------------------------------------------------------------------------------------------
         // Set up next interaction
         //---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -3272,7 +3483,7 @@ __host__ inline void buildHashGrid(
     //checkCudaErrors("build table");
 }
 
-__global__ void paintPhotons(Photons photons, int numPhotons, float4* overlay, int w, int h, Camera camera, int* numPainted)
+__global__ void paintPhotons(Photons photons, int numPhotons, float4* __restrict__ overlay, int w, int h, Camera camera, int* numPainted)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numPhotons || i % 50 != 0) return;
@@ -3296,7 +3507,7 @@ __global__ void paintGridBox(
     float4 sceneMin,
     float mergeRadius,
     int hashTableSize,
-    float4* overlay,
+    float4* __restrict__ overlay,
     int w, int h,
     Camera camera
 )
@@ -3328,8 +3539,640 @@ __global__ void paintGridBox(
     }
 }
 
-__host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVertices* lightPath, Photons* photons, Photons* photons_sorted, Material* materials, float4* textures, BVHnode* BVH, int* BVHindices, Vertices* vertices, int vertNum, Triangle* scene, int triNum, 
-    Triangle* lights, int lightNum, int numSample, int w, int h, float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, float4* colors, float4* overlay, bool postProcess, float mergeRadiusPower, float initialRadiusMultiplier)
+__host__ void launch_VCM(
+    int eyeDepth, 
+    int lightDepth, 
+    Camera camera, 
+    VCMPathVertices* lightPath, 
+    Photons* photons, 
+    Photons* photons_sorted, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, int numSample, 
+    int h_w, int h_h, 
+    float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, 
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay, 
+    bool postProcess, 
+    float mergeRadiusPower, 
+    float initialRadiusMultiplier
+)
+{
+    dim3 blockSize(16, 16);  
+    dim3 gridSize((h_w+15)/16, (h_h+15)/16);
+
+    // Constants setup
+    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float4));
+    cudaMemcpyToSymbol(sceneMin, &(h_sceneMin), sizeof(float4));
+    cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
+    cudaMemcpyToSymbol(w, &(h_w), sizeof(int));
+    cudaMemcpyToSymbol(h, &(h_h), sizeof(int));
+    
+    // RNG Setup
+    cudaRNGState* d_rngStates;
+    cudaMalloc(&d_rngStates, h_w * h_h * sizeof(cudaRNGState));
+    RNGManager::launchInitRNG(d_rngStates, h_w, h_h, 5124123UL);
+
+    // set up device buffers for VCM and display
+    int* d_pathLengths = nullptr;
+
+    cudaMalloc(&d_pathLengths, h_w * h_h * sizeof(int));
+    cudaMemset(d_pathLengths, 0, h_w * h_h * sizeof(int));
+
+    float4* d_finalOutput;
+    cudaMalloc(&d_finalOutput, h_w * h_h * sizeof(float4));
+
+    // set up buffers used to create the hash table
+    int maxPhotonCount = h_w * h_h * lightDepth;
+
+    unsigned int* d_hash_keys_in;
+    unsigned int* d_hash_keys_out;
+    unsigned int* d_indices_in;
+    unsigned int* d_indices_out;
+
+    cudaMalloc(&d_hash_keys_in, maxPhotonCount * sizeof(unsigned int));
+    cudaMalloc(&d_hash_keys_out, maxPhotonCount * sizeof(unsigned int));
+    cudaMalloc(&d_indices_in, maxPhotonCount * sizeof(unsigned int));
+    cudaMalloc(&d_indices_out, maxPhotonCount * sizeof(unsigned int));
+    
+    int hashTableSize = GetNextPrime(maxPhotonCount * 2);
+
+    unsigned int* d_cell_start;
+    unsigned int* d_cell_end;
+
+    cudaMalloc(&d_cell_start, hashTableSize * sizeof(unsigned int));
+    cudaMalloc(&d_cell_end, hashTableSize * sizeof(unsigned int));
+
+    void* d_temp_storage = NULL;
+    size_t temp_storage_bytes = 0;
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+        d_hash_keys_in, d_hash_keys_out, d_indices_in, d_indices_out, maxPhotonCount);
+    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+
+    int* d_global_photon_counter;
+    cudaMalloc(&d_global_photon_counter, sizeof(int));
+    
+    size_t freeB, totalB;
+    cudaMemGetInfo(&freeB, &totalB);
+    printf("Free: %.2f MB of %.2f MB\n",
+            freeB / (1024.0*1024),
+            totalB / (1024.0*1024));
+    
+    auto lastSaveTime = std::chrono::steady_clock::now();
+    int saveIntervalSamples = 5;
+    Image image = Image(h_w, h_h);
+    image.postProcess = postProcess;
+    std::vector<float4> h_finalOutput(h_w * h_h);
+
+    std::cout << "Begin Render" << std::endl;
+    
+    // Start total timer
+    auto renderStartTime = std::chrono::steady_clock::now();
+    
+    float mergeRadius;
+    float h_eta_vcm;
+    for (int currSample = 0; currSample < numSample; currSample++)
+    {
+        mergeRadius = calculateMergeRadius(h_sceneRadius * initialRadiusMultiplier, mergeRadiusPower, currSample);
+        h_eta_vcm = mergeRadius * mergeRadius * (h_w * h_h * h_PI);
+        cudaMemcpyToSymbol(eta_vcm, &(h_eta_vcm), sizeof(float));
+        
+        cudaMemset(d_global_photon_counter, 0, sizeof(int));
+        doLightPass<<<gridSize, blockSize>>>(
+            d_rngStates,
+            camera,
+            *lightPath,
+            *photons,
+            d_pathLengths,
+            materials, textures,
+            BVH, BVHindices,
+            lightDepth,
+            vertices, vertNum,
+            scene, triNum,
+            lights, lightNum,
+            colors, overlay,
+            d_global_photon_counter
+        );
+        
+        int photonCount;
+        cudaMemcpy(&photonCount, d_global_photon_counter, sizeof(int), cudaMemcpyDeviceToHost);
+
+        buildHashGrid(
+            *photons, 
+            *photons_sorted, 
+            photonCount,
+            d_hash_keys_in,
+            d_hash_keys_out,
+            d_indices_in,
+            d_indices_out,
+            d_temp_storage,
+            temp_storage_bytes,
+            d_cell_start,
+            d_cell_end,
+            h_sceneMin,
+            mergeRadius, 
+            hashTableSize
+        );
+        
+        doEyePass<<<gridSize, blockSize>>>(
+            d_rngStates,
+            camera,
+            *lightPath, d_pathLengths,
+            *photons_sorted, d_cell_start, d_cell_end,
+            materials, textures, 
+            BVH, BVHindices,
+            eyeDepth,
+            vertices, vertNum, scene, triNum, lights, lightNum,
+            hashTableSize,
+            colors, overlay,
+            photonCount
+        );
+        
+        if (DO_PROGRESSIVERENDER)
+            cudaDeviceSynchronize();
+
+        if (currSample % saveIntervalSamples == 0 && DO_PROGRESSIVERENDER) 
+        {
+            cleanAndFormatImage<<<gridSize, blockSize>>>(
+                colors, overlay, d_finalOutput, h_w, h_h, currSample
+            );
+
+            cudaMemcpy(h_finalOutput.data(), d_finalOutput, h_w * h_h * sizeof(float4), cudaMemcpyDeviceToHost);
+
+            #pragma omp parallel for
+            for (int i = 0; i < h_w * h_h; i++) {
+                int x = i % h_w;
+                int y = i / h_w;
+                image.setColor(x, y, h_finalOutput[i]);
+            }
+            std::string filename = "render.bmp";
+            image.saveImageBMP(filename);
+            image.saveImageCSV_MONO(0);
+            
+
+            auto currentTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
+            double avgTimeMs = elapsed.count() / (currSample + 1);
+            
+            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
+            fflush(stdout);
+
+            cudaMemset(overlay, 0, h_w * h_h * sizeof(float4));
+        }
+    }
+    
+    printf("\n"); // Move to a new line when the render loop finishes completely
+
+    cudaDeviceSynchronize();
+    cudaFree(d_pathLengths);
+    cudaFree(d_rngStates);
+    cudaFree(d_finalOutput);
+
+    cudaFree(d_hash_keys_in);
+    cudaFree(d_hash_keys_out);
+    cudaFree(d_indices_in);
+    cudaFree(d_indices_out);
+
+    cudaFree(d_cell_start);
+    cudaFree(d_cell_end);
+
+    cudaFree(d_temp_storage);
+    cudaFree(d_global_photon_counter);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cerr << "RENDER ERROR: CUDA Error code: " << static_cast<int>(err) << std::endl;
+        // only call this if the code isn't catastrophic
+        if (err != cudaErrorAssert && err != cudaErrorUnknown)
+            std::cerr << cudaGetErrorString(err) << std::endl;
+    }
+    else
+        std::cout << "Render executed with no CUDA error" << std::endl;
+}
+
+__global__ void tracePhotons(
+    cudaRNGState* rngStates, 
+    int w, int h, 
+    Photons photons, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, int vertNum, 
+    const Triangle* __restrict__ scene, int triNum, 
+    const Triangle* __restrict__ lights, int lightNum,
+    int* globalPhotonIndex
+)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h) return;
+    int pixelIdx = y*w + x;
+
+    cudaRNGState localState = rngStates[pixelIdx];
+
+    // the convention is that light index -1 is the environment, and that lightNum doesnt include the environment
+    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (lightNum + 1)), lightNum) - 1) : 
+        (min(static_cast<int>(curand_uniform(&localState) * (lightNum)), lightNum - 1)); 
+    
+    float pdf_chooseLight = 1.0f / ((float) (SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum));
+
+    Ray r;
+    float prevPDF_solidAngle = -1.0f; // outgoing pdf from scattering functions
+    float prev_cosine = -1.0f; // the previous cosine between the normal and the outgoing ray
+    float4 start_wi = f4();
+
+    float pdf_chooseLightPos = -1.0f;
+    float4 currThroughput = f4();
+
+    float4 y0Pos;
+
+    if (lightInd == -1) {return;}
+    else
+    {
+        Triangle light = lights[lightInd];
+        float4 apos = vertices->positions[light.aInd];
+        float4 bpos = vertices->positions[light.bInd];
+        float4 cpos = vertices->positions[light.cInd];
+
+        float4 anorm = vertices->normals[light.naInd];
+        float4 bnorm = vertices->normals[light.nbInd];
+        float4 cnorm = vertices->normals[light.ncInd];
+
+        float area = 0.5f * length(cross3(bpos - apos, cpos - apos));
+
+        // for depth 1, this is NOT a solid angle PDF, but we are just reusing the varible
+        pdf_chooseLightPos = pdf_chooseLight / area;
+
+        float u = sqrtf(curand_uniform(&localState));
+        float v = curand_uniform(&localState);
+
+        float w0 = (1.0f - u);
+        float w1 = u * (1.0f - v);
+        float w2 = u * v;
+
+        y0Pos = w0 * apos + w1 * bpos + w2 * cpos;
+        float4 y0Norm = normalize(w0 * anorm + w1 * bnorm + w2 * cnorm);
+
+        float4 wo_local;
+        cosine_emit(localState, wo_local, prevPDF_solidAngle);
+        toWorld(wo_local, y0Norm, start_wi);
+
+        r.origin = y0Pos + y0Norm * RAY_EPSILON;
+        r.direction = start_wi;
+
+        currThroughput = light.emission * PI / pdf_chooseLightPos;
+
+        prev_cosine = fabsf(dot(normalize(start_wi), y0Norm));
+    }
+    float4 prevPos = y0Pos;
+
+    bool prevWasDelta = false;
+
+    for (int depth = 0; depth < maxDepth; depth++)
+    {
+        int currIdx = pathBufferIdx(w, h, x, y, depth);
+        int prevIdx = (depth == 0) ? -1 : pathBufferIdx(w, h, x, y, depth-1);
+
+        Intersection intersect;
+        BVHSceneIntersect(r, BVH, BVHindices, vertices, scene, intersect);
+
+        if (!intersect.valid)
+        {
+            return;
+        }
+        float2 currUV = intersect.uv;
+        float4 currBeta = currThroughput;
+        float4 currNormal = intersect.normal;
+        int currMatID = intersect.materialID;
+        float4 currPos = intersect.point;
+        
+        bool currDelta = materials[currMatID].isSpecular;
+        bool currBackface = intersect.backface;
+        
+        float4 currWo = normalize(-r.direction);
+
+        float4 wo_world = currPos - prevPos; // the incoming direction, pointing at the new surface
+
+        //if (lengthSquared(wo_world) < EPSILON)
+        //    printf("Has not moved\n");
+        float4 wo_local; // the incoming direction to the current path vertex. we use this for the cosine in the pdf conversion
+        toLocal(r.direction, currNormal, wo_local);
+
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // calculate forward pdf (previous vertex to current)
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        float distanceSQR = fmaxf(lengthSquared(wo_world), RAY_EPSILON);
+
+        // previous pdf (solid angle) * abs of dot product of current normal with incoming direction into the current surface divided by distance squared
+        float pdfFwd_area; 
+        pdfFwd_area = prevPDF_solidAngle * fabsf(wo_local.z) / distanceSQR;
+
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Scatter to next vertex
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        // the NEW pdf forward (curr to next)
+        float pdfFwd_solidAngle;
+        float4 f_val;
+        float4 wi_local; //direction to next vertex
+
+        float etaI = 1.0f; // TEMPORARY, CHANGE AFTER IMPLEMENTING PRIORITY NESTED DIELECTRICS
+        float etaT = 1.0f;
+
+        sample_f_eval(localState, materials, currMatID, textures, wo_local, etaI, etaT, intersect.backface, wi_local, f_val, 
+            pdfFwd_solidAngle, currUV, TRANSPORTMODE_IMPORTANCE);
+
+        float4 wi_world;
+        toWorld(wi_local, intersect.normal, wi_world);
+        
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // calculate backwards pdf (current vertex to previous)
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        float4 nextToCurrent_local = -wi_local;
+        float4 currentToPrev_local = -wo_local;
+
+        float pdfRev_solidAngle;
+        pdf_eval(materials, currMatID, textures, nextToCurrent_local, currentToPrev_local, etaI, etaT, 
+            pdfRev_solidAngle, currUV);
+        
+        if (currDelta)
+            pdfRev_solidAngle = pdfFwd_solidAngle; // probabilities of scattering fwd backward on the current delta surface
+
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Update running values
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        currThroughput = currThroughput * f_val * fabsf(wi_local.z) / pdfFwd_solidAngle;
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Save Data. We use set functions because the light path struct is highly optimized for memory footprint and contains a ton of shenanigans
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        // photon data (for merging)
+        if (!currDelta)
+        {
+            int photonInd = atomicAdd(globalPhotonIndex, 1);
+    
+            if (photonInd < w * h * maxDepth)
+            {
+                setPackedPosVM(photons, photonInd, currPos, 1.0f);
+                setWi(photons, photonInd, currWo);
+                setNormalInfo(photons, photonInd, currNormal, currBackface);
+                setBeta(photons, photonInd, currBeta);
+            }
+        }
+        
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Set up next interaction
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        r.origin = (wi_local.z < EPSILON) ? (currPos - currNormal * RAY_EPSILON) : (currPos + currNormal * RAY_EPSILON);
+        r.direction = wi_world;
+
+        prevPDF_solidAngle = pdfFwd_solidAngle; // update the prev pdf
+        prev_cosine = fabsf(wi_local.z); // update the prev cosine
+        prevWasDelta = currDelta;
+        prevPos = currPos;
+    }
+
+    rngStates[pixelIdx] = localState;
+}
+
+__global__ void traceEyePaths(
+    cudaRNGState* rngStates, 
+    Camera camera, 
+    const Photons photons_sorted, 
+    const unsigned int* __restrict__ cell_start, 
+    const unsigned int* __restrict__ cell_end, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    int maxDepth, 
+    const Vertices* __restrict__ vertices, int vertNum, 
+    const Triangle* __restrict__ scene, int triNum, 
+    const Triangle* __restrict__ lights, int lightNum, 
+    int w, int h, 
+    int hashTableSize,
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay,
+    int photonCount
+)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h) return;
+    int pixelIdx = y*w + x;
+
+    cudaRNGState localState = rngStates[pixelIdx];
+
+    Ray r = camera.generateCameraRay(localState, x, y);
+
+    float aspect = (float)w / (float)h;
+    float imagePlaneArea = 4.0f * aspect * camera.fovScale * camera.fovScale;
+    float cosAtCamera = fabsf(dot(camera.getForwardVector(), r.direction));
+
+    float prevPDF_solidAngle = 1.0f / (imagePlaneArea * cosAtCamera * cosAtCamera * cosAtCamera);
+    float prev_cosine = cosAtCamera; // the previous cosine between the normal and the outgoing ray
+    float4 start_wi = f4();
+
+    float4 currThroughput = f4(1.0f);
+
+    float4 prevPos = camera.cameraOrigin;
+
+    float4 colorSum = f4();
+
+    for (int depth = 0; depth < maxDepth; depth++)
+    {
+        int currIdx = pathBufferIdx(w, h, x, y, depth);
+
+        Intersection intersect = Intersection();
+        BVHSceneIntersect(r, BVH, BVHindices, vertices, scene, intersect);
+
+        if (!intersect.valid)
+        {
+            break;
+        }
+        
+        float4 wo_local; // the incoming direction to the current path vertex. we use this for the cosine in the pdf conversion
+        toLocal(r.direction, intersect.normal, wo_local);
+
+
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Scatter to next vertex
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        // the NEW pdf forward (curr to next)
+        float pdfFwd_solidAngle;
+        float4 f_val;
+        float4 wi_local; //direction to next vertex
+
+        float etaI = 1.0f; // TEMPORARY, CHANGE AFTER IMPLEMENTING PRIORITY NESTED DIELECTRICS
+        float etaT = 1.0f;
+
+        sample_f_eval(localState, materials, intersect.materialID, textures, wo_local, etaI, etaT, intersect.backface, wi_local, f_val, 
+            pdfFwd_solidAngle, intersect.uv, TRANSPORTMODE_RADIANCE);
+
+        float4 wi_world;
+        toWorld(wi_local, intersect.normal, wi_world);
+
+        // for SPPM specifically (messy because i have sppm integrated into my vcm)
+        if (lengthSquared(scene[intersect.triIDX].emission) > EPSILON)
+        {
+            colorSum += scene[intersect.triIDX].emission * currThroughput;
+            break;
+        }
+
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Perform Merging.
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        //printf("etavcm: %f radius: %f", eta_vcm, eta_vcm_to_mergeRadius(eta_vcm, w * h));
+        if (materials[intersect.materialID].roughness > MERGE_ROUGHNESS_BOUND)
+        {
+            float mergeRadius = eta_vcm_to_mergeRadius(eta_vcm, w * h);
+            int3 centerIndex = GetGridIndex(intersect.point, sceneMin, mergeRadius);
+            float radiusSq = mergeRadius * mergeRadius;
+
+            float4 totalContribution = f4();
+
+            for (int z1 = -1; z1 <= 1; ++z1) 
+            {
+                for (int y1 = -1; y1 <= 1; ++y1) 
+                {
+                    for (int x1 = -1; x1 <= 1; ++x1) 
+                    {
+                        int3 neighborIndex = make_int3(
+                            centerIndex.x + x1,
+                            centerIndex.y + y1,
+                            centerIndex.z + z1
+                        );
+
+                        unsigned int hash = HashGridIndex(neighborIndex, hashTableSize);
+                        unsigned int start = __ldg(&cell_start[hash]);
+                        unsigned int end   = __ldg(&cell_end[hash]);
+
+                        if (start == 0xFFFFFFFF) continue;
+
+                        for (int i = start; i < end; ++i) {
+
+                            float4 photonPos = getPackedPosVM(photons_sorted, i);
+
+                            float4 photonNorm;
+                            bool photonBackface;
+                            getNormalInfo(photons_sorted, i, photonNorm, photonBackface);
+                            
+                            float distSq = lengthSquared(intersect.point - photonPos);
+                            
+                            // Raw normals are always flipped so that it is on the same side as the incident ray, requiring the backface flag to 
+                            // indicate which side the incident ray is pointing towards
+                            if (intersect.backface != photonBackface) // they are NOT on the same side. CANNOT merge
+                                continue;
+
+                            if (distSq <= radiusSq && dot(photonNorm, intersect.normal) > 0.9f) {
+                                float lightD_vcm = getD_vcm(photons_sorted, i);
+                                //float lightD_vm = getD_vm(photons_sorted, i);
+
+                                float4 photonToPrev = getWi(photons_sorted, i);
+                                float4 eyeToPrev = prevPos - intersect.point;
+
+                                // need to calculate the pdf of scattering back to the previous eye, and previous light vertex
+
+                                float4 eyeToPrev_local;
+                                toLocal(eyeToPrev, intersect.normal, eyeToPrev_local);
+
+                                float4 photonPrevToPhoton_local;
+                                toLocal(-photonToPrev, intersect.normal, photonPrevToPhoton_local);
+
+                                float4 f_val;
+                                f_eval(materials, intersect.materialID, textures, photonPrevToPhoton_local, 
+                                    eyeToPrev_local, etaI, etaT, f_val, intersect.uv);
+
+                                float4 unweightedContribution = getBeta(photons_sorted, i) * f_val * currThroughput / (eta_vcm);
+                                
+
+                                if (isnan(unweightedContribution.x) || isnan(unweightedContribution.y) || isnan(unweightedContribution.z)) {
+                                    printf("nan\n");
+                                } 
+                                else if (isinf(unweightedContribution.x) || isinf(unweightedContribution.y) || isinf(unweightedContribution.z)) {
+                                    printf("inf\n");
+                                } 
+                                else if (unweightedContribution.x <= 0 || unweightedContribution.y <= 0 || unweightedContribution.z <= 0) {
+                                    printf("neg/zero\n");
+                                } 
+
+                                totalContribution += unweightedContribution;
+                            }
+                        }
+                    }
+                }
+            }
+
+            float lum = luminance(totalContribution);
+            if (lum > MERGE_MAX_FIREFLY_LUM)
+            {
+                totalContribution *= (MERGE_MAX_FIREFLY_LUM / lum);
+            }
+            colorSum += totalContribution;
+
+            // SPPM only gathers density one time
+            break;
+        }
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+        // Set up next interaction
+        //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+        bool transmitting = dot(wi_world, intersect.normal) < 0.0f;
+
+        currThroughput = currThroughput * f_val * fabsf(wi_local.z) / pdfFwd_solidAngle;
+
+        r.origin = transmitting ? 
+            (intersect.point - intersect.normal * RAY_EPSILON) : 
+            (intersect.point + intersect.normal * RAY_EPSILON);
+        r.direction = wi_world;
+
+        prevPDF_solidAngle = pdfFwd_solidAngle; // update the prev pdf
+        prev_cosine = fabsf(wi_local.z); // update the prev cosine
+        prevPos = intersect.point;
+    }
+    colors[pixelIdx] += colorSum;
+    rngStates[pixelIdx] = localState;
+}
+
+__host__ void launch_SPPM(
+    int eyeDepth, 
+    int lightDepth, 
+    Camera camera, 
+    Photons* photons, 
+    Photons* photons_sorted, 
+    const Material* __restrict__ materials, 
+    const float4* __restrict__ textures, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ vertices, 
+    int vertNum, 
+    const Triangle* __restrict__ scene, 
+    int triNum, 
+    const Triangle* __restrict__ lights, 
+    int lightNum, int numSample, 
+    int w, int h, 
+    float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, 
+    float4* __restrict__ colors, 
+    float4* __restrict__ overlay, 
+    bool postProcess, 
+    float mergeRadiusPower, 
+    float initialRadiusMultiplier
+)
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
@@ -3390,13 +4233,15 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    //float saveIntervalSeconds = 5.0f;
-    int saveIntervalSamples = 200;
+    int saveIntervalSamples = 30;
     Image image = Image(w, h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(w * h);
 
-    std::cout << "Begin Render" << std::endl;
+    std::cout << "Begin Render with SPPM" << std::endl;
+    
+    // Start total timer
+    auto renderStartTime = std::chrono::steady_clock::now();
     
     float mergeRadius;
     float h_eta_vcm;
@@ -3407,20 +4252,16 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
         cudaMemcpyToSymbol(eta_vcm, &(h_eta_vcm), sizeof(float));
         
         cudaMemset(d_global_photon_counter, 0, sizeof(int));
-        doLightPass<<<gridSize, blockSize>>>(
+        tracePhotons<<<gridSize, blockSize>>>(
             d_rngStates,
-            camera,
-            *lightPath,
+            w, h,
             *photons,
-            d_pathLengths,
             materials, textures,
             BVH, BVHindices,
             lightDepth,
             vertices, vertNum,
             scene, triNum,
             lights, lightNum,
-            w, h,
-            colors, overlay,
             d_global_photon_counter
         );
         
@@ -3444,10 +4285,9 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             hashTableSize
         );
         
-        doEyePass<<<gridSize, blockSize>>>(
+        traceEyePaths<<<gridSize, blockSize>>>(
             d_rngStates,
             camera,
-            *lightPath, d_pathLengths,
             *photons_sorted, d_cell_start, d_cell_end,
             materials, textures, 
             BVH, BVHindices,
@@ -3458,7 +4298,6 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             colors, overlay,
             photonCount
         );
-        
         
         if (DO_PROGRESSIVERENDER)
             cudaDeviceSynchronize();
@@ -3480,13 +4319,21 @@ __host__ void launch_VCM(int eyeDepth, int lightDepth, Camera camera, VCMPathVer
             std::string filename = "render.bmp";
             image.saveImageBMP(filename);
             image.saveImageCSV_MONO(0);
-            printf("saved progress at %d samples.\n", currSample);
+            
+
+            auto currentTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
+            double avgTimeMs = elapsed.count() / (currSample + 1);
+            
+            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
+            fflush(stdout);
 
             cudaMemset(overlay, 0, w * h * sizeof(float4));
         }
-
     }
     
+    printf("\n"); // Move to a new line when the render loop finishes completely
+
     cudaDeviceSynchronize();
     cudaFree(d_pathLengths);
     cudaFree(d_rngStates);

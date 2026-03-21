@@ -45,7 +45,7 @@ __host__ void updateConstants(RenderConfig& config)
 }
 
 /*
-__global__ void initRNG(cudaRNGState* states, int width, int height, unsigned long seed)
+__global__ void initRNG(RNGState* states, int width, int height, unsigned long seed)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -79,7 +79,7 @@ __device__ void neePDF(const Vertices* __restrict__ vertices, const Triangle* __
     light_pdf = distanceSQR / (cosThetaLight * lightNum * area);
 }
 
-__device__ void nextEventEstimation(cudaRNGState& localState, const Material* __restrict__ materials, const float4* __restrict__ textures, const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, const Vertices* __restrict__ vertices,
+__device__ void nextEventEstimation(RNGState& localState, const Material* __restrict__ materials, const float4* __restrict__ textures, const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, const Vertices* __restrict__ vertices,
     const Triangle* __restrict__ scene, const Triangle* __restrict__ lights, int lightNum, const Intersection& intersect, const float4& wo, 
     float& light_pdf, float4& contribution, float4& surfaceToLight_local, float etaI, float etaT)
 {
@@ -98,18 +98,33 @@ __device__ void nextEventEstimation(cudaRNGState& localState, const Material* __
         light_pdf = -1.0f;
         return;
     }
-    int index = min(static_cast<int>(curand_uniform(&localState) * lightNum), lightNum - 1);
+    int index = min(static_cast<int>(rand(&localState) * lightNum), lightNum - 1);
     l = lights[index];
     apos = vertices->positions[l.aInd];
     bpos = vertices->positions[l.bInd];
     cpos = vertices->positions[l.cInd];
-    u = sqrtf(curand_uniform(&localState));
-    v = curand_uniform(&localState);
+    u = sqrtf(rand(&localState));
+    v = rand(&localState);
     p = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos; // point on light
+
+    float4 a_n = __ldg(&vertices->normals[l.naInd]);
+    float4 b_n = __ldg(&vertices->normals[l.nbInd]);
+    float4 c_n = __ldg(&vertices->normals[l.ncInd]);
+    
+    float4 lightNormal = normalize((1.0f - u) * a_n + u * (1.0f - v) * b_n + u * v * c_n);
     n = intersect.normal;
     
     float4 surfaceToLight = p-intersect.point;  
     float4 wi = normalize(surfaceToLight);
+
+    float cosThetaLight = dot(lightNormal, -wi);
+    float cosThetaSurface = dot(n, wi);
+
+    if (cosThetaLight < 0.0f || cosThetaSurface < 0.0f)
+    {
+        contribution = f4();
+        return;
+    }
 
     Ray r = Ray(intersect.point + wi * EPSILON, wi);
     
@@ -119,17 +134,13 @@ __device__ void nextEventEstimation(cudaRNGState& localState, const Material* __
     
     Intersection sceneIntersect = Intersection();
     float4 throughputScale = f4(1.0f);
-    BVHShadowRay(r, BVH, BVHindices, vertices, scene, materials, throughputScale, t*(1.0f - EPSILON), -1);
+    BVHShadowRay(r, BVH, BVHindices, vertices, scene, materials, throughputScale, length(surfaceToLight)*(1.0f - EPSILON), l.triInd);
     // following if statement tests for scene intersection (direct light) AND
     // whether the original light intersect was valid
     //if (!sceneIntersect.valid && t != -1.0f) // direct LOS from intersection to light
     if (lengthSquared(throughputScale) > 0.0f)
     {
         float distanceSQR = lengthSquared(surfaceToLight);
-        float4 lightNormal = vertices->normals[l.naInd];
-
-        float cosThetaLight = dot(lightNormal, -wi);
-        float cosThetaSurface = fabsf(dot(n, wi));
 
         //float G = cosThetaLight * cosThetaSurface/distanceSQR;
         float area = 0.5f * length(cross3(bpos - apos, cpos - apos));
@@ -151,7 +162,7 @@ __device__ void nextEventEstimation(cudaRNGState& localState, const Material* __
 }
 
 __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
@@ -167,7 +178,8 @@ __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
     int numSample, 
     bool useMIS, 
     int w, int h, 
-    float4* __restrict__ colors
+    float4* __restrict__ colors,
+    int frameNum
 )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -176,7 +188,8 @@ __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     Ray r = camera.generateCameraRay(localState, x, y);
     float4 Li = f4();
@@ -202,7 +215,7 @@ __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
 
         if (pdf <= 0.0f || lengthSquared(f_val) < EPSILON) break;
 
-        Li += intersect.emission * beta;
+        Li += intersect.backface ? f4(0.0f) : intersect.emission * beta;
 
         beta *= f_val * fabsf(toNext_local.z) / pdf;
 
@@ -213,7 +226,8 @@ __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
         r.direction = toNext_world;
     }
     colors[pixelIdx] += Li;
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __host__ void launch_naive_unidirectional(
@@ -237,12 +251,22 @@ __host__ void launch_naive_unidirectional(
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
-    cudaRNGState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
+    
+    #if RNG_MODE == 3
+        RNGState* d_rngStates = nullptr;
+    #else
+        RNGState* d_rngStates;
+        cudaMalloc(&d_rngStates, w * h * sizeof(RNGState));
+        RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
+    #endif
 
-    unsigned long seed = 103033UL;
-    //initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
-    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
+    // Allocate device buffers for the image formatting kernel
+    float4* d_finalOutput;
+    float4* d_overlay;
+    cudaMalloc(&d_finalOutput, w * h * sizeof(float4));
+    cudaMalloc(&d_overlay, w * h * sizeof(float4));
+    cudaMemset(d_overlay, 0, w * h * sizeof(float4)); // Zero out the dummy overlay
+    
     cudaDeviceSynchronize();
 
     size_t freeB, totalB;
@@ -251,59 +275,66 @@ __host__ void launch_naive_unidirectional(
             freeB / (1024.0*1024),
             totalB / (1024.0*1024));
     
-    auto lastSaveTime = std::chrono::steady_clock::now();
-    float saveIntervalSeconds = 5.0f;
+    int saveIntervalSamples = 1500; 
     Image image = Image(w, h);
+    std::vector<float4> h_finalOutput(w * h);
 
     std::cout << "Running Kernels" << std::endl;
     
+    // Start total timer for average ms calculation
+    auto renderStartTime = std::chrono::steady_clock::now();
+
     for (int currSample = 0; currSample < numSample; currSample++)
     {
         Li_naive_unidirectional<<<gridSize, blockSize>>>(d_rngStates, camera, materials, textures, BVH, BVHindices, maxDepth, vertices, vertNum, scene, triNum, 
-            lights, lightNum, numSample, useMIS, w, h, colors);
+            lights, lightNum, numSample, useMIS, w, h, colors, currSample);
         
-        cudaDeviceSynchronize();
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSaveTime).count();
-
-        if (elapsed >= saveIntervalSeconds) 
+        if ((currSample % saveIntervalSamples == 0 || currSample == numSample-1) && DO_PROGRESSIVERENDER) 
         {
-            std::vector<float4> h_colors(w * h);
-            cudaMemcpy(h_colors.data(), colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
+            // Launch the formatting kernel to handle averaging, NaNs, and Infs on the GPU
+            cleanAndFormatImage<<<gridSize, blockSize>>>(
+                colors, d_overlay, d_finalOutput, w, h, currSample
+            );
 
-            for (int i = 0; i < w; i++)
+            // Copy the finalized buffer back to the host
+            cudaMemcpy(h_finalOutput.data(), d_finalOutput, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
+
+            // Clean OpenMP loop simply maps the formatted colors to the image
+            #pragma omp parallel for
+            for (int i = 0; i < w * h; i++) 
             {
-                for (int j = 0; j < h; j++)
-                {
-                    if (isnan(h_colors[i].x) || isnan(h_colors[i].y) || isnan(h_colors[i].z)) {
-                        h_colors[i] = f4(1.0f, 0.0f, 1.0f); // Bright Pink for NaN
-                    }
-                    if (isinf(h_colors[i].x) || isinf(h_colors[i].y) || isinf(h_colors[i].z)) {
-                        h_colors[i] = f4(0.0f, 1.0f, 0.0f); // Bright Green for Inf
-                    }
-                    if (h_colors[image.toIndex(i, j)].x < 0 || h_colors[image.toIndex(i, j)].y < 0 || h_colors[image.toIndex(i, j)].z < 0)
-                        std::cout << i << ", " << j << " Negative color written: <" << h_colors[image.toIndex(i, j)].x << ", " << h_colors[image.toIndex(i, j)].y << ", " 
-                        << h_colors[image.toIndex(i, j)].z << ">"<< std::endl;
-                    
-                    image.setColor(i, j, h_colors[image.toIndex(i, j)] / (float)(currSample + 1));
-                }
+                int x = i % w;
+                int y = i / w;
+                image.setColor(x, y, h_finalOutput[i]);
             }
+
             std::string filename = "render.bmp";
             image.saveImageBMP(filename);
             image.saveImageCSV_MONO(0);
-            lastSaveTime = now;
-            printf("saved progress at %d samples.\n", currSample);
-        }
 
+            auto currentTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
+            double avgTimeMs = elapsed.count() / (currSample + 1);
+            
+            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
+            fflush(stdout);
+
+            // Reset the dummy overlay just like in the wavefront version
+            cudaMemset(d_overlay, 0, w * h * sizeof(float4));
+        }
     }
     
+    printf("\n");
     cudaDeviceSynchronize();
+
+    // Free the newly added device buffers
     cudaFree(d_rngStates);
+    cudaFree(d_finalOutput);
+    cudaFree(d_overlay);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         std::cerr << "RENDER ERROR: CUDA Error code: " << static_cast<int>(err) << std::endl;
-        // only call this if the code isn't catastrophic
         if (err != cudaErrorAssert && err != cudaErrorUnknown)
             std::cerr << cudaGetErrorString(err) << std::endl;
     }
@@ -312,7 +343,7 @@ __host__ void launch_naive_unidirectional(
 }
 
 __global__ void __launch_bounds__(256, 2) Li_unidirectional (
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
@@ -328,7 +359,8 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
     int numSample, 
     bool useMIS, 
     int w, int h, 
-    float4* __restrict__ colors
+    float4* __restrict__ colors,
+    int frameNum
 )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -337,7 +369,9 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
+
     Ray r = Ray();
     float4 beta = f4(1.0f, 1.0f, 1.0f);
     float4 Li = f4();
@@ -361,7 +395,7 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
 
     bool hitFirstnonSpecular = false;
 
-    for (int depth = 0; depth < 50; depth++)
+    for (int depth = 0; depth < maxDepth; depth++)
     {   
         
         Intersection intersect = Intersection();
@@ -483,7 +517,7 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
             {
                 if (depth == 0 || !hitFirstnonSpecular)
                 {
-                    Li += beta * intersect.emission;
+                    Li += intersect.backface ? f4(0.0f) : beta * intersect.emission;
                 }
                 else if (useMIS && !isSpecular) // found light using BSDF sampling, weigh against NEE
                 {
@@ -562,16 +596,14 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
             toLocal(r.direction, intersect.normal, wo_local);
             //r.origin = intersect.point - intersect.normal * EPSILON * 1.0F; // needs to go through, so offset on other side of normal
             r.origin = intersect.point + r.direction * RAY_EPSILON; // needs to go through, so offset on other side of normal
-            depth--; // to unbias the russian roulette, which depends on a maxdepth (false hits do not contribute actual depth)
         }
         previousintersectANY = intersect;
 
-        if (depth > maxDepth)
         {
-            float luminance = dot(beta, f4(0.2126f, 0.7152f, 0.0722f));
-            float p = clamp(luminance, 0.05f, 0.99f);
+            float lum = luminance(beta);
+            float p = clamp(lum, 0.05f, 1.0f);
 
-            if (curand_uniform(&localState) > p)   // survive with probability p
+            if (rand(&localState) > p)   // survive with probability p
                 break;
 
             beta /= p;  // compensate for the survival probability
@@ -584,7 +616,8 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
         
     }
     colors[pixelIdx] += Li;
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __host__ void launch_unidirectional(
@@ -608,12 +641,15 @@ __host__ void launch_unidirectional(
 {
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
-    cudaRNGState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
 
-    unsigned long seed = 103033UL;
-    //initRNG<<<gridSize, blockSize>>>(d_rngStates, w, h, seed);
-    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
+    #if RNG_MODE == 3
+        RNGState* d_rngStates = nullptr;
+    #else
+        RNGState* d_rngStates;
+        cudaMalloc(&d_rngStates, w * h * sizeof(RNGState));
+        RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
+    #endif
+    
     cudaDeviceSynchronize();
 
     size_t freeB, totalB;
@@ -622,26 +658,28 @@ __host__ void launch_unidirectional(
             freeB / (1024.0*1024),
             totalB / (1024.0*1024));
     
-    auto lastSaveTime = std::chrono::steady_clock::now();
-    float saveIntervalSeconds = 5.0f;
+    int saveIntervalSamples = 30; // Aligned with wavefront logic
     Image image = Image(w, h);
 
     std::cout << "Running Kernels Unidirectional" << std::endl;
     
+    // Start total timer
+    auto renderStartTime = std::chrono::steady_clock::now();
+    
     for (int currSample = 0; currSample < numSample; currSample++)
     {
         Li_unidirectional<<<gridSize, blockSize>>>(d_rngStates, camera, materials, textures, BVH, BVHindices, maxDepth, vertices, vertNum, scene, triNum, 
-            lights, lightNum, numSample, useMIS, w, h, colors);
+            lights, lightNum, numSample, useMIS, w, h, colors, currSample);
         
         cudaDeviceSynchronize();
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSaveTime).count();
 
-        if (elapsed >= saveIntervalSeconds) 
+        // Save and print progress based on sample count
+        if (currSample % saveIntervalSamples == 0) 
         {
             std::vector<float4> h_colors(w * h);
             cudaMemcpy(h_colors.data(), colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
 
+            #pragma omp parallel for // Added openmp pragma here like in your wavefront post-process if you want speed
             for (int i = 0; i < w; i++)
             {
                 for (int j = 0; j < h; j++)
@@ -653,8 +691,8 @@ __host__ void launch_unidirectional(
                         h_colors[i] = f4(0.0f, 1.0f, 0.0f); // Bright Green for Inf
                     }
                     if (h_colors[image.toIndex(i, j)].x < 0 || h_colors[image.toIndex(i, j)].y < 0 || h_colors[image.toIndex(i, j)].z < 0)
-                        std::cout << i << ", " << j << " Negative color written: <" << h_colors[image.toIndex(i, j)].x << ", " << h_colors[image.toIndex(i, j)].y << ", " 
-                        << h_colors[image.toIndex(i, j)].z << ">"<< std::endl;
+                        std::cout << "\n" << i << ", " << j << " Negative color written: <" << h_colors[image.toIndex(i, j)].x << ", " << h_colors[image.toIndex(i, j)].y << ", " 
+                        << h_colors[image.toIndex(i, j)].z << ">" << std::endl;
                     
                     image.setColor(i, j, h_colors[image.toIndex(i, j)] / (float)(currSample + 1));
                 }
@@ -662,12 +700,18 @@ __host__ void launch_unidirectional(
             std::string filename = "render.bmp";
             image.saveImageBMP(filename);
             image.saveImageCSV_MONO(0);
-            lastSaveTime = now;
-            printf("saved progress at %d samples.\n", currSample);
-        }
 
+            // Calculate timing and print inline progress
+            auto currentTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
+            double avgTimeMs = elapsed.count() / (currSample + 1);
+            
+            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
+            fflush(stdout);
+        }
     }
     
+    printf("\n"); // Move to a new line when the render loop finishes completely
     cudaDeviceSynchronize();
     cudaFree(d_rngStates);
 
@@ -683,7 +727,7 @@ __host__ void launch_unidirectional(
 }
 
 __device__ bool BDPTnextEventEstimation(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
@@ -707,8 +751,8 @@ __device__ bool BDPTnextEventEstimation(
 )
 {
     int totalLightNum = SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum; // +1 for the sky
-    lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (totalLightNum)), totalLightNum - 1) - 1) : 
-        (min(static_cast<int>(curand_uniform(&localState) * (lightNum)), lightNum - 1)); 
+    lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(rand(&localState) * (totalLightNum)), totalLightNum - 1) - 1) : 
+        (min(static_cast<int>(rand(&localState) * (lightNum)), lightNum - 1)); 
     
     float pdf_chooseLight = 1.0f / ((float) (SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum));
 
@@ -723,8 +767,8 @@ __device__ bool BDPTnextEventEstimation(
         float4 bnorm = vertices->normals[l.nbInd];
         float4 cnorm = vertices->normals[l.ncInd];
 
-        float u = sqrtf(curand_uniform(&localState));
-        float v = curand_uniform(&localState);
+        float u = sqrtf(rand(&localState));
+        float v = rand(&localState);
 
         float w0 = (1.0f - u);
         float w1 = u * (1.0f - v);
@@ -831,7 +875,7 @@ __device__ bool BDPTnextEventEstimation(
 
 // populates the section of eyePath buffer specified by the arguments. Also asigns the length of the path
 __device__ void generateEyePath(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     Camera camera, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
@@ -1049,7 +1093,7 @@ __device__ void generateEyePath(
 }
 
 __device__ void generateFirstLightPathVertex(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -1067,8 +1111,8 @@ __device__ void generateFirstLightPathVertex(
     int firstIdx = pathBufferIdx(w, h, x, y, 0);
 
     // the convention is that light index -1 is the environment, and that lightNum doesnt include the environment
-    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (lightNum + 1)), lightNum) - 1) : 
-        (min(static_cast<int>(curand_uniform(&localState) * (lightNum)), lightNum - 1)); 
+    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(rand(&localState) * (lightNum + 1)), lightNum) - 1) : 
+        (min(static_cast<int>(rand(&localState) * (lightNum)), lightNum - 1)); 
     
     float pdf_chooseLight = 1.0f / ((float) (SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum));
     lightPath->uv[firstIdx] = f2(0.0f);
@@ -1085,8 +1129,8 @@ __device__ void generateFirstLightPathVertex(
         float4 bnorm = vertices->normals[l.nbInd];
         float4 cnorm = vertices->normals[l.ncInd];
 
-        float u = sqrtf(curand_uniform(&localState));
-        float v = curand_uniform(&localState);
+        float u = sqrtf(rand(&localState));
+        float v = rand(&localState);
 
         float w0 = (1.0f - u);
         float w1 = u * (1.0f - v);
@@ -1149,8 +1193,8 @@ __device__ void generateFirstLightPathVertex(
 
         bitangent = normalize(cross3(dir_in, tangent));
 
-        float r1 = curand_uniform(&localState);
-        float r2 = curand_uniform(&localState);
+        float r1 = rand(&localState);
+        float r2 = rand(&localState);
         
         float disk_r = sceneRadius * sqrtf(r1); 
         float disk_phi = 2.0f * PI * r2;
@@ -1188,7 +1232,7 @@ __device__ void generateFirstLightPathVertex(
 }
 
 __device__ void generateLightPath(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
@@ -1410,7 +1454,7 @@ __device__ void generateLightPath(
 
 // performs the randomwalk from a sampled light, and takes care of the vertex connection sttage where light is made to directly hit the camera lense.
 __global__ void __launch_bounds__(256, 2) lightPathTracing (
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     PathVertices* eyePath, 
     PathVertices* lightPath, 
@@ -1429,7 +1473,8 @@ __global__ void __launch_bounds__(256, 2) lightPathTracing (
     int numSample, 
     int w, int h, 
     float4* __restrict__ colors, 
-    float4* __restrict__ overlay
+    float4* __restrict__ overlay,
+    int frameNum
 ) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1438,7 +1483,8 @@ __global__ void __launch_bounds__(256, 2) lightPathTracing (
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     int lightPathLength;
     generateLightPath(localState, materials, textures, BVH, BVHindices, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, w, h, x, y, lightPath, lightPathLength);
@@ -1570,7 +1616,8 @@ __global__ void __launch_bounds__(256, 2) lightPathTracing (
             atomicAdd(&colors[newPixelIndex].z, weightedContribution.z);
         }
     }
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 /*
@@ -1585,7 +1632,7 @@ __global__ void __launch_bounds__(256, 2) lightPathTracing (
  to the reverse/fwd pdf of vi, in addition to any other terms representing other strategies.
  */
 __device__ bool connectPath(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     int t, int s, 
     int x, int y, int w, int h, 
     Camera camera, 
@@ -1927,7 +1974,7 @@ __device__ bool connectPath(
 
 
 __global__ void __launch_bounds__(256, 2) Li_bidirectional(
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     PathVertices* eyePath, 
     PathVertices* lightPath, 
@@ -1946,7 +1993,8 @@ __global__ void __launch_bounds__(256, 2) Li_bidirectional(
     int numSample, 
     int w, int h, 
     float4* __restrict__ colors, 
-    float4* __restrict__ overlay
+    float4* __restrict__ overlay,
+    int frameNum
 ) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1955,7 +2003,8 @@ __global__ void __launch_bounds__(256, 2) Li_bidirectional(
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
     
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     int eyePathLength = 0; // measures number of pathvertices, not segments
     int lightPathLength = lightPathLengths[pixelIdx]; // measures number of pathvertices, not segments
@@ -1977,7 +2026,7 @@ __global__ void __launch_bounds__(256, 2) Li_bidirectional(
             if (!connectPath(localState, t, s, x, y, w, h, camera, eyeDepth, lightDepth, materials, BVH, BVHindices, vertices, scene, lights, lightNum, 
                 textures, eyePathLength, lightPathLength, eyePath, lightPath, unweighted_contribution, misWeight) && BDPT_DRAWPATH)
             {
-                drawPath(overlay, eyePath, camera, x, y, w, eyePathLength, eyeDepth, f4(curand_uniform(&localState), curand_uniform(&localState), curand_uniform(&localState)));
+                drawPath(overlay, eyePath, camera, x, y, w, eyePathLength, eyeDepth, f4(rand(&localState), rand(&localState), rand(&localState)));
             }
  
             float4 weightedContribution = unweighted_contribution * misWeight;
@@ -1992,7 +2041,8 @@ __global__ void __launch_bounds__(256, 2) Li_bidirectional(
     }
 
     colors[pixelIdx] += fullContribution;
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __host__ void launch_bidirectional(
@@ -2020,19 +2070,21 @@ __host__ void launch_bidirectional(
     dim3 blockSize(16, 16);  
     dim3 gridSize((w + 15) / 16, (h + 15) / 16);
 
-    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float4));
-    cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
-
-    // Create a CUDA Stream (Required for Graphs)
+    // Create a dedicated CUDA Stream for asynchronous execution
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-    // RNG Setup
-    cudaRNGState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
-    unsigned long seed = 103033UL;
-    //initRNG<<<gridSize, blockSize, 0, stream>>>(d_rngStates, w, h, seed);
-    RNGManager::launchInitRNG(d_rngStates, w, h, seed);
+    // Push symbols asynchronously
+    cudaMemcpyToSymbolAsync(sceneCenter, &(h_sceneCenter), sizeof(float4), 0, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyToSymbolAsync(sceneRadius, &(h_sceneRadius), sizeof(float), 0, cudaMemcpyHostToDevice, stream);
+
+    #if RNG_MODE == 3
+        RNGState* d_rngStates = nullptr;
+    #else
+        RNGState* d_rngStates;
+        cudaMalloc(&d_rngStates, w * h * sizeof(RNGState));
+        RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
+    #endif
     
     // Path Lengths
     int* d_pathLengths = nullptr;
@@ -2048,100 +2100,77 @@ __host__ void launch_bidirectional(
     cudaMemGetInfo(&freeB, &totalB);
     printf("Free: %.2f MB of %.2f MB\n", freeB / (1024.0 * 1024), totalB / (1024.0 * 1024));
     
-    // Image Object (CPU)
-    Image image = Image(w, h); // Assuming this exists
+    // Image Object (CPU) & Saving logic from SPPM
+    int saveIntervalSamples = 30; // Matches SPPM logic
+    Image image = Image(w, h);
     image.postProcess = postProcess;
-    std::vector<float4> h_finalOutput(w * h); // Host buffer for saving
+    std::vector<float4> h_finalOutput(w * h); 
 
-    // Timing
-    auto lastSaveTime = std::chrono::steady_clock::now();
-    float saveIntervalSeconds = 5.0f;
-
-    // --- CUDA GRAPH SETUP ---
-    cudaGraph_t graph;
-    cudaGraphExec_t instance;
-    bool graphCreated = false;
-
-    std::cout << "Starting Render with CUDA Graphs..." << std::endl;
+    std::cout << "Starting BDPT Render..." << std::endl;
     
+    // Start total timer
+    auto renderStartTime = std::chrono::steady_clock::now();
+
+    // --- MAIN RENDER LOOP ---
     for (int currSample = 0; currSample < numSample; currSample++)
     {
-        // 1. CREATE GRAPH (Only runs on the first iteration)
-        if (!graphCreated) {
-            cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+        // Launch kernels on the stream (currSample fixes the RNG loop bug!)
+        lightPathTracing<<<gridSize, blockSize, 0, stream>>>(
+            d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
+            lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
+            colors, overlay, currSample
+        );
 
-            // Record the core render kernels
-            // Note: We use '0' shared memory and pass the 'stream'
-            lightPathTracing<<<gridSize, blockSize, 0, stream>>>(
-                d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
-                lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
-                colors, overlay
+        Li_bidirectional<<<gridSize, blockSize, 0, stream>>>(
+            d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
+            eyeDepth, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
+            colors, overlay, currSample
+        );
+
+        // --- PROGRESSIVE SAVING LOGIC ---
+        if (DO_PROGRESSIVERENDER && currSample % saveIntervalSamples == 0) 
+        {
+            // Run the helper kernel (Handles NaNs, Normalization, Overlay)
+            cleanAndFormatImage<<<gridSize, blockSize, 0, stream>>>(
+                colors, overlay, d_finalOutput, w, h, currSample
             );
 
-            Li_bidirectional<<<gridSize, blockSize, 0, stream>>>(
-                d_rngStates, camera, eyePath, lightPath, d_pathLengths, materials, textures, BVH, BVHindices, 
-                eyeDepth, lightDepth, vertices, vertNum, scene, triNum, lights, lightNum, numSample, w, h, 
-                colors, overlay
-            );
-
-            cudaStreamEndCapture(stream, &graph);
-            cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
-            graphCreated = true;
-        }
-
-        cudaGraphLaunch(instance, stream);
-
-        if (DO_PROGRESSIVERENDER && currSample % 25 == 0) {
+            // Copy the clean result to Host asynchronously
+            cudaMemcpyAsync(h_finalOutput.data(), d_finalOutput, w * h * sizeof(float4), cudaMemcpyDeviceToHost, stream);
+            
+            // Wait ONLY for the memory copy to finish before the CPU touches h_finalOutput
             cudaStreamSynchronize(stream);
 
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSaveTime).count();
-
-            if (elapsed >= saveIntervalSeconds) 
-            {
-                // Pause the stream to process the image safely
-                cudaStreamSynchronize(stream);
-
-                // Run the helper kernel (Handles NaNs, Normalization, Overlay)
-                cleanAndFormatImage<<<gridSize, blockSize, 0, stream>>>(
-                    colors, overlay, d_finalOutput, w, h, currSample
-                );
-
-                // Copy the clean result to Host
-                cudaMemcpyAsync(h_finalOutput.data(), d_finalOutput, w * h * sizeof(float4), cudaMemcpyDeviceToHost, stream);
-                
-                // Wait for copy to finish
-                cudaStreamSynchronize(stream);
-
-                // Save to Image object (Now trivial loop)
-                #pragma omp parallel for // Optional: OpenMP to speed up this CPU loop
-                for (int i = 0; i < w * h; i++) {
-                    // Convert 1D index to 2D
-                    int x = i % w;
-                    int y = i / w;
-                    // Just set the color directly, no logic needed here!
-                    image.setColor(x, y, h_finalOutput[i]);
-                }
-
-                std::string filename = "render.bmp";
-                image.saveImageBMP(filename);
-                image.saveImageCSV_MONO(0);
-                
-                lastSaveTime = std::chrono::steady_clock::now();
-                printf("Saved progress at %d samples.\n", currSample);
-
-                // Reset overlay if needed (As per your original logic)
-                cudaMemsetAsync(overlay, 0, w * h * sizeof(float4), stream);
+            #pragma omp parallel for
+            for (int i = 0; i < w * h; i++) {
+                int x = i % w;
+                int y = i / w;
+                image.setColor(x, y, h_finalOutput[i]);
             }
+
+            std::string filename = "render.bmp";
+            image.saveImageBMP(filename);
+            image.saveImageCSV_MONO(0);
+
+            // Time Tracking
+            auto currentTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
+            double avgTimeMs = elapsed.count() / (currSample + 1);
+            
+            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
+            fflush(stdout);
+
+            // Clear the overlay buffer for the next interval
+            cudaMemsetAsync(overlay, 0, w * h * sizeof(float4), stream);
         }
     }
     
-    // Final cleanup
+    printf("\n"); // Clear the line after the progress bar finishes
+    
+    // Final catch-all sync
     cudaStreamSynchronize(stream);
     
     // Cleanup resources
-    cudaGraphExecDestroy(instance);
-    cudaGraphDestroy(graph);
     cudaStreamDestroy(stream);
     cudaFree(d_pathLengths);
     cudaFree(d_rngStates);
@@ -2150,14 +2179,16 @@ __host__ void launch_bidirectional(
     // Error Checking
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        std::cerr << "RENDER ERROR: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "RENDER ERROR: CUDA Error code: " << static_cast<int>(err) << std::endl;
+        if (err != cudaErrorAssert && err != cudaErrorUnknown)
+            std::cerr << cudaGetErrorString(err) << std::endl;
     } else {
         std::cout << "Render executed successfully." << std::endl;
     }
 }
 
 __device__ void generateVCMLightPath(
-    cudaRNGState& localState, 
+    RNGState& localState, 
     int x, int y,
     VCMPathVertices lightPath, 
     Photons photons, 
@@ -2176,8 +2207,8 @@ __device__ void generateVCMLightPath(
     pathLength = 0;
 
     // the convention is that light index -1 is the environment, and that lightNum doesnt include the environment
-    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (lightNum + 1)), lightNum) - 1) : 
-        (min(static_cast<int>(curand_uniform(&localState) * (lightNum)), lightNum - 1)); 
+    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(rand(&localState) * (lightNum + 1)), lightNum) - 1) : 
+        (min(static_cast<int>(rand(&localState) * (lightNum)), lightNum - 1)); 
     
     float pdf_chooseLight = 1.0f / ((float) (SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum));
 
@@ -2208,8 +2239,8 @@ __device__ void generateVCMLightPath(
         // for depth 1, this is NOT a solid angle PDF, but we are just reusing the varible
         pdf_chooseLightPos = pdf_chooseLight / area;
 
-        float u = sqrtf(curand_uniform(&localState));
-        float v = curand_uniform(&localState);
+        float u = sqrtf(rand(&localState));
+        float v = rand(&localState);
 
         float w0 = (1.0f - u);
         float w1 = u * (1.0f - v);
@@ -2451,7 +2482,7 @@ __device__ void generateVCMLightPath(
 }
 
 __global__ void __launch_bounds__(256, 2) doLightPass(
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     VCMPathVertices lightPath, 
     Photons photons, 
@@ -2464,7 +2495,8 @@ __global__ void __launch_bounds__(256, 2) doLightPass(
     const Triangle* __restrict__ lights, int lightNum, 
     float4* __restrict__ colors, 
     float4* __restrict__ overlay, 
-    int* globalPhotonIndex
+    int* globalPhotonIndex,
+    int frameNum
 ) 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2473,7 +2505,8 @@ __global__ void __launch_bounds__(256, 2) doLightPass(
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     int lightPathLength;
     generateVCMLightPath(
@@ -2615,7 +2648,8 @@ __global__ void __launch_bounds__(256, 2) doLightPass(
             atomicAdd(&colors[newPixelIndex].z, weightedContribution.z);
         }
     }
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 /*
@@ -2682,7 +2716,7 @@ __device__ __noinline__ bool connectImplicitHit(
 }
 
 __device__ __noinline__ bool connectNEE(
-    cudaRNGState& localState,
+    RNGState& localState,
     float4 eyePos,
     float4 eyeNorm,
     float4 eyethroughput,
@@ -2768,7 +2802,7 @@ __device__ __noinline__ bool connectNEE(
 
 // assumes that both surfaces are not delta
 __device__ __noinline__ bool connectGeneral(
-    cudaRNGState& localState,
+    RNGState& localState,
     float4 eyePos,
     float4 eyeNorm,
     float4 eyeThroughput,
@@ -2906,7 +2940,7 @@ __device__ __noinline__ bool connectGeneral(
 }
 
 __global__ void __launch_bounds__(256, 2) doEyePass(
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     const VCMPathVertices lightPath, 
     const int* __restrict__ lightPathLengths, 
@@ -2923,7 +2957,8 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
     int hashTableSize,
     float4* __restrict__ colors, 
     float4* __restrict__ overlay,
-    int photonCount
+    int photonCount,
+    int frameNum
 )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2932,7 +2967,8 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     Ray r = camera.generateCameraRay(localState, x, y);
 
@@ -3348,7 +3384,8 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
         prevPos = currPos;
     }
     colors[pixelIdx] += colorSum;
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __global__ void computeHashes(
@@ -3575,10 +3612,14 @@ __host__ void launch_VCM(
     cudaMemcpyToSymbol(w, &(h_w), sizeof(int));
     cudaMemcpyToSymbol(h, &(h_h), sizeof(int));
     
-    // RNG Setup
-    cudaRNGState* d_rngStates;
-    cudaMalloc(&d_rngStates, h_w * h_h * sizeof(cudaRNGState));
-    RNGManager::launchInitRNG(d_rngStates, h_w, h_h, 5124123UL);
+    #if RNG_MODE == 3
+        RNGState* d_rngStates = nullptr;
+    #else
+        RNGState* d_rngStates;
+        cudaMalloc(&d_rngStates, h_w * h_h * sizeof(RNGState));
+        RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
+    #endif
+    
 
     // set up device buffers for VCM and display
     int* d_pathLengths = nullptr;
@@ -3610,7 +3651,7 @@ __host__ void launch_VCM(
     cudaMalloc(&d_cell_start, hashTableSize * sizeof(unsigned int));
     cudaMalloc(&d_cell_end, hashTableSize * sizeof(unsigned int));
 
-    void* d_temp_storage = NULL;
+    void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
     cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
         d_hash_keys_in, d_hash_keys_out, d_indices_in, d_indices_out, maxPhotonCount);
@@ -3626,7 +3667,7 @@ __host__ void launch_VCM(
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    int saveIntervalSamples = 5;
+    int saveIntervalSamples = 200;
     Image image = Image(h_w, h_h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(h_w * h_h);
@@ -3658,7 +3699,8 @@ __host__ void launch_VCM(
             scene, triNum,
             lights, lightNum,
             colors, overlay,
-            d_global_photon_counter
+            d_global_photon_counter,
+            currSample
         );
         
         int photonCount;
@@ -3692,7 +3734,8 @@ __host__ void launch_VCM(
             vertices, vertNum, scene, triNum, lights, lightNum,
             hashTableSize,
             colors, overlay,
-            photonCount
+            photonCount,
+            currSample
         );
         
         if (DO_PROGRESSIVERENDER)
@@ -3758,7 +3801,7 @@ __host__ void launch_VCM(
 }
 
 __global__ void tracePhotons(
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     int w, int h, 
     Photons photons, 
     const Material* __restrict__ materials, 
@@ -3768,7 +3811,8 @@ __global__ void tracePhotons(
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
     const Triangle* __restrict__ lights, int lightNum,
-    int* globalPhotonIndex
+    int* globalPhotonIndex,
+    int frameNum
 )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -3777,11 +3821,12 @@ __global__ void tracePhotons(
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     // the convention is that light index -1 is the environment, and that lightNum doesnt include the environment
-    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(curand_uniform(&localState) * (lightNum + 1)), lightNum) - 1) : 
-        (min(static_cast<int>(curand_uniform(&localState) * (lightNum)), lightNum - 1)); 
+    int lightInd = SAMPLE_ENVIRONMENT ? (min(static_cast<int>(rand(&localState) * (lightNum + 1)), lightNum) - 1) : 
+        (min(static_cast<int>(rand(&localState) * (lightNum)), lightNum - 1)); 
     
     float pdf_chooseLight = 1.0f / ((float) (SAMPLE_ENVIRONMENT ? (lightNum + 1) : lightNum));
 
@@ -3812,8 +3857,8 @@ __global__ void tracePhotons(
         // for depth 1, this is NOT a solid angle PDF, but we are just reusing the varible
         pdf_chooseLightPos = pdf_chooseLight / area;
 
-        float u = sqrtf(curand_uniform(&localState));
-        float v = curand_uniform(&localState);
+        float u = sqrtf(rand(&localState));
+        float v = rand(&localState);
 
         float w0 = (1.0f - u);
         float w1 = u * (1.0f - v);
@@ -3945,11 +3990,12 @@ __global__ void tracePhotons(
         prevPos = currPos;
     }
 
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __global__ void traceEyePaths(
-    cudaRNGState* rngStates, 
+    RNGState* rngStates, 
     Camera camera, 
     const Photons photons_sorted, 
     const unsigned int* __restrict__ cell_start, 
@@ -3965,7 +4011,8 @@ __global__ void traceEyePaths(
     int hashTableSize,
     float4* __restrict__ colors, 
     float4* __restrict__ overlay,
-    int photonCount
+    int photonCount,
+    int frameNum
 )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -3974,7 +4021,8 @@ __global__ void traceEyePaths(
     if (x >= w || y >= h) return;
     int pixelIdx = y*w + x;
 
-    cudaRNGState localState = rngStates[pixelIdx];
+    //RNGState localState = rngStates[pixelIdx];
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
     Ray r = camera.generateCameraRay(localState, x, y);
 
@@ -4146,7 +4194,8 @@ __global__ void traceEyePaths(
         prevPos = intersect.point;
     }
     colors[pixelIdx] += colorSum;
-    rngStates[pixelIdx] = localState;
+    //rngStates[pixelIdx] = localState;
+    save_rng(pixelIdx, &localState, rngStates);
 }
 
 __host__ void launch_SPPM(
@@ -4182,11 +4231,14 @@ __host__ void launch_SPPM(
     cudaMemcpyToSymbol(sceneMin, &(h_sceneMin), sizeof(float4));
     cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
     
-    // RNG Setup
-    cudaRNGState* d_rngStates;
-    cudaMalloc(&d_rngStates, w * h * sizeof(cudaRNGState));
-    RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
-
+    #if RNG_MODE == 3
+        RNGState* d_rngStates = nullptr;
+    #else
+        RNGState* d_rngStates;
+        cudaMalloc(&d_rngStates, w * h * sizeof(RNGState));
+        RNGManager::launchInitRNG(d_rngStates, w, h, 5124123UL);
+    #endif
+    
     // set up device buffers for VCM and display
     int* d_pathLengths = nullptr;
 
@@ -4262,7 +4314,8 @@ __host__ void launch_SPPM(
             vertices, vertNum,
             scene, triNum,
             lights, lightNum,
-            d_global_photon_counter
+            d_global_photon_counter,
+            currSample
         );
         
         int photonCount;
@@ -4296,7 +4349,8 @@ __host__ void launch_SPPM(
             w, h,
             hashTableSize,
             colors, overlay,
-            photonCount
+            photonCount,
+            currSample
         );
         
         if (DO_PROGRESSIVERENDER)

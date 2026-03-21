@@ -28,10 +28,11 @@
 // need to set epsilon low for small scale scenes for some reason, likely due to rejection of min distance?
 // ideally should be decoupled from ray epsilon type things; look into this
 __device__ __constant__ float EPSILON = 0.0000001f;
+__device__ __constant__ float EPSILON3 = 0.001f;
 __device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 350.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 40.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
@@ -270,10 +271,10 @@ __host__ __device__ __forceinline__ float4 rotateZ(const float4& v, float angle)
     );
 }
 
-__device__ __forceinline__ float4 sampleSphere(cudaRNGState& localState, float R)
+__device__ __forceinline__ float4 sampleSphere(RNGState& localState, float R)
 {
-    float u = curand_uniform(&localState);
-    float v = curand_uniform(&localState);
+    float u = rand(&localState);
+    float v = rand(&localState);
 
     float z = 1.0f - 2.0f * u;          // cos(theta) uniformly distributed
     float r = sqrtf(max(0.f, 1.f - z*z));
@@ -313,33 +314,43 @@ __host__ inline bool parseBool(const std::string& val) {
 
 __device__ __forceinline__ unsigned int toRGB9E5(float4 c)
 {
-    float maxRGB = fmaxf(c.x, fmaxf(c.y, c.z));
-    int expShared = maxRGB <= 1.0e-9f ? -16 : (int)floorf(log2f(maxRGB));
-    expShared = max(expShared, -16);
-    expShared = min(expShared, 15);
+    float r = fmaxf(0.0f, c.x);
+    float g = fmaxf(0.0f, c.y);
+    float b = fmaxf(0.0f, c.z);
     
-    float denom = powf(2.0f, (float)(expShared - 9 + 15));
-    int maxVal = (int)floorf(maxRGB / denom + 0.5f);
-    
-    if (maxVal > 511) { expShared++; denom *= 2.0f; }
-    
-    int r = (int)floorf(c.x / denom + 0.5f);
-    int g = (int)floorf(c.y / denom + 0.5f);
-    int b = (int)floorf(c.z / denom + 0.5f);
-    
-    return (unsigned int)((expShared + 15) << 27 | (b << 18) | (g << 9) | r);
+    float maxRGB = fmaxf(r, fmaxf(g, b));
+
+    int expShared = (maxRGB < 1.5258789e-05f) ? 0 : (int)floorf(log2f(maxRGB)) + 17;
+    expShared = clamp(expShared, 0, 31);
+
+    float denom = exp2f((float)(expShared - 15 - 9));
+
+    int Ri = (int)roundf(r / denom);
+    int Gi = (int)roundf(g / denom);
+    int Bi = (int)roundf(b / denom);
+
+    if (Ri > 511 || Gi > 511 || Bi > 511) {
+        expShared++;
+        denom *= 2.0f;
+        Ri = (int)roundf(r / denom);
+        Gi = (int)roundf(g / denom);
+        Bi = (int)roundf(b / denom);
+    }
+
+    return (unsigned int)((expShared << 27) | ((Bi & 0x1FF) << 18) | ((Gi & 0x1FF) << 9) | (Ri & 0x1FF));
 }
 
 __device__ __forceinline__ float4 fromRGB9E5(unsigned int packed)
 {
-    int exponent = (packed >> 27) - 15 - 9;
-    float scale = powf(2.0f, (float)exponent);
+    int exponent = (int)(packed >> 27) - 15 - 9;
+    
+    float scale = __powf(2.0f, (float)exponent); 
     
     float r = (float)(packed & 0x1FF) * scale;
     float g = (float)((packed >> 9) & 0x1FF) * scale;
     float b = (float)((packed >> 18) & 0x1FF) * scale;
     
-    return f4(r, g, b, 1.0f); // Default alpha to 1
+    return make_float4(r, g, b, 1.0f);
 }
 
 // Encodes a unit vector into 32 bits (2x 16-bit snorm) with minimal error.
@@ -499,4 +510,19 @@ __device__ __forceinline__ inline float eta_vcm_to_mergeRadius(float eta_vcm, in
 {
     // eta_vcm = mergeRadius * mergeRadius * PI * numPhotonLightPath
     return sqrtf(eta_vcm / (PI * numPhotonLightPath));
+}
+
+__device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 contribution, int idx)
+{
+    if (colors[idx].x < 0.0f || colors[idx].y < 0.0f || colors[idx].z < 0.0f) {
+        printf("NEGATIVE NUMBER ADDED\n");
+    }
+    atomicAdd(&colors[idx].x, contribution.x);
+    atomicAdd(&colors[idx].y, contribution.y);
+    atomicAdd(&colors[idx].z, contribution.z);
+}
+
+__device__ __forceinline__ inline float powerHeuristicTwoStrategy(float primary, float other)
+{
+    return 1.0f / (1.0f + (other/primary) * (other/primary));
 }

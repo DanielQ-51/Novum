@@ -1,13 +1,14 @@
 #include "rng.cuh"
 #include <stdio.h>
 
-// Internal global variable (only visible in this file)
-// This ensures there is exactly one copy of the pointer for the whole program.
+// Entirely exclude global memory setup if we are purely stateless
+#if RNG_MODE != 3
+
 static curandDirectionVectors32_t* g_sobolVectors = nullptr;
 static unsigned int* g_scrambleConstants = nullptr;
 
 // 3. THE KERNEL
-__global__ void initRNG_Kernel(cudaRNGState* states, int width, int height, 
+__global__ void initRNG_Kernel(RNGState* states, int width, int height, 
 #if RNG_MODE == 2
     curandDirectionVectors32_t* directionVectors,
     unsigned int* scrambleConstants
@@ -29,6 +30,7 @@ __global__ void initRNG_Kernel(cudaRNGState* states, int width, int height,
     curand_init(seed, idx, 0, &states[idx]);
 #endif
 }
+#endif // RNG_MODE != 3
 
 // 4. THE MANAGER IMPLEMENTATION
 namespace RNGManager {
@@ -43,20 +45,23 @@ namespace RNGManager {
         #endif
     }
 
-    void launchInitRNG(cudaRNGState* d_rngStates, int width, int height, unsigned long seed) {
+    void launchInitRNG(RNGState* d_rngStates, int width, int height, unsigned long seed) {
+        #if RNG_MODE == 3
+        // Stateless PCG generates its state on the fly in kernel registers.
+        // There is no VRAM buffer to initialize, so we do nothing.
+        return; 
+        #else
         dim3 block(16, 16);
         dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
         #if RNG_MODE == 2
             // Lazy initialization of the vectors
             if (g_sobolVectors == nullptr) {
-                // 1. Get Direction Vectors (Same as before)
                 curandDirectionVectors32_t* hostVecs;
                 curandGetDirectionVectors32(&hostVecs, CURAND_DIRECTION_VECTORS_32_JOEKUO6);
                 cudaMalloc(&g_sobolVectors, sizeof(curandDirectionVectors32_t) * 20000);
                 cudaMemcpy(g_sobolVectors, hostVecs, sizeof(curandDirectionVectors32_t) * 20000, cudaMemcpyHostToDevice);
 
-                // 2. Get Scramble Constants (NEW)
                 unsigned int* hostScramble;
                 curandGetScrambleConstants32(&hostScramble);
                 cudaMalloc(&g_scrambleConstants, sizeof(unsigned int) * 20000);
@@ -70,7 +75,10 @@ namespace RNGManager {
         cudaError_t err = cudaDeviceSynchronize();
         if (err != cudaSuccess) {
             printf("RNG Init Error: %s\n", cudaGetErrorString(err));
+            #if RNG_MODE == 2
             g_scrambleConstants = nullptr;
+            #endif
         }
+        #endif // RNG_MODE == 3
     }
 }

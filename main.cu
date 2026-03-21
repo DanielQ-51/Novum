@@ -1,8 +1,8 @@
 
 #include "deviceCode.cuh"
+#include "fastIntegrators.cuh"
 #include "objects.cuh"
 #include "util.cuh"
-#include <vector>
 #include <chrono>
 #include <iostream>
 #include <set>
@@ -11,6 +11,7 @@
 #include <fstream>
 #include <cuda_fp16.h>
 #include <string>
+#include <vector>
 
 using namespace std;
 
@@ -64,7 +65,7 @@ int partitionPrimitives(vector<int>& indices, vector<float4>& centroids, int sta
 void SAH( vector<int>& indices, vector<float4>& centroids, vector<float4>& AABBmins, vector<float4>& AABBmaxes, int start, 
     int end, int& axis, float4 minBound, float4 maxBound, float& splitPos, float& minCost, int& backup)
 {
-    const int numBuckets = 12;
+    const int numBuckets = 150;
     struct Bucket { float4 min, max; int count; };
     Bucket buckets[numBuckets];
     for (int i = 0; i < numBuckets; i++) 
@@ -208,7 +209,7 @@ int buildBVH(vector<BVHnode>& nodes, vector<int>& indices, vector<float4>& centr
             numLeft++;
     }
     //cout << "2numLeft: " << numLeft << endl;
-    if (numLeft > 0 && numLeft < (primCount - 1))
+    if (numLeft > 0 && numLeft < primCount)
         mid = partitionPrimitives(indices, centroids, start, end, axis, splitPos);
     else
     {
@@ -282,6 +283,14 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             sampleCount << " samples per pixel, and a maximum leaf size of " <<
             maxLeafSize << " primitives, with a max depth of " << 
             maxDepth << ".\nIntegrating with Naive + NEE Unidirectional MIS." << 
+            endl << endl;
+    }
+    if (integratorChoice == WAVEFRONT_UNIDIRECTIONAL)
+    {
+        cout << "Rendering at " << w << " by " << h << " pixels, with " << 
+            sampleCount << " samples per pixel, and a maximum leaf size of " <<
+            maxLeafSize << " primitives, with a max depth of " << 
+            maxDepth << ".\nIntegrating with Naive + NEE Unidirectional MIS (Wavefront)." << 
             endl << endl;
     }
     else if (integratorChoice == BIDIRECTIONAL)
@@ -935,9 +944,30 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         cudaFree(tempPhotons1.d_vcm);
         //cudaFree(tempPhotons1.d_vc);
         //cudaFree(tempPhotons1.d_vm);
-    }
-    
+    } else if (integratorChoice == WAVEFRONT_UNIDIRECTIONAL) {
+        SceneContext sc;
+        sc.BVH = BVH;
+        sc.BVHindices = BVHindices;
+        sc.lightNum = lightsvec.size();
+        sc.lights = lights;
+        sc.scene = scene;
+        sc.triNum = mesh.size();
+        sc.vertices = verts;
+        sc.vertNum = points.size();
+        sc.materials = mats_d;
+        sc.textures = textures_d;
 
+        launch_wavefrontUnidirectional(
+            camera,
+            sc,
+            sampleCount,
+            maxDepth,
+            w, h,
+            sceneCenter, sceneRadius, sceneMin,
+            out_colors, out_overlay,
+            config.postProcess
+        );
+    }
     
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1019,7 +1049,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
 int main ()
 {
-    string configName = "configs/dragon.rendertron";
+    string configName = "configs/config2.rendertron";
     //for (int i = 0; i <= 150; i++)
     //    initRender(configName, i);
 

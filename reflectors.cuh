@@ -7,23 +7,23 @@
 #include "objects.cuh"
 #include <curand_kernel.h>
 
-__device__ void cosine_f(const float4& baseColor, float4& newColor)
+__device__ inline void cosine_f(const float4& baseColor, float4& newColor)
 {
     newColor = baseColor/PI;
 }
 
-__device__ void cosine_pdf(const float4& wo_local, float& pdf)
+__device__ inline void cosine_pdf(const float4& wo_local, float& pdf)
 {
     pdf = fmaxf(wo_local.z, EPSILON)/PI;
 }
 
 
-__device__ void cosine_sample_f(cudaRNGState& localState, const float4& baseColor, float4& wo, float4& f_val, float& pdf)
+__device__ inline void cosine_sample_f(RNGState& localState, const float4& baseColor, float4& wo, float4& f_val, float& pdf)
 {
-    float u1 = curand_uniform(&localState);
+    float u1 = rand(&localState);
 
     u1 = fminf(u1, 1.0f-EPSILON);
-    float u2 = curand_uniform(&localState); 
+    float u2 = rand(&localState); 
 
     float r = sqrt(u1);
     float phi = 2.0f * PI * u2; 
@@ -38,12 +38,12 @@ __device__ void cosine_sample_f(cudaRNGState& localState, const float4& baseColo
     cosine_pdf(wo, pdf);
 }
 
-__device__ void cosine_emit(cudaRNGState& localState, float4& wo, float& pdf)
+__device__ inline void cosine_emit(RNGState& localState, float4& wo, float& pdf)
 {
-    float u1 = curand_uniform(&localState);
+    float u1 = rand(&localState);
 
     u1 = fminf(u1, 1.0f-EPSILON);
-    float u2 = curand_uniform(&localState); 
+    float u2 = rand(&localState); 
 
     float r = sqrt(u1);
     float phi = 2.0f * PI * u2; 
@@ -56,18 +56,18 @@ __device__ void cosine_emit(cudaRNGState& localState, float4& wo, float& pdf)
     cosine_pdf(wo, pdf);
 }
 
-__device__ void mirror_f(float4& f_val, float4 wo)
+__device__ inline void mirror_f(float4& f_val, float4 wo)
 {
     float cos_theta = fmaxf(wo.z, EPSILON);
     f_val = f4(1.0f / cos_theta);
 }
 
-__device__ void mirror_pdf(float& pdf)
+__device__ inline void mirror_pdf(float& pdf)
 {
     pdf = 1.0f;
 }
 
-__device__ void mirror_sample_f(float4 wi, float4& wo, float4& f_val, float& pdf)
+__device__ inline void mirror_sample_f(float4 wi, float4& wo, float4& f_val, float& pdf)
 {
     wo = f4(-wi.x, -wi.y, wi.z);
     float cos_theta = fmaxf(wo.z, EPSILON);
@@ -75,7 +75,7 @@ __device__ void mirror_sample_f(float4 wi, float4& wo, float4& f_val, float& pdf
     pdf = 1.0f;
 }
 
-__device__ float D_GGX(const float4& h, float alpha) 
+__device__ inline float D_GGX(const float4& h, float alpha) 
 {
     float cosThetaH = h.z;
     float alpha2 = alpha * alpha;
@@ -83,13 +83,13 @@ __device__ float D_GGX(const float4& h, float alpha)
     return alpha2 / (PI * denom * denom);
 }
 
-__device__ float G1_Smith(float nDotV, float alpha) 
+__device__ inline float G1_Smith(float nDotV, float alpha) 
 {
     float a = alpha * sqrtf(1.0f - nDotV*nDotV) / nDotV;
     return 2.0f / (1.0f + sqrtf(1.0f + a*a));
 }
 
-__device__ float G1_GGX(const float4& v, const float4& h, float alpha)
+__device__ inline float G1_GGX(const float4& v, const float4& h, float alpha)
 {
     float cosTheta = v.z;
     float tanTheta = sqrtf(1.0f - cosTheta * cosTheta) / cosTheta;
@@ -100,12 +100,12 @@ __device__ float G1_GGX(const float4& v, const float4& h, float alpha)
         return 1.0f;
 }
 
-__device__ float G_Smith(const float4& wi, const float4& wo, const float4& h, float alpha)
+__device__ inline float G_Smith(const float4& wi, const float4& wo, const float4& h, float alpha)
 {
     return G1_GGX(wi, h, alpha) * G1_GGX(wo, h, alpha);
 }
 
-__device__ float4 Fresnel_Conductor(float cosTheta, const float4& eta, const float4& k) {
+__device__ inline float4 Fresnel_Conductor(float cosTheta, const float4& eta, const float4& k) {
     float4 cosTheta2 = f4(cosTheta*cosTheta);
     float4 sinTheta2 = f4(1.0f) - cosTheta2;
     
@@ -126,7 +126,7 @@ __device__ float4 Fresnel_Conductor(float cosTheta, const float4& eta, const flo
     return (t1 - t2) / (t1 + t2);
 }
 
-__device__ void microfacet_metal_f(const float4& eta, const float4& k, float roughness, const float4& wi, const float4& wo, float4& f_val)
+__device__ inline void microfacet_metal_f(const float4& eta, const float4& k, float roughness, const float4& wi, const float4& wo, float4& f_val)
 {
     if (wi.z <= 0.0f || wo.z <= 0.0f) {
         f_val = f4(0.0f);
@@ -149,7 +149,7 @@ __device__ void microfacet_metal_f(const float4& eta, const float4& k, float rou
     f_val = (D * G * f) / fmaxf(4.0f * nDotWi * nDotWo, EPSILON);
 }
 
-__device__ void microfacet_pdf(const float& roughness, const float4& wi, const float4& wo, float& pdf)
+__device__ inline void microfacet_pdf(const float& roughness, const float4& wi, const float4& wo, float& pdf)
 {
     float4 h = normalize(wi + wo);
     float D = D_GGX(h, roughness *roughness);
@@ -157,13 +157,13 @@ __device__ void microfacet_pdf(const float& roughness, const float4& wi, const f
     pdf = (D * h.z) / (denom);
 }
 
-__device__ void microfacet_metal_sample_f(cudaRNGState& localState, const float4& eta, const float4& k, float roughness, const float4& wi, 
+__device__ inline void microfacet_metal_sample_f(RNGState& localState, const float4& eta, const float4& k, float roughness, const float4& wi, 
     float4& wo, float4& f_val, float& pdf)
 {
-    float u1 = curand_uniform(&localState);
+    float u1 = rand(&localState);
 
     float alpha = roughness * roughness;
-    float phi = 2.0f * PI * curand_uniform(&localState);
+    float phi = 2.0f * PI * rand(&localState);
     float cosTheta = sqrtf((1.0f - u1) / (1.0f + (alpha*alpha - 1.0f) * u1));
     float sinTheta = sqrtf(fmaxf(1.0f - cosTheta*cosTheta, 0.0f));
 
@@ -190,7 +190,7 @@ __device__ inline float schlick_fresnel(float cosTheta, float etaI, float etaT)
 // -----------------------------------------------------------------------------
 // EVAL (given wi, wo, etaI, etaT, and reflect boolean)
 // -----------------------------------------------------------------------------
-__device__ void smooth_dielectric_f(
+__device__ inline void smooth_dielectric_f(
     const float4& wi, const float4& wo,
     float etaI, float etaT, bool reflect, bool TIR,
     float4& f_val)
@@ -217,7 +217,7 @@ __device__ void smooth_dielectric_f(
 // -----------------------------------------------------------------------------
 // SAMPLE_F (importance sample the reflection/refract direction)
 // -----------------------------------------------------------------------------
-__device__ void smooth_dielectric_sample_f(cudaRNGState& localState,
+__device__ inline void smooth_dielectric_sample_f(RNGState& localState,
     const float4& wi, float etaI, float etaT, float4& wo, float4& f_val, float& pdf)
 {
     float cosThetaI = wi.z; // always pos
@@ -244,7 +244,7 @@ __device__ void smooth_dielectric_sample_f(cudaRNGState& localState,
     
     F = schlick_fresnel(cosThetaI, etaI, etaT);
 
-    if (curand_uniform(&localState) < F) {
+    if (rand(&localState) < F) {
         wo = f4(-wi.x, -wi.y, wi.z);
         float cosThetaO = wo.z;
         if (fabsf(cosThetaO) < EPSILON) {
@@ -282,7 +282,7 @@ __device__ void smooth_dielectric_sample_f(cudaRNGState& localState,
 // -----------------------------------------------------------------------------
 // PDF (for MIS weighting)
 // -----------------------------------------------------------------------------
-__device__ void smooth_dielectric_pdf(
+__device__ inline void smooth_dielectric_pdf(
     const float4& wi, const float4& wo,
     float etaI, float etaT, bool reflect, bool TIR,
     float& pdf)
@@ -301,7 +301,7 @@ __device__ void smooth_dielectric_pdf(
     }
 }
 // wi is always point away from the surface on the positive z hemisphere. since we flipped the intersect normal if it was a backface before converting to local
-__device__ void dumb_smooth_dielectric_sample_f(cudaRNGState& localState,
+__device__ inline void dumb_smooth_dielectric_sample_f(RNGState& localState,
     const float4& wi, float etaSurface, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     float etaI, etaT;
@@ -334,7 +334,7 @@ __device__ void dumb_smooth_dielectric_sample_f(cudaRNGState& localState,
         return;
     }
     
-    if (curand_uniform(&localState) < F) {
+    if (rand(&localState) < F) {
         wo = f4(-wi.x, -wi.y, wi.z);
         float cosThetaO = wo.z;
         pdf = F;
@@ -367,7 +367,7 @@ __device__ void dumb_smooth_dielectric_sample_f(cudaRNGState& localState,
         }
     }
 }
-__device__ void thin_dielectric_sample_f(cudaRNGState& localState,
+__device__ inline void thin_dielectric_sample_f(RNGState& localState,
     const float4& wi, float etaSurface, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     // 1. Setup IOR
@@ -389,7 +389,7 @@ __device__ void thin_dielectric_sample_f(cudaRNGState& localState,
     float F = (2.0f * F_single) / (1.0f + F_single);
 
     // 4. Sample
-    if (curand_uniform(&localState) < F) 
+    if (rand(&localState) < F) 
     {
         // --- REFLECTION ---
         // Standard reflection vector
@@ -421,7 +421,7 @@ __device__ void thin_dielectric_sample_f(cudaRNGState& localState,
     }
 }
 
-__device__ void sampleTexture(const Material& mat, const float4* __restrict__ textures, const float2 uv, float4& albedo)
+__device__ inline void sampleTexture(const Material& mat, const float4* __restrict__ textures, const float2 uv, float4& albedo)
 {
     int width = mat.width;
     int height = mat.height;
@@ -470,7 +470,7 @@ __device__ void sampleTexture(const Material& mat, const float4* __restrict__ te
 }
 
 // convention: wi always faces away from the surface (same dir as surface normal)
-__device__ void leaf_f(const float4& albedo, float ior, float currIOR, float roughness, float transmission, const float4& wi, const float4& wo, float4& f_val)
+__device__ inline void leaf_f(const float4& albedo, float ior, float currIOR, float roughness, float transmission, const float4& wi, const float4& wo, float4& f_val)
 {
     bool is_reflection = wo.z * wi.z > 0.0f;
 
@@ -511,7 +511,7 @@ __device__ void leaf_f(const float4& albedo, float ior, float currIOR, float rou
     }
 }
 
-__device__ void leaf_pdf(float ior, float currIOR, float roughness, float transmission, const float4& wi, const float4& wo, float& pdf)
+__device__ inline void leaf_pdf(float ior, float currIOR, float roughness, float transmission, const float4& wi, const float4& wo, float& pdf)
 {
     bool is_reflection = wo.z * wi.z > 0.0f;
 
@@ -556,16 +556,16 @@ __device__ void leaf_pdf(float ior, float currIOR, float roughness, float transm
     }
 }
 
-__device__ void leaf_sample_f(cudaRNGState& localState, const float4& wi, float ior, float currIOR, float roughness, const float4& albedo, float transmission, float4& wo, float4& f_val, float& pdf)
+__device__ inline void leaf_sample_f(RNGState& localState, const float4& wi, float ior, float currIOR, float roughness, const float4& albedo, float transmission, float4& wo, float4& f_val, float& pdf)
 {
     float F = schlick_fresnel(wi.z, currIOR, ior);
 
-    if (curand_uniform(&localState) < F) // reflection on cuticle layer
+    if (rand(&localState) < F) // reflection on cuticle layer
     {
-        float u1 = curand_uniform(&localState);
+        float u1 = rand(&localState);
 
         float alpha = roughness * roughness;
-        float phi = 2.0f * PI * curand_uniform(&localState);
+        float phi = 2.0f * PI * rand(&localState);
         float cosTheta = sqrtf((1.0f - u1) / (1.0f + (alpha*alpha - 1.0f) * u1));
         float sinTheta = sqrtf(fmaxf(1.0f - cosTheta*cosTheta, 0.0f));
 
@@ -578,7 +578,7 @@ __device__ void leaf_sample_f(cudaRNGState& localState, const float4& wi, float 
     }
     else // transmit through cuticle
     {
-        if (curand_uniform(&localState) < transmission) // go through leaf
+        if (rand(&localState) < transmission) // go through leaf
         {
             cosine_sample_f(localState, albedo, wo, f_val, pdf);
             wo.z = -wo.z;
@@ -593,7 +593,7 @@ __device__ void leaf_sample_f(cudaRNGState& localState, const float4& wi, float 
     leaf_pdf(ior, currIOR, roughness, transmission, wi, wo, pdf);
 }
 
-__device__ void microfacet_dielectric_f(
+__device__ inline void microfacet_dielectric_f(
     float etaI, float etaT, float roughness, 
     const float4& wi, const float4& wo, float4& f_val)
 {
@@ -651,7 +651,7 @@ __device__ void microfacet_dielectric_f(
     }
 }
 
-__device__ void microfacet_dielectric_pdf(
+__device__ inline void microfacet_dielectric_pdf(
     float etaI, float etaT, float roughness, 
     const float4& wi, const float4& wo, float& pdf)
 {
@@ -695,7 +695,7 @@ __device__ void microfacet_dielectric_pdf(
     }
 }
 
-__device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
+__device__ inline void microfacet_dielectric_sample_f(RNGState& localState,
     const float4& wi, float etaSurface, float roughness, bool backface, int transportMode, float4& wo, float4& f_val, float& pdf)
 {
     float etaI, etaT;
@@ -711,9 +711,9 @@ __device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
     }
 
     // 1. Sample Microfacet Normal (h) using GGX
-    float u1 = curand_uniform(&localState);
+    float u1 = rand(&localState);
     float alpha = roughness * roughness;
-    float phi = 2.0f * PI * curand_uniform(&localState);
+    float phi = 2.0f * PI * rand(&localState);
     
     // Standard GGX sampling (matching leaf_sample_f implementation)
     float cosTheta = sqrtf((1.0f - u1) / (1.0f + (alpha * alpha - 1.0f) * u1));
@@ -731,7 +731,7 @@ __device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
     float wiDotH = dot(wi, h);
     float F = schlick_fresnel(fabsf(wiDotH), etaI, etaT);
 
-    if (curand_uniform(&localState) < F) 
+    if (rand(&localState) < F) 
     {
         // --- Reflection ---
         wo = 2.0f * wiDotH * h - wi;
@@ -774,7 +774,7 @@ __device__ void microfacet_dielectric_sample_f(cudaRNGState& localState,
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void f_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
+__device__ inline void f_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
     const float4& wi, const float4& wo, float etaI, float etaT, float4& f_val, const float2 uv,
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
@@ -819,7 +819,7 @@ __device__ void f_eval(const Material* __restrict__ materials, int materialID, c
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void sample_f_eval(cudaRNGState& localState, const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, 
+__device__ inline void sample_f_eval(RNGState& localState, const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, 
     const float4& wi, float etaI, float etaT, bool backface, float4& wo, float4& f_val, float& pdf, const float2 uv, 
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
@@ -872,7 +872,7 @@ __device__ void sample_f_eval(cudaRNGState& localState, const Material* __restri
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ void pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, const float4& wi, const float4& wo, 
+__device__ inline void pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, const float4& wi, const float4& wo, 
     float etaI, float etaT, float& pdf, const float2 uv)
 {
     const Material& mat = materials[materialID];

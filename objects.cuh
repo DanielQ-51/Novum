@@ -171,6 +171,23 @@ struct Triangle
     int lightInd;
     int triInd;
 
+    __device__ inline float area(Vertices* vertices) {
+        float4 apos = __ldg(&vertices->positions[aInd]);
+        return 0.5f * length(cross3(
+            __ldg(&vertices->positions[bInd]) - apos, 
+            __ldg(&vertices->positions[cInd]) - apos));
+    }
+
+    __device__ __forceinline__ float4 getNormal(const Vertices* vertices, float u, float v) const {
+        float w = 1.0f - u - v;
+        
+        float4 nA = __ldg(&vertices->normals[naInd]);
+        float4 nB = __ldg(&vertices->normals[nbInd]);
+        float4 nC = __ldg(&vertices->normals[ncInd]);
+
+        return normalize(nA * w + nB * u + nC * v);
+    }
+
     __host__ __device__ Triangle() {}
 
     __host__ __device__ Triangle(int a, int b, int c, int na, int nb, int nc, int mat, float4 e)
@@ -190,7 +207,7 @@ struct Ray
 
     __host__ __device__ Ray() {}
 
-    __host__ __device__ Ray(const float4& o, const float4& d) : origin(o), direction(d) {}
+    __host__ __device__ Ray(float4 o, float4 d) : origin(o), direction(d) {}
 
     __host__ __device__ float4 at(float t) const {return origin + t*direction;}
 
@@ -265,14 +282,14 @@ struct Camera
 
 
     // returns a camera ray with normalized direction
-    __device__ __forceinline__ Ray generateCameraRay(cudaRNGState& localState, int x, int y)
+    __device__ __forceinline__ Ray generateCameraRay(RNGState& localState, int x, int y)
     {
         Ray r;
         float aspect = (float)w / (float)h;
 
         // 1. Anti-Aliasing & Screen Coords
-        float jitterX = (curand_uniform(&localState) - 0.5f) * antiAliasJitterDist;
-        float jitterY = (curand_uniform(&localState) - 0.5f) * antiAliasJitterDist;
+        float jitterX = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+        float jitterY = (rand(&localState) - 0.5f) * antiAliasJitterDist;
 
         float u = (2.0f * ((x + jitterX) / (float)w) - 1.0f) * aspect * fovScale;
         float v = (2.0f * ((y + jitterY) / (float)h) - 1.0f) * fovScale;
@@ -291,8 +308,8 @@ struct Camera
         float rotation = 0.0f;      // Rotate the bokeh shape (in radians)
         // ---------------------
 
-        float r1 = curand_uniform(&localState); 
-        float r2 = curand_uniform(&localState);
+        float r1 = rand(&localState); 
+        float r2 = rand(&localState);
 
         // 1. Pick which "slice" (blade) of the aperture we are in
         float bladeIdx = floorf(r1 * (float)blades);
@@ -602,7 +619,8 @@ enum IntegratorChoice {
     BIDIRECTIONAL = 1,
     NAIVE_UNIDIRECTIONAL = 2,
     VCM = 3,
-    SPPM = 4
+    SPPM = 4,
+    WAVEFRONT_UNIDIRECTIONAL = 5
 };
 
 enum TransportMode {
@@ -617,6 +635,7 @@ __host__ inline int matchIntegrator(std::string name)
     else if (name == "NAIVE_UNIDIRECTIONAL") return 2;
     else if (name == "VCM") return 3;
     else if (name == "SPPM") return 4;
+    else if (name == "UNIDIRFAST") return 5;
 
     std::cerr << "Invalid Integrator Choice!\n";
     return -1;
@@ -1303,4 +1322,58 @@ __device__ __forceinline__ float getD_vcm(const Photons& x, int idx) {
 
 __device__ __forceinline__ void setD_vcm(Photons& x, int idx, float val) {
     x.d_vcm[idx] = val;
+}
+
+struct SceneContext
+{
+    Material* materials;
+    float4* textures;
+    BVHnode* BVH;
+    int* BVHindices;
+    Vertices* vertices; 
+    Triangle* scene; 
+    Triangle* lights;
+    int vertNum; 
+    int triNum;
+    int lightNum;
+};
+
+struct BVHContext
+{
+    BVHnode* BVH;
+    int* BVHindices;
+    Vertices* vertices;
+    Triangle* scene;
+    Material* materials;
+};
+
+struct ShadeContext
+{
+    Material* materials;
+    float4* textures;
+    Triangle* lights;
+    Triangle* scene;
+    Vertices* vertices; 
+    int lightNum;
+};
+
+__host__ inline BVHContext getBVHContext(const SceneContext& sc) {
+    BVHContext ctx;
+    ctx.BVH        = sc.BVH;
+    ctx.BVHindices = sc.BVHindices;
+    ctx.vertices   = sc.vertices;
+    ctx.scene      = sc.scene;
+    ctx.materials  = sc.materials;
+    return ctx;
+}
+
+__host__ inline ShadeContext getShadeContext(const SceneContext& sc) {
+    ShadeContext ctx;
+    ctx.materials = sc.materials;
+    ctx.textures  = sc.textures;
+    ctx.lights    = sc.lights;
+    ctx.scene     = sc.scene;
+    ctx.vertices  = sc.vertices;
+    ctx.lightNum  = sc.lightNum;
+    return ctx;
 }

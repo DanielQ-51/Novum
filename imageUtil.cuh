@@ -33,3 +33,11 @@ public:
 };
 
 Image loadBMPToImage(const std::string &filename, bool isData);
+
+__global__ void cleanAndFormatImage(
+    float4* accumulationBuffer,
+    float4* overlayBuffer,
+    float4* outputBuffer,
+    int w, int h, 
+    int currentSampleCount
+);

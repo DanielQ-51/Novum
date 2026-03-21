@@ -255,6 +255,97 @@ __device__ inline void BVHSceneIntersect(
     }
 }
 
+__device__ inline void BVHSceneIntersect_lightweight(
+    const Ray& r, 
+    const BVHContext bvhContext,
+    float4& bary,
+    float& min_t,
+    int& triID
+)
+{
+    min_t = 1e30f;
+    triID = -1;
+    bary = f4(-1.0f);
+
+    int nodeStack[32];
+    int stackTop = 0;
+    nodeStack[stackTop++] = 0; // Push the root node (index 0)
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
+
+    while (stackTop > 0)
+    {
+        // Pop the next node to check
+        int currentIndex = nodeStack[--stackTop];
+        const BVHnode& node = bvhContext.BVH[currentIndex];
+
+        // 2. If it's a leaf node, check its triangles
+        if (node.primCount > 0)
+        {
+            for (int i = node.first; i < node.primCount + node.first; i++)
+            {
+                int idx = __ldg(&bvhContext.BVHindices[i]);
+                const Triangle* tri = &bvhContext.scene[idx];
+                float4 barycentric;
+                float t;
+                bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
+
+                if (hitTri && (t < min_t))
+                {
+                    min_t = t; // Update the closest-hit distance
+                    triID = idx;
+                    bary = barycentric;
+                }
+            }
+        }
+        // 3. If it's an internal node, push its children onto the stack
+        else
+        {
+            if (node.left >= 0 || node.right >= 0)
+            {
+                float tminL, tmaxL, tminR, tmaxR;
+                bool hitLeft = false, hitRight = false;
+
+                // Test left child if it exists
+                if (node.left >= 0)
+                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+
+                // Test right child if it exists
+                if (node.right >= 0)
+                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+
+                // If both children were hit, push the farther one first
+                if (hitLeft && hitRight)
+                {
+                    if (tminL < tminR)
+                    {
+                        nodeStack[stackTop++] = node.right; // farther
+                        nodeStack[stackTop++] = node.left;  // nearer
+                    }
+                    else
+                    {
+                        nodeStack[stackTop++] = node.left;  // farther
+                        nodeStack[stackTop++] = node.right; // nearer
+                    }
+                }
+                else if (hitLeft)
+                {
+                    nodeStack[stackTop++] = node.left;
+                }
+                else if (hitRight)
+                {
+                    nodeStack[stackTop++] = node.right;
+                }
+            }
+        }
+    }
+}
+
 __device__ inline void BVHShadowRay(
     const Ray& r, 
     const BVHnode* __restrict__ BVH, 
@@ -264,7 +355,7 @@ __device__ inline void BVHShadowRay(
     const Material* __restrict__ materials, 
     float4& throughputScale, 
     float max_t, 
-    int skip_tri
+    int skip_tri = -1
 )
 {
     int nodeStack[32];
@@ -383,6 +474,96 @@ __device__ inline void BVHShadowRay(
     }
 }
 
+__device__ inline void BVHShadowRay_NoAlpha(
+    const Ray& r, 
+    const BVHnode* __restrict__ BVH, 
+    const int* __restrict__ BVHindices, 
+    const Vertices* __restrict__ verts, 
+    const Triangle* __restrict__ scene, 
+    float4& throughputScale, // Kept for interface compatibility with your caller
+    float max_t
+)
+{
+    int nodeStack[32];
+    int stackTop = 0;
+    nodeStack[stackTop++] = 0; // Push the root node (index 0)
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
+
+    throughputScale = make_float4(1.0f, 1.0f, 1.0f, 1.0f);
+
+    while (stackTop > 0)
+    {
+        // Pop the next node to check
+        int currentIndex = nodeStack[--stackTop];
+        const BVHnode& node = BVH[currentIndex];
+
+        // 2. If it's a leaf node, check its triangles
+        if (node.primCount > 0)
+        {
+            for (int i = node.first; i < node.primCount + node.first; i++)
+            {
+                int idx = __ldg(&BVHindices[i]);
+                const Triangle* tri = &scene[idx];
+                
+                float4 barycentric;
+                float t;
+                bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
+
+                if (hitTri && (t < max_t))
+                {
+                    // FAST EARLY OUT: Any geometry hit strictly between 0 and max_t is full occlusion.
+                    throughputScale = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+                    return; 
+                }
+            }
+        }
+        else
+        {
+            float tminL, tmaxL, tminR, tmaxR;
+            bool hitLeft = false, hitRight = false;
+
+            // Test left child if it exists
+            if (node.left >= 0)
+                hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+
+            // Test right child if it exists
+            if (node.right >= 0)
+                hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+
+            // Because this is anyHit, sorting by distance isn't strictly mathematically required
+            // for correctness, but pushing the closer node first *usually* hits geometry faster, 
+            // triggering the early-out sooner.
+            if (hitLeft && hitRight)
+            {
+                if (tminL < tminR)
+                {
+                    nodeStack[stackTop++] = node.right; // farther
+                    nodeStack[stackTop++] = node.left;  // nearer
+                }
+                else
+                {
+                    nodeStack[stackTop++] = node.left;  // farther
+                    nodeStack[stackTop++] = node.right; // nearer
+                }
+            }
+            else if (hitLeft)
+            {
+                nodeStack[stackTop++] = node.left;
+            }
+            else if (hitRight)
+            {
+                nodeStack[stackTop++] = node.right;
+            }
+        }
+    }
+}
+
 __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle* scene, int triNum, 
     Intersection& intersect)
 {
@@ -430,52 +611,7 @@ __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle
     }
 }
 
-__global__ void cleanAndFormatImage(
-    float4* accumulationBuffer, // Your raw 'colors' buffer (Sum of samples)
-    float4* overlayBuffer,      // Your 'overlay' buffer
-    float4* outputBuffer,       // A temporary buffer to store the result for saving
-    int w, int h, 
-    int currentSampleCount) 
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (idx >= w || idy >= h) return;
-
-    int pixelIndex = idy * w + idx;
-
-    // 1. Read the raw accumulated color
-    float4 acc = accumulationBuffer[pixelIndex];
-    float4 ov = overlayBuffer[pixelIndex];
-    float4 finalColor;
-
-    // 2. Check for NaNs/Infs BEFORE normalization
-    if (isnan(acc.x) || isnan(acc.y) || isnan(acc.z)) {
-        finalColor = f4(1.0f, 0.0f, 1.0f);
-    } 
-    else if (isinf(acc.x) || isinf(acc.y) || isinf(acc.z)) {
-        finalColor = f4(0.0f, 1.0f, 0.0f);
-    } 
-    else if (acc.x < 0 || acc.y < 0 || acc.z < 0) {
-        finalColor = f4(0.0f, 0.0f, 1.0f);
-    } 
-    else {
-        // 3. Normalize (Average the samples)
-        float scale = 1.0f / (float)(currentSampleCount + 1);
-        finalColor = make_float4(acc.x * scale, acc.y * scale, acc.z * scale, 1.0f);
-    }
-
-    // 4. Apply Overlay (if present)
-    // Assuming overlay logic: if overlay is NOT black, it overrides the render
-    if (ov.x != 0.0f || ov.y != 0.0f || ov.z != 0.0f) {
-        finalColor = ov;
-    }
-
-    // 5. Write to the output buffer
-    outputBuffer[pixelIndex] = finalColor;
-}
-
-__device__ int3 GetGridIndex(float4 p, float4 sceneMin, float cellSize) {
+__device__ inline int3 GetGridIndex(float4 p, float4 sceneMin, float cellSize) {
     return make_int3(
         floorf((p.x - sceneMin.x) / cellSize),
         floorf((p.y - sceneMin.y) / cellSize),
@@ -569,7 +705,7 @@ __host__ inline void checkCudaErrors(const char * name)
     }
 }
 
-std::vector<float4> generateRandomProbes(int count, float4 sceneCenter, float sceneRadius) 
+std::vector<float4> inline generateRandomProbes(int count, float4 sceneCenter, float sceneRadius) 
 {
     std::vector<float4> probes;
     probes.reserve(count);

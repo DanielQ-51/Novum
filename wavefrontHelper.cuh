@@ -145,7 +145,7 @@ struct HitBuffer {
     float4* __restrict__ data;
 
     __device__ __forceinline__ void setMiss(int idx) {
-        data[idx] = f4(1e30f, 0, 0, 0);
+        data[idx] = f4(1e30f, 0, 0, -1);
     }
 
     __device__ __forceinline__ void setHit(int idx, float t, float u, float v, int triID) {
@@ -269,8 +269,7 @@ __device__ __forceinline__ unsigned int getMorton12_3D(unsigned int x, unsigned 
     return (expandBits3D(x) << 2) | (expandBits3D(y) << 1) | expandBits3D(z);
 }
 
-__device__ __forceinline__ unsigned int generateSortKey(float4 origin, float4 dir, float4 sceneMin, float invDiameter) {
-    // 1. Octahedral Direction Encoding (Your original math is perfectly fine)
+__device__ __forceinline__ unsigned int generateMortonSortKey(float4 origin, float4 dir, float4 sceneMin, float invDiameter) {
     float l1norm = fabsf(dir.x) + fabsf(dir.y) + fabsf(dir.z);
     float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
     
@@ -285,19 +284,21 @@ __device__ __forceinline__ unsigned int generateSortKey(float4 origin, float4 di
         res.y = (1.0f - fabsf(tempX)) * (tempY >= 0.0f ? 1.0f : -1.0f);
     }
 
-    // Convert to 9-bit values [0, 511]
     unsigned int u = (unsigned int)fminf(fmaxf((res.x * 0.5f + 0.5f) * 511.0f, 0.0f), 511.0f);
     unsigned int v = (unsigned int)fminf(fmaxf((res.y * 0.5f + 0.5f) * 511.0f, 0.0f), 511.0f);
     unsigned int dirKey = getMorton18_2D(u, v); // 18 bits total
 
-    // 2. Spatial 3D Grid Encoding
     unsigned int px = (unsigned int)fminf(fmaxf((origin.x - sceneMin.x) * invDiameter * 15.0f, 0.0f), 15.0f);
     unsigned int py = (unsigned int)fminf(fmaxf((origin.y - sceneMin.y) * invDiameter * 15.0f, 0.0f), 15.0f);
     unsigned int pz = (unsigned int)fminf(fmaxf((origin.z - sceneMin.z) * invDiameter * 15.0f, 0.0f), 15.0f);
     unsigned int posKey = getMorton12_3D(px, py, pz); // 12 bits total
 
-    // 3. Key Construction
-    // posKey (12 bits) goes into the MSB so we sort by spatial origin FIRST.
-    // dirKey (18 bits) goes into the LSB so we sort by direction SECOND.
     return (posKey << 18) | dirKey;
+}
+
+__device__ __forceinline__ unsigned int generateMaterialSortKey(int materialID, int textureIndex) {
+    unsigned int mat16 = ((unsigned int)materialID) & 0xFFFFu;
+    unsigned int tex16 = ((unsigned int)textureIndex) & 0xFFFFu;
+
+    return (mat16 << 16) | tex16;
 }

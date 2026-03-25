@@ -658,7 +658,7 @@ __host__ void launch_unidirectional(
             freeB / (1024.0*1024),
             totalB / (1024.0*1024));
     
-    int saveIntervalSamples = 30; // Aligned with wavefront logic
+    int saveIntervalSamples = 10000; // Aligned with wavefront logic
     Image image = Image(w, h);
 
     std::cout << "Running Kernels Unidirectional" << std::endl;

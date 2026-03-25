@@ -659,11 +659,9 @@ struct Material
     int width;
     int height;
 
-    bool hasTransMap;
-    int tstartInd;
-    int twidth;
-    int theight;
+    int textureIndex;
 
+    bool hasTransMap;
 
     int type;
     
@@ -696,6 +694,7 @@ struct Material
         Material m;
         m.type = MAT_DIFFUSE;
         m.hasTexture = false;
+        m.hasTransMap = false;
 
         m.albedo = color;
         m.roughness = 1.0f;
@@ -706,11 +705,12 @@ struct Material
         return m;
     }
 
-    __host__ static Material DiffuseTextured(int sInd, int w, int h) {
+    __host__ static Material DiffuseTextured(int tind, int sInd, int w, int h) {
         Material m;
         m.type = MAT_DIFFUSE;
         m.hasTexture = true;
-
+        m.hasTransMap = false;
+        m.textureIndex = tind;
         m.startInd = sInd;
         m.width = w;
         m.height = h;
@@ -728,7 +728,7 @@ struct Material
         Material m;
         m.type = MAT_METAL;
         m.hasTexture = false;
-
+        m.hasTransMap = false;
         m.eta = n;
         m.k = k;
         m.roughness = roughness;
@@ -746,7 +746,7 @@ struct Material
         Material m;
         m.type = MAT_SMOOTHDIELECTRIC;
         m.hasTexture = false;
-
+        m.hasTransMap = false;
         m.ior = ior;
         m.albedo = f4(1.0f);
         m.roughness = 0.0f;
@@ -764,7 +764,7 @@ struct Material
         Material m;
         m.type = MAT_THINDIELECTRIC;
         m.hasTexture = false;
-
+        m.hasTransMap = false;
         m.ior = ior;
         m.albedo = f4(1.0f);
         m.roughness = 0.0f;
@@ -782,7 +782,7 @@ struct Material
         Material m;
         m.type = MAT_MICROFACETDIELECTRIC;
         m.hasTexture = false;
-
+        m.hasTransMap = false;
         m.ior = ior;
         m.k = k;
         m.roughness = roughness;
@@ -792,11 +792,11 @@ struct Material
         return m;
     }
 
-    __host__ static Material Leaf(int sInd, int w, int h,float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
+    __host__ static Material Leaf(int tind, int sInd, int w, int h,float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
     {
         Material m;
         m.type = MAT_LEAF;
-
+        m.textureIndex = tind;
         m.hasTexture = true;
         m.hasTransMap = false;
 
@@ -817,11 +817,11 @@ struct Material
         return m;
     }
 
-    __host__ static Material Leaf(int sInd, int w, int h, int tsInd, int tw, int th, float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
+    __host__ static Material Leaf(int tind, int sInd, int w, int h, int tsInd, int tw, int th, float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
     {
         Material m;
         m.type = MAT_LEAF;
-
+        m.textureIndex = tind;
         m.hasTexture = true;
         m.hasTransMap = true;
         
@@ -835,10 +835,6 @@ struct Material
         m.width = w;
         m.height = h;
 
-        m.tstartInd = tsInd;
-        m.twidth = tw;
-        m.theight = th;
-
         m.thinWalled = true;
 
         m.isSpecular = false;
@@ -850,7 +846,7 @@ struct Material
     {
         Material m;
         m.type = MAT_DELTAMIRROR;
-
+        m.hasTransMap = false;
         m.hasTexture = false;
         m.hasTransMap = false;
 

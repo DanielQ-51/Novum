@@ -65,7 +65,7 @@ int partitionPrimitives(vector<int>& indices, vector<float4>& centroids, int sta
 void SAH( vector<int>& indices, vector<float4>& centroids, vector<float4>& AABBmins, vector<float4>& AABBmaxes, int start, 
     int end, int& axis, float4 minBound, float4 maxBound, float& splitPos, float& minCost, int& backup)
 {
-    const int numBuckets = 150;
+    const int numBuckets = 8;
     struct Bucket { float4 min, max; int count; };
     Bucket buckets[numBuckets];
     for (int i = 0; i < numBuckets; i++) 
@@ -158,6 +158,8 @@ int buildBVH(vector<BVHnode>& nodes, vector<int>& indices, vector<float4>& centr
         largestLeaf = max(primCount, largestLeaf);
         return nodeIndex;
     }
+
+    /*
     float xdiff = maxBound.x - minBound.x;
     float ydiff = maxBound.y - minBound.y;
     float zdiff = maxBound.z - minBound.z;
@@ -165,12 +167,30 @@ int buildBVH(vector<BVHnode>& nodes, vector<int>& indices, vector<float4>& centr
     if (ydiff > xdiff && ydiff > zdiff)
         axis = 1;
     else if (zdiff > xdiff && zdiff > ydiff)
-        axis = 2;
+        axis = 2; */
 
-    //int bestSplit = 0;
-    float splitPos;
-    float cost = 0;
-    SAH(indices, centroids, AABBmins, AABBmaxes, start, end, axis, minBound, maxBound, splitPos, cost, backup);
+    float cost = FLT_MAX;
+    int axis = -1;
+    float splitPos = 0.0f;
+
+    // Loop through all 3 axes
+    for (int currentAxis = 0; currentAxis < 3; ++currentAxis) 
+    {
+        float currentSplitPos;
+        float currentCost;
+        
+        // Pass currentAxis into your SAH function instead of the longest axis
+        SAH(indices, centroids, AABBmins, AABBmaxes, start, end, currentAxis, 
+            minBound, maxBound, currentSplitPos, currentCost, backup);
+
+        // Keep track of the best axis we've seen so far
+        if (currentCost < cost) 
+        {
+            cost = currentCost;
+            axis = currentAxis;
+            splitPos = currentSplitPos;
+        }
+    }
 
     /*if (primCount <= maxLeafSize || cost >= primCount * 1) {
         // Force a leaf
@@ -188,7 +208,7 @@ int buildBVH(vector<BVHnode>& nodes, vector<int>& indices, vector<float4>& centr
             numLeft++;
     }
     //cout << "1numLeft: " << numLeft << endl;
-    if (numLeft > 0 && numLeft < (primCount - 1))
+    if (numLeft > 0 && numLeft < primCount)
         mid = partitionPrimitives(indices, centroids, start, end, axis, splitPos);
     else
     {
@@ -406,10 +426,10 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     // Creating Materials
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    Material wood = Material::Leaf(startIndices[4], widths[4], heights[4], 1.5f, 0.3f, f4(), 0.00f);
-    Material wall = Material::DiffuseTextured(startIndices[5], widths[5], heights[5]);
-    Material lambertTextured = Material::DiffuseTextured(startIndices[0], widths[0], heights[0]);
-    Material lambert2Textured = Material::DiffuseTextured(startIndices[1], widths[1], heights[1]);
+    Material wood = Material::Leaf(4, startIndices[4], widths[4], heights[4], 1.5f, 0.3f, f4(), 0.00f);
+    Material wall = Material::DiffuseTextured(5, startIndices[5], widths[5], heights[5]);
+    Material lambertTextured = Material::DiffuseTextured(0, startIndices[0], widths[0], heights[0]);
+    Material lambert2Textured = Material::DiffuseTextured(1, startIndices[1], widths[1], heights[1]);
 
     Material lambertBlue = Material::Diffuse(f4(0.4f,0.4f,0.8f));
     Material lambertGrey = Material::Diffuse(f4(0.8f,0.8f,0.8f));
@@ -452,9 +472,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     Material air = Material::SmoothDielectric(1.0f, f4(0.0f), 99);
 
     //Material leaf = Material::Leaf(1.5f, 0.6f, f4(0.8f, 0.25f, 0.28f), 0.2f);
-    Material leaf = Material::Leaf(startIndices[2], widths[2], heights[2], 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
-    Material leafAutumn = Material::Leaf(startIndices[3], widths[3], heights[3], 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
-    Material canopy = Material::Leaf(startIndices[2], widths[2], heights[2], 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
+    Material leaf = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
+    Material leafAutumn = Material::Leaf(3, startIndices[3], widths[3], heights[3], 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
+    Material canopy = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
     Material leafStem = Material::Diffuse(f4(0.90f, 0.9f, 0.83f));
     Material sky = Material::Diffuse(f4(0.4f, 0.4f, 1.00f));
 
@@ -1054,7 +1074,7 @@ int main ()
     //    initRender(configName, i);
 
     initRender(configName, 0); 
-
+    return;
     for (int i = 250; i <= 250; ++i) {
         char buf[128];
         snprintf(buf, sizeof(buf), "scenedata/watersim/tenbillionobj/wateranim%04d.obj", i);

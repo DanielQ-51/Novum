@@ -479,7 +479,7 @@ __device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* 
     return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
 }
 
-__host__ inline bool IsPrime(int n) {
+__host__ __device__ inline bool IsPrime(int n) {
     if (n <= 1) return false;
     if (n == 2 || n == 3) return true;
     if (n % 2 == 0 || n % 3 == 0) return false;
@@ -491,7 +491,7 @@ __host__ inline bool IsPrime(int n) {
     return true;
 }
 
-__host__ inline int GetNextPrime(int n) {
+__host__ __device__ inline int GetNextPrime(int n) {
     if (n <= 2) return 2;
     if (n % 2 == 0) n++;
 
@@ -525,4 +525,24 @@ __device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 c
 __device__ __forceinline__ inline float powerHeuristicTwoStrategy(float primary, float other)
 {
     return 1.0f / (1.0f + (other/primary) * (other/primary));
+}
+
+__device__ __forceinline__ int BurnCycles(int iterations) {
+    float f = 1.00f;
+    float a = 0.99f;
+    float b = 0.01f;
+    for (int i = 0; i < iterations; i++) {
+        #ifndef __INTELLISENSE__
+            asm volatile (
+                "fma.rn.f32 %0, %0, %1, %2;"
+                "fma.rn.f32 %0, %0, %1, %2;"
+                "fma.rn.f32 %0, %0, %1, %2;"
+                "fma.rn.f32 %0, %0, %1, %2;"
+                : "+f"(f)
+                : "f"(a), "f"(b)
+            );
+        #endif
+    }
+
+    return f;
 }

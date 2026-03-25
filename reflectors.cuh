@@ -876,7 +876,6 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     float etaI, float etaT, float& pdf, const float2 uv)
 {
     const Material& mat = materials[materialID];
-
     float trans = mat.transmission;
     float4 trans4;
     if (mat.hasTransMap)

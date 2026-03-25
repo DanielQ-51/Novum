@@ -14,10 +14,18 @@ __device__ __constant__ float4 sceneMin;
 __device__ __constant__ int w;
 __device__ __constant__ int h;
 
+#ifndef USE_MORTON_CODE_SORT
+#define USE_MORTON_CODE_SORT 0
+#endif
+
+#ifndef USE_MATERIAL_SORT
+#define USE_MATERIAL_SORT 0
+#endif
+
+
 __device__ bool approxEq(float a, float b, float tol = 1e-3f) {
     return fabsf(a - b) <= tol;
 }
-
 __device__ bool approxEqF4(float4 a, float4 b, float tol = 1e-3f) {
     return approxEq(a.x, b.x, tol) && 
            approxEq(a.y, b.y, tol) && 
@@ -51,9 +59,6 @@ __global__ void testWriteKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq) {
     
     sq.setShadowRay(0, inShadowOrigin, inShadowDir, 100.0f, inL, 654321);
 }
-
-// --- Kernel 2: Read Data, Verify, and Trigger Sentinel ---
-
 __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* passed, int* failed) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if (idx != 0) return;
@@ -121,9 +126,6 @@ __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* p
     // Write sentinel for Kernel 3 to check
     sq.setAnyHitResultNoAlphaTest(0, false); 
 }
-
-// --- Kernel 3: Validate Overwrites (Miss & Sentinel) ---
-
 __global__ void testSentinelKernel(HitBuffer hb, ShadowQueue sq, int* passed, int* failed) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if (idx != 0) return;
@@ -137,9 +139,6 @@ __global__ void testSentinelKernel(HitBuffer hb, ShadowQueue sq, int* passed, in
         atomicAdd(failed, 1); 
     } else atomicAdd(passed, 1);
 }
-
-// --- Host Function ---
-
 void runDataStructureTests() {
     int maxRays = 1;
 
@@ -385,12 +384,19 @@ __global__ void shade(
 
     unsigned int* shadowRayIndex,
     
-    float4* output
+    float4* output,
+
+    unsigned int* sortValuesOut
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (idx >= activeRays) return;
+
+#if USE_MATERIAL_SORT == 1
+    int readIndex = __ldg(&sortValuesOut[idx]);
+#else
+    int readIndex = idx;
+#endif
 
     float4 prevPos;
     float4 incomingDir;
@@ -402,7 +408,7 @@ __global__ void shade(
     float lastPDF;
 
     readQueue.getAll(
-        idx,
+        readIndex,
         prevPos,
         incomingDir,
         prevDelta,
@@ -424,7 +430,7 @@ __global__ void shade(
     {
         float u, v;
         float t;
-        hits.getAllInfo(idx, t, u, v, triID);
+        hits.getAllInfo(readIndex, t, u, v, triID);
         uv.x = u;
         uv.y = v;
 
@@ -471,9 +477,10 @@ __global__ void shade(
 
         accumulateOutput(output, contribution * misWeight, pixelIdx);
     }
+
     bool currDelta = shadeContext.materials[materialID].isSpecular;
     RNGState localState = load_rng(pixelIdx, frameNum, depth, rngStates);
-
+    int n;
     // NEE
     if (!currDelta) {
         int index = min(static_cast<int>(rand(&localState) * shadeContext.lightNum), shadeContext.lightNum - 1);
@@ -497,6 +504,8 @@ __global__ void shade(
             float4 a_n = __ldg(&shadeContext.vertices->normals[l.naInd]);
             float4 b_n = __ldg(&shadeContext.vertices->normals[l.nbInd]);
             float4 c_n = __ldg(&shadeContext.vertices->normals[l.ncInd]);
+
+            n = BurnCycles(1000);
             
             lightNormal = normalize((1.0f - u) * a_n + u * (1.0f - v) * b_n + u * v * c_n);
             
@@ -513,6 +522,7 @@ __global__ void shade(
             shadowRays.setIgnore(idx);
         } else {
             float bsdfPDF;
+
             pdf_eval(
                 shadeContext.materials, 
                 materialID, 
@@ -538,6 +548,7 @@ __global__ void shade(
                 uv
             );
 
+
             float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
             float cosSurface = dot(normal, shadingPosToLightNormalized);
 
@@ -555,7 +566,7 @@ __global__ void shade(
                 shadingPos + shadingPosToLightNormalized * RAY_EPSILON, 
                 shadingPosToLightNormalized, 
                 length(shadingPosToLight) * (1.0f - EPSILON3), 
-                contribution * misWeight, 
+                contribution * (misWeight + (1E-20 * n)), 
                 pixelIdx
             );
         }
@@ -689,8 +700,28 @@ __global__ void shadeShadowRay(
         accumulateOutput(output, contribution, pixelIdx);
     }
 }
+__global__ void compactRayQueue_NOSORT(
+    const RayQueue sparseQueue,
+    RayQueue denseQueue,
+    const unsigned int* __restrict__ predicates,
+    const unsigned int* __restrict__ scanIndices,
+    int activeRays
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= activeRays) return;
 
-__global__ void compactRayQueue(
+    if (predicates[idx] == 1) 
+    {
+        int denseIdx = scanIndices[idx]; 
+
+        float4 rayData = __ldg(&sparseQueue.origin_plus_dir[idx]);
+
+        denseQueue.origin_plus_dir[denseIdx] = rayData;
+        denseQueue.payload[denseIdx] = __ldg(&sparseQueue.payload[idx]); 
+    }
+}
+
+__global__ void compactRayQueue_SORT(
     const RayQueue sparseQueue,
     RayQueue denseQueue,
     const unsigned int* __restrict__ predicates,
@@ -713,16 +744,45 @@ __global__ void compactRayQueue(
 
         float4 direction = getDirectionFromPacked(rayData);
         float invDiameter = 1.0f / (sceneRadius * 2.0f);
-        sortKeysIn[denseIdx] = generateSortKey(rayData, direction, sceneMin, invDiameter);
+        sortKeysIn[denseIdx] = generateMortonSortKey(rayData, direction, sceneMin, invDiameter);
         sortValuesIn[denseIdx] = denseIdx;
     }
 }
+
+#if USE_MATERIAL_SORT == 1
+// takes a dense hitbuffer and calculates sort keys for it
+__global__ void calculateMaterialSortKeys(
+    const HitBuffer hitBuffer,
+    const Material* __restrict__ materials,
+    const Triangle* __restrict__ scene,
+    unsigned int* sortKeysIn,
+    unsigned int* sortValuesIn,
+    int activeRays
+) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= activeRays) return;
+
+    // -1 if its a miss
+    int triID = hitBuffer.getID(idx);
+    int materialID = (triID < 0) ? -1 : __ldg(&scene[triID].materialID);
+
+    // as a hint as to which texture its using
+    int textureStartIndex = (materialID < 0) ? 
+        0 : __ldg(&materials[materialID].textureIndex);
+
+    unsigned int key = generateMaterialSortKey(materialID, textureStartIndex);
+    sortKeysIn[idx] = key;
+    sortValuesIn[idx] = idx;
+}
+#endif
 
 __global__ void reorderRayQueue(
     const RayQueue unsortedQueue,
     RayQueue sortedQueue,
     const unsigned int* __restrict__ sortedIndices,
-    int activeRays)
+    int activeRays
+)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
@@ -793,7 +853,7 @@ __host__ void launch_wavefrontUnidirectional(
     allocateBuffers(
         temp_rayQueue1, 
         temp_rayQueue2, 
-        temp_hitBuffer, 
+        temp_hitBuffer,
         temp_shadowQueue, 
         d_predicate,
         d_scanIndices,
@@ -840,7 +900,7 @@ __host__ void launch_wavefrontUnidirectional(
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    int saveIntervalSamples = 100;
+    int saveIntervalSamples = 10000;
     Image image = Image(h_w, h_h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(h_w * h_h);
@@ -868,10 +928,13 @@ __host__ void launch_wavefrontUnidirectional(
         {
             int blocks = (activeRays + 255) / 256;
             
-            //cudaDeviceSynchronize();
-            //printf("ActiveRays: %d", activeRays);
-            //if (depth > 3) // primary rays are coherent
-            if (depth > 3) // primary rays are coherent
+#if USE_MORTON_CODE_SORT == 1
+
+#if USE_MATERIAL_SORT == 1
+            if (depth > 0)
+#else
+            if (depth > 3) 
+#endif
             {
                 cub::DeviceRadixSort::SortPairs(
                     d_temp_storage_sort, temp_storage_bytes_sort,
@@ -884,7 +947,7 @@ __host__ void launch_wavefrontUnidirectional(
 
                 std::swap(d_readQueue, d_writeQueue);
             }
-            
+#endif
             closestHit<<<blocks, 256>>> (
                 bvhContext,
                 *d_readQueue,
@@ -892,6 +955,22 @@ __host__ void launch_wavefrontUnidirectional(
                 activeRays
             );
 
+#if USE_MATERIAL_SORT == 1
+
+            calculateMaterialSortKeys<<<blocks, 256>>> (
+                *d_hits,
+                sceneContext.materials,
+                sceneContext.scene,
+                d_sortKeysIn,
+                d_sortValuesIn,
+                activeRays
+            );
+
+            cub::DeviceRadixSort::SortPairs(
+                d_temp_storage_sort, temp_storage_bytes_sort,
+                d_sortKeysIn, d_sortKeysOut, d_sortValuesIn, d_sortValuesOut, activeRays
+            );
+#endif
             shade<<<blocks, 256>>> (
                 d_rngStates,
                 shadeContext,
@@ -904,7 +983,8 @@ __host__ void launch_wavefrontUnidirectional(
                 currSample,
                 maxDepth,
                 d_shadowRayIndex,
-                colors
+                colors,
+                d_sortValuesOut
             );
 
             anyHit<<<blocks, 256>>> (
@@ -936,17 +1016,31 @@ __host__ void launch_wavefrontUnidirectional(
             if (newActiveRays == 0) {
                 break; 
             }
-
-            // also writes sorting keys
-            compactRayQueue<<<blocks, 256>>> (
-                *d_writeQueue, // writes from writequeue to readqueue
-                *d_readQueue,
-                d_predicate,
-                d_scanIndices,
-                d_sortKeysIn,
-                d_sortValuesIn,
-                activeRays
-            );
+#if USE_MATERIAL_SORT == 1
+            if (false)
+#else
+            if (depth < 3) 
+#endif
+            {
+                compactRayQueue_NOSORT<<<blocks, 256>>> (
+                    *d_writeQueue, // writes from writequeue to readqueue
+                    *d_readQueue,
+                    d_predicate,
+                    d_scanIndices,
+                    activeRays
+                );
+            } else {
+                compactRayQueue_SORT<<<blocks, 256>>> (
+                    *d_writeQueue, // writes from writequeue to readqueue
+                    *d_readQueue,
+                    d_predicate,
+                    d_scanIndices,
+                    d_sortKeysIn,
+                    d_sortValuesIn,
+                    activeRays
+                );
+            }
+            
 
             activeRays = newActiveRays;
         }

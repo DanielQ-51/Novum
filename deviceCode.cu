@@ -379,8 +379,6 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
     float4 wo_local = f4();
     float4 wi_world = f4();
     Intersection previousintersectREAL = Intersection(); // last REAL intersection (true hit)
-    Intersection previousintersectANY = Intersection(); // last any intersection (includes false hits passing thru media)
-    previousintersectANY.triIDX = -1;
 
     // for nested dielectrics
     int mediumStack[16];
@@ -597,7 +595,6 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
             //r.origin = intersect.point - intersect.normal * EPSILON * 1.0F; // needs to go through, so offset on other side of normal
             r.origin = intersect.point + r.direction * RAY_EPSILON; // needs to go through, so offset on other side of normal
         }
-        previousintersectANY = intersect;
 
         {
             float lum = luminance(beta);

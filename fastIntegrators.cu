@@ -15,11 +15,11 @@ __device__ __constant__ int w;
 __device__ __constant__ int h;
 
 #ifndef USE_MORTON_CODE_SORT
-#define USE_MORTON_CODE_SORT 0
+#define USE_MORTON_CODE_SORT 1
 #endif
 
 #ifndef USE_MATERIAL_SORT
-#define USE_MATERIAL_SORT 0
+#define USE_MATERIAL_SORT 1
 #endif
 
 
@@ -505,7 +505,7 @@ __global__ void shade(
             float4 b_n = __ldg(&shadeContext.vertices->normals[l.nbInd]);
             float4 c_n = __ldg(&shadeContext.vertices->normals[l.ncInd]);
 
-            n = BurnCycles(1000);
+            //n = BurnCycles(1000);
             
             lightNormal = normalize((1.0f - u) * a_n + u * (1.0f - v) * b_n + u * v * c_n);
             

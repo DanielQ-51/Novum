@@ -857,6 +857,12 @@ struct Material
     }
 };
 
+struct Medium {
+    float ior;
+    int priority;
+    float4 simpleAbsorption;
+};
+
 struct MeshConfig {
     std::string path;
     float emissionMultiplier;

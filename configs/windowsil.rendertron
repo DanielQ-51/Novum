@@ -1,0 +1,52 @@
+Name: window
+
+width: 6884
+height: 2880
+
+width: 688
+height: 288
+
+Integrator: UNIDIRECTIONAL
+Sample Count: 100000
+Post Process: true
+
+Unidirectional Max Depth: 12
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 12
+Bidirectional Light Depth: 12
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.66
+VCM Initial Merge Radius Multiplier: 0.0005
+
+Pinhole Camera: true
+Camera Position: -10.426 4.347 -16.429
+Camera Rotation: -7.800 216.800 0.0
+Camera Apeture: 0.05
+Camera FocalDist: 5.6
+Camera FOV: 30.0
+
+Meshes (path; multiplier * emission; materialID):
+scenedata/windowsil/whitewalls.obj; 1.0 * (0.0, 0.0, 0.0); 17
+scenedata/windowsil/leftwall.obj; 1.0 * (0.0, 0.0, 0.0); 26
+scenedata/windowsil/black.obj; 1.0 * (0.0, 0.0, 0.0); 20
+scenedata/windowsil/wood.obj; 1.0 * (0.0, 0.0, 0.0); 24
+//scenedata/windowsil/outsidelight.obj; 1.0f * (5.0, 5.0, 5.0); 17
+//scenedata/windowsil/outoffocuslight.obj; 50.0f * (5.0, 2.0, 2.0); 17
+scenedata/windowsil/spoon.obj; 0.0f * (0.0, 0.0, 0.0); 7
+scenedata/windowsil/tea.obj; 0.0f * (0.0, 0.0, 0.0); 8
+scenedata/windowsil/ice.obj; 0.0f * (0.0, 0.0, 0.0); 9
+scenedata/windowsil/Cup.obj; 0.0f * (0.0, 0.0, 0.0); 10

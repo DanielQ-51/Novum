@@ -3,40 +3,45 @@ Name: render
 width: 800
 height: 800
 
-Integrator: VCM
-Sample Count: 500000
+Integrator: UNIDIRFAST
+Sample Count: 100000
 Post Process: true
 
-Unidirectional Max Depth: 40
+Unidirectional Max Depth: 12
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false
 BDPT Specifc Settings:
-Bidirectional Eye Depth: 16
-Bidirectional Light Depth: 10
+Bidirectional Eye Depth: 20
+Bidirectional Light Depth: 12
 
 BDPT_LIGHTTRACE: true
 BDPT_NEE: true
 BDPT_NAIVE: true
 BDPT_CONNECTION: true
 
+VCM_DOMERGE: true
+
 BDPT_DRAWPATH: false
 BDPT_DOMIS: true
 BDPT_PAINTWEIGHT: false
 
-VCM Merge Radius Power Factor: 0.7
-VCM Initial Merge Radius Multipler: 0.01
+VCM Merge Radius Power Factor: 0.66
+VCM Initial Merge Radius Multiplier: 0.0005
 
 Pinhole Camera: true
-Camera Position: -0.0 -0.0 1.0
+Camera Position: -0.0 -0.3 0.0
 Camera Rotation: -0.0 -0.0 0.0
 Camera Apeture: 0.0
 Camera FocalDist: 0.0
-Camera FOV: 60.0
+Camera FOV: 40.0
 
 Meshes (path; multiplier * emission; materialID):
 scenedata/smallbox.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/backwall.obj; 1.0 * (0.0, 0.0, 0.0); 2
 scenedata/leftwall.obj; 1.0 * (0.0, 0.0, 0.0); 1
 scenedata/rightwall.obj; 1.0 * (0.0, 0.0, 0.0); 3
-scenedata/waterCaustic2.obj; 1.0 * (0.0, 0.0, 0.0); 10
-scenedata/smallwaterlight5.obj; 25.0 * (8.0, 8.0, 8.0); 2
+scenedata/ring.obj; 1.0 * (0.0, 0.0, 0.0); 4
+scenedata/gear.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/bowl.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/smallwaterlight5.obj; 80.1 * (8.0, 8.0, 8.0); 2

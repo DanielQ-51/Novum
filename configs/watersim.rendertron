@@ -1,0 +1,45 @@
+Name: watersim
+
+width: 800
+height: 800
+
+Integrator: SPPM
+Sample Count: 600
+Post Process: true
+
+Unidirectional Max Depth: 12
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 16
+Bidirectional Light Depth: 16
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.5
+VCM Initial Merge Radius Multiplier: 0.0025
+
+Pinhole Camera: true
+Camera Position: -0.0 -0.8 7.6
+Camera Rotation: -0.0 -0.0 0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 33.0
+
+Meshes (path; multiplier * emission; materialID):
+scenedata/watersim/box.obj; 0.0 * (0.0, 0.0, 0.0); 2
+//scenedata/mirrors.obj; 0.0 * (0.0, 0.0, 0.0); 19
+scenedata/watersim/lwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
+scenedata/watersim/rwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
+//scenedata/watercaustic3.obj; 1.0 * (0.0, 0.0, 0.0); 10
+scenedata/watersim/light.obj; 14000.0 * (8.0, 7.0, 6.0); 2

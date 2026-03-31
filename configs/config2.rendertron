@@ -1,0 +1,51 @@
+Name: render2
+
+width: 1024
+height: 1024
+
+Integrator: UNIDIRFAST
+Sample Count: 1000000000
+Post Process: true
+
+Unidirectional Max Depth: 6
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 16
+Bidirectional Light Depth: 16
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.67
+VCM Initial Merge Radius Multiplier: 0.001
+
+Pinhole Camera: true
+Camera Position: -0.0 0.3 5.0
+Camera Rotation: -0.0 -0.0 -0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 30.0
+
+Meshes (path; multiplier * emission; materialID):
+assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
+assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
+assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
+assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
+assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
+.assets/scenedata/cornellbox/scatteredballs2.obj; 0.0 * (0.0, 0.0, 0.0); 5
+.assets/scenedata/miku.obj; 0.0 * (0.0, 0.0, 0.0); 26
+.assets/scenedata/dragon.obj; 0.0 * (0.0, 0.0, 0.0); 4
+.assets/scenedata/cornellbox/scatteredballs1.obj; 0.0 * (0.0, 0.0, 0.0); 4
+
+assets/scenedata/cornellbox/lightMedium.obj; 10.0 * (8.0, 8.0, 6.0); 2
+.assets/scenedata/cornellbox/lightLarge.obj; 2.0 * (8.0, 8.0, 6.0); 2

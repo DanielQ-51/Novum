@@ -1,0 +1,48 @@
+Name: dragon
+
+width: 2580
+height: 1080
+
+Integrator: UNIDIRFAST
+Sample Count: 200
+Post Process: true
+
+Unidirectional Max Depth: 12
+BVH recommended leaf size: 3
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 8
+Bidirectional Light Depth: 12
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.67
+VCM Initial Merge Radius Multiplier: 0.001
+
+Pinhole Camera: true
+Camera Position: -0.343 -0.430 0.754
+Camera Rotation: -16.2 -15.6 0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 25.0
+
+Meshes (path; multiplier * emission; materialID):
+scenedata/floor.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/smalldragon.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/smalldraglight1.obj; 110.0 * (7.0, 1.0, 1.0); 2
+scenedata/smalldraglight2.obj; 20.0 * (7.0, 3.5, 1.0); 2
+scenedata/smalldraglight3.obj; 6.0 * (7.0, 7.0, 1.0); 2
+scenedata/smalldraglight4.obj; 15.0 * (1.0, 7.0, 1.0); 2
+scenedata/smalldraglight5.obj; 20.0 * (1.0, 3.0, 7.0); 2
+scenedata/smalldraglight6.obj; 10.0 * (1.5, 1.0, 4.0); 2
+scenedata/smalldraglight7.obj; 30.0 * (3.5, 1.0, 6.0); 2

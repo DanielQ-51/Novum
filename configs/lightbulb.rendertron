@@ -1,0 +1,47 @@
+Name: lightbulb
+
+width: 1721
+height: 720
+
+Integrator: VCM
+Sample Count: 100000
+Post Process: true
+
+Unidirectional Max Depth: 12
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 8
+Bidirectional Light Depth: 6
+
+BDPT_LIGHTTRACE: false
+BDPT_NEE: false
+BDPT_NAIVE: false
+BDPT_CONNECTION: false
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.55
+VCM Initial Merge Radius Multiplier: 0.0005
+
+Pinhole Camera: true
+Camera Position: -0.06241 0.0511372 0.372233
+Camera Rotation: 5.0 -7.50 0.0
+Camera Apeture: 0.05
+Camera FocalDist: 5.6
+Camera FOV: 4.0
+
+Meshes (path; multiplier * emission; materialID):
+scenedata/lightbulb/BETTERMODELS/floor.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/lightbulb/BETTERMODELS/backdrop.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/lightbulb/BETTERMODELS/base.obj; 1.0 * (0.0, 0.0, 0.0); 7
+scenedata/lightbulb/BETTERMODELS/filamentholder.obj; 1.0 * (0.0, 0.0, 0.0); 27
+scenedata/lightbulb/BETTERMODELS/glassthick2.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/lightbulb/BETTERMODELS/glassmiddle.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/lightbulb/BETTERMODELS/filament3.obj; 4000.0 * (15.0, 8.0, 3.0); 2
+

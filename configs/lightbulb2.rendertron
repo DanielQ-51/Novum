@@ -1,0 +1,48 @@
+Name: lightbulb2
+
+width: 2582
+height: 1080
+
+Integrator: VCM
+Sample Count: 100000
+Post Process: true
+
+Unidirectional Max Depth: 12
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 8
+Bidirectional Light Depth: 8
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.55
+VCM Initial Merge Radius Multiplier: 0.0001
+
+Pinhole Camera: true
+Camera Position: -0.149 0.075 0.502
+Camera Rotation: 5.062 -25.400 0.0
+Camera Apeture: 0.05
+Camera FocalDist: 5.6
+Camera FOV: 35.0
+
+Meshes (path; multiplier * emission; materialID):
+scenedata/lightbulb/BETTERMODELS/floor2.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/lightbulb/BETTERMODELS/teapot.obj; 1.0 * (0.0, 0.0, 0.0); 30
+//scenedata/lightbulb/BETTERMODELS/backdrop.obj; 1.0 * (0.0, 0.0, 0.0); 2
+scenedata/lightbulb/BETTERMODELS/base.obj; 1.0 * (0.0, 0.0, 0.0); 29
+scenedata/lightbulb/BETTERMODELS/filamentholder.obj; 1.0 * (0.0, 0.0, 0.0); 27
+scenedata/lightbulb/BETTERMODELS/glassthick2.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/lightbulb/BETTERMODELS/glassmiddle.obj; 1.0 * (0.0, 0.0, 0.0); 5
+scenedata/lightbulb/BETTERMODELS/filament3.obj; 200.0 * (15.0, 8.0, 3.0); 2
+

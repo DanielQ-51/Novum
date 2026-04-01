@@ -4,3 +4,9 @@ out/
 
 renders/
 .vscode/
+
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib

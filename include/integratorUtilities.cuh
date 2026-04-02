@@ -667,29 +667,30 @@ __device__ inline void removeMaterialFromStack(int* stack, int* stackTop, int ma
 
 __device__ inline float4 sampleSky(float4 direction)
 {
-    return f4();
     float4 unit_dir = normalize(direction); 
 
+    // Maps Y from [-1, 1] to [0, 1] for the gradient
     float t = 0.5f * (unit_dir.y + 1.0f);
 
-    //float4 c_horizon = 2.2f* f4(1.0f, 0.8f, 0.2f);
-    //float4 c_zenith  = f4(0.4f, 0.4f, 0.8f);
-    float4 c_horizon = 3.0f * f4(0.8f, 0.8f, 0.7f);
-    //float4 c_horizon = 1.0f * f4(1.0f, 1.0f, 0.2f);
-    float4 c_zenith  = f4(0.3f, 0.4f, 0.8f);
-    //float4 c_zenith  = f4(0.9f, 0.9f, 0.2f);
+    // Reduced multipliers to prevent extreme clipping
+    // Horizon is usually brighter than the zenith, but 3.0 is very high
+    float4 c_horizon = 0.5f * f4(0.8f, 0.3f, 0.1f);
+    float4 c_zenith  = 0.4f * f4(0.3f, 0.2f, 0.9f);
 
     float4 sky_color = (1.0f - t) * c_horizon + t * c_zenith;
 
-    float4 sun_dir = normalize(f4(-0.45f, 0.05f, 0.866f)); 
-    float sun_focus = 800.0f;
-    float sun_intensity = 15.0f;
-    float4 sun_base = f4(1.0f, 0.8f, 0.2f);
+    // Sun Calculation
+    //float4 sun_dir = normalize(f4(-0.45f, 0.05f, 0.866f, 0.0f)); 
+    float4 sun_dir = normalize(f4(-0.65f, 0.05f, -0.866f, 0.0f)); 
+    float sun_focus = 800.0f;     // Higher = smaller, sharper sun
+    float sun_intensity = 10.0f;  // Sun should be much brighter than sky
+    float4 sun_base = f4(1.0f, 0.8f, 0.2f, 1.0f);
 
     float sun_factor = pow(max(0.0f, dot(unit_dir, sun_dir)), sun_focus);
     float4 sun_final = sun_base * sun_intensity * sun_factor;
 
-    return sky_color;
+    // IMPORTANT: Add the sun to the sky!
+    return sky_color + sun_final;
 }
 
 __host__ inline void checkCudaErrors(const char * name)

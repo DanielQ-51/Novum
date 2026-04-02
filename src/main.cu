@@ -3,6 +3,7 @@
 #include "fastIntegrators.cuh"
 #include "objects.cuh"
 #include "util.cuh"
+#include "volumeRendering.cuh"
 #include <chrono>
 #include <iostream>
 #include <exception>
@@ -368,6 +369,15 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         config.bdptDoMis = false;
         config.vcmDoMerge = true;
         config.doSPPM = true;
+    }
+    else if (integratorChoice == VOLUME_SIMPLE)
+    {
+        cout << "Rendering at " << w << " by " << h << " pixels, with " << 
+            sampleCount << " samples per pixel, and a maximum leaf size of " <<
+            maxLeafSize << " primitives, with a max eye depth of " << 
+            eyePathDepth << ", and a max light depth of " << 
+            lightPathDepth << ".\nIntegrating with Volumetric Rendering." <<
+            endl << endl;
     }
 
     updateConstants(config);
@@ -991,6 +1001,29 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             out_colors, out_overlay,
             config.postProcess
         );
+    } else if (integratorChoice == VOLUME_SIMPLE) {
+        SceneContext sc;
+        sc.BVH = BVH;
+        sc.BVHindices = BVHindices;
+        sc.lightNum = lightsvec.size();
+        sc.lights = lights;
+        sc.scene = scene;
+        sc.triNum = mesh.size();
+        sc.vertices = verts;
+        sc.vertNum = points.size();
+        sc.materials = mats_d;
+        sc.textures = textures_d;
+
+        launch_simple_volume(
+            camera,
+            sc,
+            sampleCount,
+            maxDepth,
+            w, h,
+            sceneCenter, sceneRadius, sceneMin,
+            out_colors, out_overlay,
+            config.postProcess
+        );
     }
     
 
@@ -1071,87 +1104,83 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     return 0;
 }
 
-int testNanoVDB() {
-    std::cout << "\n[NanoVDB] Starting Integration Test..." << std::endl;
-    std::cout << "------------------------------------------" << std::endl;
-
+void printNvdbMetadata(const std::string& filePath) {
     try {
-        const std::string path = ASSET_PATH("assets/vdb/nvdb/explosion.nvdb");
-        
-        // 1. Load the Grid from Disk
-        // Using CudaDeviceBuffer allows the handle to manage both CPU and GPU memory
-        auto handle = nanovdb::io::readGrid<nanovdb::CudaDeviceBuffer>(path);
-        
-        if (!handle) {
-            throw std::runtime_error("File loaded but no valid NanoVDB grid was found.");
+        // According to IO.h: "A negative value of n means read all grids in the file."
+        auto handle = nanovdb::io::readGrid(filePath, -1);
+
+        if (!handle || handle.gridCount() == 0) {
+            std::cout << "Could not read grids from file: " << filePath << std::endl;
+            return;
         }
 
-        // 2. Access CPU Grid for Metadata
-        auto* cpuGrid = handle.grid<float>(); 
-        if (!cpuGrid) {
-            throw std::runtime_error("Grid does not contain float data (check your conversion settings).");
-        }
-
-        // Print Grid Identity
-        std::cout << "[SUCCESS] File Loaded: " << path << std::endl;
-        std::cout << " > Grid Name:    " << cpuGrid->gridName() << std::endl;
-        std::cout << " > Voxel Count:  " << cpuGrid->activeVoxelCount() << std::endl;
-
-        auto indexBBox = cpuGrid->indexBBox();
-        auto dim = indexBBox.dim(); // Returns a nanovdb::Coord (int32_t x 3)
-
-        std::cout << " > Index Resolution: " 
-                << dim[0] << " x " 
-                << dim[1] << " x " 
-                << dim[2] << " (Total: " << (dim[0] * dim[1] * dim[2]) << " voxels in bbox)" << std::endl;
-
-        // 5. Check Memory Footprint
-        // handle.size() is the size in bytes of the linearized NanoVDB buffer
-        float sizeInMB = static_cast<float>(handle.size()) / (1024.0f * 1024.0f);
-        std::cout << " > NanoVDB Size:   " << std::fixed << std::setprecision(2) << sizeInMB << " MB" << std::endl;
+        std::cout << "\nThe file \"" << filePath << "\" contains " << handle.gridCount() << " grids:\n";
         
-        // Print Bounding Box Info (Crucial for verifying spatial alignment)
-        auto bbox = cpuGrid->worldBBox();
-        std::cout << " > World BBox:   Min(" << bbox.min()[0] << ", " << bbox.min()[1] << ", " << bbox.min()[2] << ")" << std::endl;
-        std::cout << "                 Max(" << bbox.max()[0] << ", " << bbox.max()[1] << ", " << bbox.max()[2] << ")" << std::endl;
+        // Expanded header to include World Size
+        std::cout << std::left 
+                  << std::setw(4)  << "#"
+                  << std::setw(15) << "Name"
+                  << std::setw(12) << "Type"
+                  << std::setw(10) << "Class"
+                  << std::setw(12) << "Size (MB)"
+                  << std::setw(12) << "# Voxels"
+                  << std::setw(20) << "Index Res"
+                  << "World Size (W x H x D)" << std::endl;
 
-        // 3. Prepare for GPU
-        cudaStream_t stream;
-        cudaStreamCreate(&stream);
+        std::cout << std::string(115, '-') << std::endl;
 
-        std::cout << "[INFO] Uploading to GPU..." << std::endl;
-        handle.deviceUpload(stream, false); // Asynchronous upload
-        
-        // Sync to ensure upload finished before checking pointer
-        cudaStreamSynchronize(stream);
+        for (uint32_t i = 0; i < handle.gridCount(); ++i) {
+            const nanovdb::GridMetaData* currentGrid = handle.gridMetaData(i);
+            if (!currentGrid) continue;
 
-        auto* deviceGrid = handle.deviceGrid<float>();
-        if (deviceGrid) {
-            std::cout << "[SUCCESS] GPU Pointer verified at: " << deviceGrid << std::endl;
-        } else {
-            throw std::runtime_error("GPU upload failed: deviceGrid pointer is null.");
+            char typeBuf[32];
+            char classBuf[32];
+            nanovdb::toStr(typeBuf, currentGrid->gridType());
+            nanovdb::toStr(classBuf, currentGrid->gridClass());
+
+            // --- Index Space Data ---
+            auto indexBBox = currentGrid->indexBBox();
+            auto indexDim = indexBBox.dim();
+            double gridMB = static_cast<double>(currentGrid->gridSize()) / (1024.0 * 1024.0);
+            
+            // --- World Space Data ---
+            auto worldBBox = currentGrid->worldBBox();
+            auto worldMin = worldBBox.min();
+            auto worldMax = worldBBox.max();
+            auto worldDim = worldMax - worldMin; // Physical size in scene units
+            
+            // Calculate the exact center for camera look_at
+            auto worldCenter = worldMin + (worldDim * 0.5);
+
+            // Print Main Table Row
+            std::cout << std::left
+                      << std::setw(4)  << (i + 1)
+                      << std::setw(15) << currentGrid->shortGridName()
+                      << std::setw(12) << typeBuf
+                      << std::setw(10) << (currentGrid->isUnknown() ? "?" : classBuf)
+                      << std::fixed << std::setprecision(2) << std::setw(12) << gridMB
+                      << std::setw(12) << currentGrid->activeVoxelCount()
+                      << indexDim[0] << "x" << indexDim[1] << "x" << std::setw(9) << indexDim[2]
+                      << std::fixed << std::setprecision(3) 
+                      << worldDim[0] << " x " << worldDim[1] << " x " << worldDim[2]
+                      << std::endl;
+
+            // Print Scene Setup Helpers underneath each grid
+            std::cout << "    -> [Scene Setup] Center: (" 
+                      << worldCenter[0] << ", " << worldCenter[1] << ", " << worldCenter[2] 
+                      << ") | Max Dimension: " << std::max({worldDim[0], worldDim[1], worldDim[2]}) 
+                      << "\n" << std::endl;
         }
-
-        // Cleanup
-        cudaStreamDestroy(stream);
-
-        std::cout << "------------------------------------------" << std::endl;
-        std::cout << "[DONE] NanoVDB Integration is FULLY OPERATIONAL.\n" << std::endl;
-
     }
     catch (const std::exception& e) {
-        std::cerr << "\n[!] NANOVDB TEST FAILED" << std::endl;
-        std::cerr << " > Reason: " << e.what() << std::endl;
-        return -1;
+        std::cerr << "Error: " << e.what() << std::endl;
     }
-
-    return 0;
 }
 
 int main ()
 {
-    testNanoVDB();
-    string configName = ASSET_PATH("configs/config2.rendertron");
+    printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/smoke2.nvdb"));
+    string configName = ASSET_PATH("configs/volumeTest.rendertron");
     //for (int i = 0; i <= 150; i++)
     //    initRender(configName, i);
 

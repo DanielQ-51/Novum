@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <sstream>
 #include "rng.cuh"
+#include <tinyexr/tinyexr.h>
 
 // need to set epsilon low for small scale scenes for some reason, likely due to rejection of min distance?
 // ideally should be decoupled from ray epsilon type things; look into this
@@ -31,6 +32,10 @@ __device__ __constant__ float EPSILON = 0.0000001f;
 __device__ __constant__ float EPSILON3 = 0.001f;
 __device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
+__device__ __constant__ float INVPI = 0.3183098f;
+
+
+
 __device__ __constant__ float SKY_RADIUS = 100.0f;
 __device__ __constant__ float MAX_FIREFLY_LUM = 40.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
@@ -39,6 +44,10 @@ __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 constexpr float h_PI = 3.141592f;
 
 constexpr bool DO_PROGRESSIVERENDER = true;
+
+#ifndef DO_FIREFLY_CLAMP
+#define DO_FIREFLY_CLAMP 1
+#endif
 
 inline __host__ __device__ __forceinline__ float4 f4(float x, float y, float z, float w = 0.0f) {
     return make_float4(x, y, z, w);
@@ -287,7 +296,7 @@ __device__ __forceinline__ float4 sampleSphere(RNGState& localState, float R)
     return f4(R * x, R * y, R * z);
 }
 
-__device__ inline float luminance(float4 c)
+__device__ __host__ inline float luminance(float4 c)
 {
     return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 }
@@ -517,6 +526,14 @@ __device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 c
     if (colors[idx].x < 0.0f || colors[idx].y < 0.0f || colors[idx].z < 0.0f) {
         printf("NEGATIVE NUMBER ADDED\n");
     }
+
+#if DO_FIREFLY_CLAMP == 1
+    float lum = luminance(contribution);
+    if (lum > MAX_FIREFLY_LUM)
+    {
+        contribution *= (MAX_FIREFLY_LUM / lum);
+    }
+#endif
     atomicAdd(&colors[idx].x, contribution.x);
     atomicAdd(&colors[idx].y, contribution.y);
     atomicAdd(&colors[idx].z, contribution.z);
@@ -545,4 +562,21 @@ __device__ __forceinline__ int BurnCycles(int iterations) {
     }
 
     return f;
+}
+
+__device__ inline float2 dirToUV(float4 dir) {
+    // atan2f(Z, X) perfectly reverses the outDir generation
+    float phi = atan2f(dir.z, dir.x); 
+    
+    // Wrap negative angles back around the circle
+    if (phi < 0.0f) {
+        phi += 2.0f * PI;
+    }
+    
+    float u = phi / (2.0f * PI);
+    
+    // Clamp Y to prevent NaNs if dir.y floats slightly out of [-1, 1] bounds
+    float v = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y))) / PI; 
+    
+    return make_float2(u, v);
 }

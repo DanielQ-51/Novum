@@ -44,17 +44,6 @@ __host__ void updateConstants(RenderConfig& config)
     return;
 }
 
-/*
-__global__ void initRNG(RNGState* states, int width, int height, unsigned long seed)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= width || y >= height) return;
-
-    int idx = y * width + x;
-    curand_init(seed, idx, 0, &states[idx]);  
-} */
-
 __device__ void neePDF(const Vertices* __restrict__ vertices, const Triangle* __restrict__ scene, int lightNum, int lightTriInd, const Intersection& intersect, 
     float& light_pdf, float etaI, float etaT, const Intersection* newIntersect)
 {
@@ -79,7 +68,7 @@ __device__ void neePDF(const Vertices* __restrict__ vertices, const Triangle* __
     light_pdf = distanceSQR / (cosThetaLight * lightNum * area);
 }
 
-__device__ void nextEventEstimation(RNGState& localState, const Material* __restrict__ materials, const float4* __restrict__ textures, const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, const Vertices* __restrict__ vertices,
+__device__ void nextEventEstimation(RNGState& localState, const Material* __restrict__ materials, const float4* __restrict__ textures, const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, const Vertices* __restrict__ vertices,
     const Triangle* __restrict__ scene, const Triangle* __restrict__ lights, int lightNum, const Intersection& intersect, const float4& wo, 
     float& light_pdf, float4& contribution, float4& surfaceToLight_local, float etaI, float etaT)
 {
@@ -167,7 +156,7 @@ __global__ void __launch_bounds__(256, 2) Li_naive_unidirectional (
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -236,7 +225,7 @@ __host__ void launch_naive_unidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -348,7 +337,7 @@ __global__ void __launch_bounds__(256, 2) Li_unidirectional (
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -623,7 +612,7 @@ __host__ void launch_unidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -728,7 +717,7 @@ __device__ bool BDPTnextEventEstimation(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices,
     const Triangle* __restrict__ scene, 
     const Triangle* __restrict__ lights, 
@@ -877,7 +866,7 @@ __device__ void generateEyePath(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -1233,7 +1222,7 @@ __device__ void generateLightPath(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -1459,7 +1448,7 @@ __global__ void __launch_bounds__(256, 2) lightPathTracing (
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int lightDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -1637,7 +1626,7 @@ __device__ bool connectPath(
     int maxLightDepth, 
     const Material* __restrict__ materials, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     const Triangle* __restrict__ scene, 
     const Triangle* __restrict__ lights, 
@@ -1979,7 +1968,7 @@ __global__ void __launch_bounds__(256, 2) Li_bidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     int eyeDepth, int lightDepth, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
@@ -2051,7 +2040,7 @@ __host__ void launch_bidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -2191,7 +2180,7 @@ __device__ void generateVCMLightPath(
     Photons photons, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
-    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
@@ -2485,7 +2474,7 @@ __global__ void __launch_bounds__(256, 2) doLightPass(
     Photons photons, 
     int* lightPathLengths, 
     const Material* __restrict__ materials, const float4* __restrict__ textures, 
-    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
     int lightDepth, 
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
@@ -2728,7 +2717,7 @@ __device__ __noinline__ bool connectNEE(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures,
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices,
     const Triangle* __restrict__ scene,
     float4& unweightedContribution,
@@ -2819,7 +2808,7 @@ __device__ __noinline__ bool connectGeneral(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures,
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices,
     const Triangle* __restrict__ scene,
     float4& unweightedContribution,
@@ -2946,7 +2935,7 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
     const unsigned int* __restrict__ cell_end, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
-    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
@@ -3583,7 +3572,7 @@ __host__ void launch_VCM(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -3803,7 +3792,7 @@ __global__ void tracePhotons(
     Photons photons, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
-    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
@@ -3999,7 +3988,7 @@ __global__ void traceEyePaths(
     const unsigned int* __restrict__ cell_end, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
-    const BVHnode* __restrict__ BVH, const int* __restrict__ BVHindices, 
+    const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
     int maxDepth, 
     const Vertices* __restrict__ vertices, int vertNum, 
     const Triangle* __restrict__ scene, int triNum, 
@@ -4204,7 +4193,7 @@ __host__ void launch_SPPM(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 

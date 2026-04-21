@@ -1,9 +1,17 @@
+/**
+ * Dear reader. As you may notice, this file is quite messy. I swear there are better examples of code in this project, 
+ * I recommend environment.cuh and sampling.cuh, as well as fastIntegrators.cu. Pleasre recognize that this project has 
+ * spanned the majority of my time as a serious software developer, so a lot of the code was written very early on, and
+ * I am constantly refactoring to make the engine more professional.
+ */
+
 
 #include "deviceCode.cuh"
 #include "fastIntegrators.cuh"
 #include "objects.cuh"
 #include "util.cuh"
 #include "volumeRendering.cuh"
+#include "sceneContexts.cuh"
 #include <chrono>
 #include <iostream>
 #include <exception>
@@ -25,10 +33,10 @@ using namespace std;
 #define ASSET_PATH(path) (std::string(ROOT_DIR) + "/" + path)
 
 void readObjSimple(string filename, vector<float4>& points, vector<float4>& normals, vector<float4>& colors, vector<float2>& uvs,vector<Triangle>& mesh, 
-    vector<Triangle>& lights, float4 c, float4 e, int materialID, float4 offset = f4(0.0f));
+    vector<Triangle>& lights, vector<LightDescriptor>& lightDescriptors, float4 c, float4 e, int materialID, float4 offset = f4(0.0f));
 
-void computeInfoForBVH(Vertices& vertices, vector<Triangle>& mesh, vector<float4>& centroids, 
-    vector<float4>& AABBmins, vector<float4>& AABBmaxes)
+void computeInfoForBVH(Vertices& vertices, vector<Triangle>& mesh, vector<Volume>& volumes, vector<float4>& centroids, 
+    vector<float4>& AABBmins, vector<float4>& AABBmaxes, vector<int>& primTypes, vector<int>& originalIndices)
 {
     for (int i = 0; i < mesh.size(); i++)
     {
@@ -53,6 +61,28 @@ void computeInfoForBVH(Vertices& vertices, vector<Triangle>& mesh, vector<float4
             fmaxf(fmaxf(a.z, b.z), c.z)
         ) + f4(0.000001f);
         AABBmaxes.push_back(maxPos);
+
+        primTypes.push_back(TYPE_TRIANGLE);
+        originalIndices.push_back(i);
+    }
+
+    for (int i = 0; i < volumes.size(); i++)
+    {
+        Volume& vol = volumes[i];
+        
+        float4 minPos = vol.aabbMIN;
+        float4 maxPos = vol.aabbMAX;
+        float4 centroid = f4((minPos.x + maxPos.x) * 0.5f, 
+                             (minPos.y + maxPos.y) * 0.5f, 
+                             (minPos.z + maxPos.z) * 0.5f);
+
+        centroids.push_back(centroid);
+        AABBmins.push_back(minPos);
+        AABBmaxes.push_back(maxPos);
+
+        // TRACKING: This is Volume #i
+        primTypes.push_back(TYPE_VOLUME);
+        originalIndices.push_back(i);
     }
 }
 
@@ -406,6 +436,13 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     vector<Material> mats;
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
+    // Loading environment map
+    //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_8k.exr"));
+    envManager.setRotation(55.0f);
+    
+    //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Loading Textures
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -422,6 +459,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/leafautumn.bmp"), false));
     images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wood.bmp"), false));
     images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wall.bmp"), false));
+    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/Material.006_baseColor.bmp"), false));
 
     for (Image i : images)
     {
@@ -458,6 +496,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     Material lambertVeryGreen = Material::Diffuse(f4(0.1f,0.9f,0.1f));
     Material lambertBLACK = Material::Diffuse(f4(0.0f,0.0f,0.0f));
     Material lambert95 = Material::Diffuse(f4(0.95f,0.95f,0.95f));
+    Material lambert1 = Material::Diffuse(f4(1.0f));
     Material lambert50 = Material::Diffuse(f4(0.5f,0.5f,0.5f));
 
     float4 eta_steel = f4(0.14f, 0.16f, 0.13f, 1.0f);   // real part (R,G,B,alpha)
@@ -499,6 +538,18 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     Material mirror = Material::Mirror();
     Material thinGlass = Material::ThinDielectric(1.5f);
 
+
+    Material blade = Material::Metal(f4(2.88f, 2.49f, 2.12f), f4(3.05f, 2.97f, 2.76f), 0.15f);
+
+    Material liners = Material::Metal(f4(1.80f, 1.40f, 0.40f), f4(2.10f, 2.80f, 4.20f), 0.35f);
+
+    Material hardware = Material::Metal(eta_steel, k_steel, 0.45f);
+
+    float4 cf_albedo = f4(0.03f, 0.03f, 0.03f, 0.0f);
+    Material handles = Material::Diffuse(cf_albedo);
+
+    Material glove = Material::Leaf(6, startIndices[6], widths[6], heights[6], 1.5f, 0.4f, f4(), 0.00f);
+
     mats.push_back(air); // index 0
 
     mats.push_back(lambertBlue); // index 1
@@ -532,39 +583,44 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     mats.push_back(steelSmooth); // index 29
     mats.push_back(steel25); // index 30
     mats.push_back(gold15); // index 31
+    mats.push_back(lambert1); // index 32
+    mats.push_back(blade); // index 33
+    mats.push_back(liners); // index 34
+    mats.push_back(hardware); // index 35
+    mats.push_back(handles); // index 36
+    mats.push_back(glove); // index 37
 
     Material* mats_d;
 
     cudaMalloc(&mats_d, mats.size() * sizeof(Material));
     cudaMemcpy(mats_d, mats.data(), mats.size() * sizeof(Material), cudaMemcpyHostToDevice);
 
+    vector<LightDescriptor> lightDesc;
+
     for (MeshConfig c : config.meshes)
     {
-        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, f4(), 
+        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, lightDesc, f4(), 
                 c.emissionMultiplier * c.emissionColor, c.materialID);
     }
 
     if (animatedObjPath != "invalid" && config.name == "watersim")
     {
-        readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, f4(), 
+        readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, lightDesc, f4(), 
                 f4(), 10, f4(0.0f, -0.9f, 0.0f));
     }
 
     Vertices* verts;
     Triangle* scene;
-    Triangle* lights;
 
     cudaMalloc(&verts,  sizeof(Vertices));
     Vertices temp;
 
     cudaMalloc(&temp.positions, sizeof(float4) * points.size());
     cudaMalloc(&temp.normals, sizeof(float4) * normals.size());
-    cudaMalloc(&temp.colors,  sizeof(float4) * colors.size());
     cudaMalloc(&temp.uvs,  sizeof(float2) * uvs.size());
 
     cudaMemcpy(temp.positions, points.data(), points.size() * sizeof(float4), cudaMemcpyHostToDevice);
     cudaMemcpy(temp.normals, normals.data(), normals.size() * sizeof(float4), cudaMemcpyHostToDevice);
-    cudaMemcpy(temp.colors, colors.data(), colors.size() * sizeof(float4), cudaMemcpyHostToDevice);
     cudaMemcpy(temp.uvs, uvs.data(), uvs.size() * sizeof(float2), cudaMemcpyHostToDevice);
     cudaMemcpy(verts, &temp, sizeof(Vertices), cudaMemcpyHostToDevice);
 
@@ -577,6 +633,65 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     }
     cout << "scene data read. There are " << mesh.size() << " Triangles and " << lightsvec.size() << " +1 lights" << endl;
 
+    //---------------------------------------------------------------------------------------------------------------------------------------------------
+    // Loading Volumes
+    //---------------------------------------------------------------------------------------------------------------------------------------------------
+
+    vector<Volume> volumes;
+
+    for (const VolConfig& c : config.volumes) {
+        float4 aabbMIN;
+        float4 aabbMAX;
+        auto density_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "density");
+        void* d_density_gridBuffer = nullptr;
+
+        if (density_handle) {
+            const nanovdb::NanoGrid<float>* desnity_hostGrid = density_handle.grid<float>();
+
+            size_t gridSizeInBytes = density_handle.size();
+
+            cudaMalloc(&d_density_gridBuffer, gridSizeInBytes);
+            cudaMemcpy(d_density_gridBuffer, desnity_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
+
+            const nanovdb::GridMetaData* currentGrid = density_handle.gridMetaData(0);
+
+            auto bbox = currentGrid->worldBBox();
+            auto min = bbox.min();
+            auto max = bbox.max();
+            
+            aabbMIN = f4(min[0], min[1], min[2]);
+            aabbMAX = f4(max[0], max[1], max[2]);
+        } else {
+            std::cout << "Could not read desnity grid from file: " << ASSET_PATH(c.path) << std::endl;
+        }
+        
+        auto temp_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "temperature");
+        void* d_temp_gridBuffer = nullptr;
+
+        if (temp_handle) {
+            const nanovdb::NanoGrid<float>* temp_hostGrid = temp_handle.grid<float>();
+
+            size_t gridSizeInBytes = temp_handle.size();
+
+            cudaMalloc(&d_temp_gridBuffer, gridSizeInBytes);
+            cudaMemcpy(d_temp_gridBuffer, temp_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
+        } else {
+            std::cout << "Could not read temperature grid from file: " << ASSET_PATH(c.path) << std::endl;
+        }
+
+        volumes.push_back(
+            Volume(
+                aabbMIN,
+                aabbMAX,
+                reinterpret_cast<nanovdb::NanoGrid<float>*>(d_density_gridBuffer),
+                reinterpret_cast<nanovdb::NanoGrid<float>*>(d_temp_gridBuffer),
+                c.densityScale,
+                c.anisotropy,
+                c.albedo
+            )
+        );
+    }
+
     auto afterRead = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed_seconds_afterRead = afterRead - start;
     std::cout << "Scene construction took: " << elapsed_seconds_afterRead.count() << " seconds" << std::endl << endl;
@@ -588,15 +703,25 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     vertices.positions = points.data();
     vertices.normals   = normals.data();
-    vertices.colors    = colors.data();
     vertices.uvs    = uvs.data();
-    computeInfoForBVH(vertices, mesh, centroids, minboxes, maxboxes);
+    
+    vector<int> primType;
+    vector<int> originalIndices;
+
+    computeInfoForBVH(vertices, mesh, volumes, centroids, minboxes, maxboxes, primType, originalIndices);
 
     cout << "BVH data computed" << endl;
 
     int failcount = 0;
     int backupCt = 0;
     int startNode = buildBVH(bvhvec, indvec, centroids, minboxes, maxboxes, 0, mesh.size(), maxLeafSize, failcount, backupCt);
+
+    vector<int2> gpu_indirection(indvec.size());
+    for (int i = 0; i < indvec.size(); i++) {
+        int global_idx = indvec[i];
+        gpu_indirection[i].x = primType[global_idx];      // type tag
+        gpu_indirection[i].y = originalIndices[global_idx]; // the actual index in the triangle/volume array
+    }
 
     BVHnode root = bvhvec[0];
     float4 sceneCenter = (root.aabbMAX + root.aabbMIN) * 0.5f;
@@ -613,17 +738,30 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     std::cout << "BVH construction took: " << elapsed_seconds_afterBVH.count() << " seconds" << std::endl << endl;
     
     BVHnode* BVH;
-    int* BVHindices;
+    int2* BVHindices;
+    Volume* d_volumes;
+
+    Triangle* lights;
+
+    // allocates and deallocates device pointer for lights (device light array)
+    LightSamplerManager lightManager(lightDesc, lightsvec, points, lights, envManager.getView());
     
     cudaMalloc(&scene, mesh.size() * sizeof(Triangle));
-    cudaMalloc(&lights, lightsvec.size() * sizeof(Triangle));
+    //cudaMalloc(&lights, lightsvec.size() * sizeof(Triangle));
     cudaMalloc(&BVH, bvhvec.size() * sizeof(BVHnode));
-    cudaMalloc(&BVHindices, indvec.size() * sizeof(int));
+    cudaMalloc(&BVHindices, indvec.size() * sizeof(int2));
 
     cudaMemcpy(scene, mesh.data(), mesh.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
-    cudaMemcpy(lights, lightsvec.data(), lightsvec.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
+    //cudaMemcpy(lights, lightsvec.data(), lightsvec.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
     cudaMemcpy(BVH, bvhvec.data(), bvhvec.size() * sizeof(BVHnode), cudaMemcpyHostToDevice);
-    cudaMemcpy(BVHindices, indvec.data(), indvec.size() * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(BVHindices, gpu_indirection.data(), gpu_indirection.size() * sizeof(int2), cudaMemcpyHostToDevice);
+
+    if (volumes.size() > 0) {
+        cudaMalloc(&d_volumes, volumes.size() * sizeof(Volume));
+        cudaMemcpy(d_volumes, volumes.data(), volumes.size() * sizeof(Volume), cudaMemcpyHostToDevice);
+    } else {
+        d_volumes = nullptr;
+    }
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Additional setup according to which integrator is used
@@ -990,6 +1128,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         sc.vertNum = points.size();
         sc.materials = mats_d;
         sc.textures = textures_d;
+        sc.lightSampler = lightManager.getSampler();
+
+        lightManager.getSampler().printDebugState();
 
         launch_wavefrontUnidirectional(
             camera,
@@ -1013,6 +1154,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         sc.vertNum = points.size();
         sc.materials = mats_d;
         sc.textures = textures_d;
+        
 
         launch_simple_volume(
             camera,
@@ -1070,15 +1212,21 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     cudaFree(out_overlay);
     cudaFree(verts);
     cudaFree(scene);
-    cudaFree(lights);
+    //cudaFree(lights); freed in the light manager
     cudaFree(BVH);
     cudaFree(BVHindices);
     cudaFree(mats_d);
     cudaFree(textures_d);
 
+    for (const Volume& vol : volumes) {
+        if (vol.density_pointer) cudaFree(vol.density_pointer);
+        if (vol.temperature_pointer) cudaFree(vol.temperature_pointer);
+    }
+    
+    if (d_volumes) cudaFree(d_volumes);
+
     cudaFree(temp.positions);
     cudaFree(temp.normals);
-    cudaFree(temp.colors);
     cudaFree(temp.uvs);
     delete[] host_colors;
     delete[] host_overlay;
@@ -1180,7 +1328,7 @@ void printNvdbMetadata(const std::string& filePath) {
 int main ()
 {
     printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/smoke2.nvdb"));
-    string configName = ASSET_PATH("configs/volumeTest.rendertron");
+    string configName = ASSET_PATH("configs/config2.rendertron");
     //for (int i = 0; i <= 150; i++)
     //    initRender(configName, i);
 
@@ -1199,8 +1347,19 @@ int main ()
 }
 
 
-void readObjSimple(string filename, vector<float4>& points, vector<float4>& normals, vector<float4>& colors, vector<float2>& uvs,vector<Triangle>& mesh, 
-    vector<Triangle>& lights, float4 c, float4 e, int materialID, float4 offset)
+void readObjSimple(
+    string filename, 
+    vector<float4>& points, 
+    vector<float4>& normals, 
+    vector<float4>& colors, 
+    vector<float2>& uvs, 
+    vector<Triangle>& mesh, 
+    vector<Triangle>& lights, 
+    vector<LightDescriptor>& lightDescriptors, 
+    float4 c, float4 e, 
+    int materialID, 
+    float4 offset
+)
 {
     std::ifstream file(filename);
 
@@ -1213,6 +1372,12 @@ void readObjSimple(string filename, vector<float4>& points, vector<float4>& norm
     int uvStartIndex = uvs.size();
 
     int nextLightIndex = lights.size();
+
+    LightDescriptor ld;
+    if (lengthSquared(e) > 0.0f) {
+        ld.startInd = nextLightIndex;
+        ld.totalPower = 0.0f;
+    }
 
     std::string line;
     while (std::getline(file, line)) {
@@ -1301,9 +1466,9 @@ void readObjSimple(string filename, vector<float4>& points, vector<float4>& norm
                 float4 e2 = f4(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
                 
                 float4 cp = cross3(e1, e2);
-                float areaSq = dot(cp, cp);
+                float area = 0.5f * length(cp);
 
-                if (areaSq < 1e-18f) {
+                if (area < 1e-18f) {
                     continue; 
                 }
 
@@ -1324,10 +1489,16 @@ void readObjSimple(string filename, vector<float4>& points, vector<float4>& norm
 
                 if (isLight) {
                     lights.push_back(tri);
+                    ld.totalPower += luminance(e) * h_PI * area;
                     nextLightIndex++;
                 }
             }
         }
+    }
+
+    if (lengthSquared(e) > 0.0f) {
+        ld.numPrim = lights.size() - ld.startInd;
+        lightDescriptors.push_back(ld);
     }
 
     file.close();

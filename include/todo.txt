@@ -1,0 +1,8 @@
+as of 4/2 5:13
+
+Need to refactor a shit ton of stuff, including
+
+proper allocation and deallocation of volumes in main.cu, in addition to checking whether or not the volumes are being properly linked to the BVH
+refactor all of the bvh intersection functions
+
+double check for gpu indirection usage

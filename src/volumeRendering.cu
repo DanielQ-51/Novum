@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include "imageUtil.cuh"
+#include "sceneContexts.cuh"
 #include <cub/cub.cuh>
 
 #include <nanovdb/NanoVDB.h>
@@ -38,8 +39,6 @@ __device__ void buildOrthonormalBasis(const nanovdb::Vec3f& n, nanovdb::Vec3f& b
 }
 
 __device__ nanovdb::Vec3f sample_HG(const nanovdb::Vec3f& incoming_dir, float g, float u1, float u2) {
-    
-    // --- PHASE 1: The Inverse CDF (Find the angles) ---
     float cos_theta;
     
     if (abs(g) < 1e-3f) {
@@ -112,7 +111,7 @@ __global__ void render_volume(
 
     float4 throughput = f4(1.0f);
     float4 pixelColor = f4();
-    float density_scale = 2.0f;
+    float density_scale = 3.0f;
 
     // --- 1. BOUNCE LOOP ---
     for (int depth = 0; depth < maxDepth; depth++) {
@@ -157,7 +156,7 @@ __global__ void render_volume(
         }
 
         if (hit_particle) {
-            throughput *= f4(0.995f, 0.995f, 0.995f);
+            throughput *= f4(0.9f, 0.9f, 0.9f);
 
             nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
             nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
@@ -176,6 +175,117 @@ __global__ void render_volume(
     colors[pixelIdx] += pixelColor;
     save_rng(pixelIdx, &localState, rngStates);
 }
+
+/*
+__global__ void render_volume_surface_integrated(
+    RNGState* rngStates,
+    Camera camera,
+    const SceneContext sceneContext,
+    const BVHContext bvhContext,
+    float4* __restrict__ colors,
+    int maxDepth,
+    int frameNum
+) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h) return;
+    int pixelIdx = y*w + x;
+
+    RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
+    
+    Ray r = camera.generateCameraRay(localState, x, y);
+
+    float4 throughput = f4(1.0f);
+    float4 pixelColor = f4();
+    
+    for (int depth = 0; depth < maxDepth; depth++) {
+{
+        localState = load_rng(pixelIdx, frameNum, depth+1, rngStates);
+
+        float4 bary;
+        float min_t_surface;
+        float min_t_volume;
+        int primID_surface;
+        int primID_volume;
+        BVHSceneIntersect_volume(r, bvhContext, bary, min_t_surface, min_t_volume, primID_surface, primID_volume);
+
+        if (primID_surface == -1 && primID_volume == -1) { // skybox hit
+
+        } else if (min_t_surface < min_t_volume) { // surface only hit
+            
+        } else { // volume first hit
+            nanovdb::NanoGrid<float>* densityGrid = sceneContext.volumes[primID_volume].density_pointer;
+
+            auto accessor = densityGrid->getAccessor();
+            auto sampler = nanovdb::math::createSampler<1>(accessor);
+
+
+        }
+}
+
+        auto accessor = densityGrid->getAccessor();
+        auto sampler = nanovdb::math::createSampler<1>(accessor);
+
+        nanovdb::Ray<float> indexRay = worldRay.worldToIndexF(*densityGrid);
+        nanovdb::math::TreeMarcher<leaf_t, nanovdb::Ray<float>, decltype(accessor)> marcher(accessor);
+
+        if (!marcher.init(indexRay)) {
+            nanovdb::Vec3f nv_dir = worldRay.dir();
+            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
+            break;
+        }
+
+        const leaf_t* leaf = nullptr;
+        float t0, t1;
+        
+        bool hit_particle = false;
+        float t_hit = 0.0f;
+
+        while (marcher.step(&leaf, t0, t1)) {
+            float local_majorant = leaf->maximum() * density_scale;
+            if (local_majorant <= 0.0f) continue;
+
+            float t_current = t0;
+
+            while (true) {
+                float step = -log(rand(&localState)) / local_majorant;
+                t_current += step;
+
+                if (t_current >= t1) break; // Exited the node
+
+                float true_density = sampler(indexRay(t_current)) * density_scale;
+
+                if (rand(&localState) < (true_density / local_majorant)) {
+                    hit_particle = true;
+                    t_hit = t_current; // Save the exact hit distance
+                    break;
+                }
+            }
+            
+            if (hit_particle) break; 
+        }
+
+        if (hit_particle) {
+            throughput *= f4(0.9f, 0.9f, 0.9f);
+
+            nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
+            nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
+
+            nanovdb::Vec3f new_world_dir = sample_HG(worldRay.dir(), 0.6f, rand(&localState), rand(&localState));
+
+            worldRay = nanovdb::Ray<float>(world_hit_pos, new_world_dir);
+            
+        } else {
+            nanovdb::Vec3f nv_dir = worldRay.dir();
+            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
+            break; // Break the depth loop
+        }
+    }
+    
+    colors[pixelIdx] += pixelColor;
+    save_rng(pixelIdx, &localState, rngStates);
+} */
 
 __host__ void launch_simple_volume(
     Camera camera, 
@@ -207,7 +317,7 @@ __host__ void launch_simple_volume(
     
     cudaDeviceSynchronize();
 
-    auto handle = nanovdb::io::readGrid(ASSET_PATH("assets/vdb/nvdb/explosion.nvdb"), "density");
+    auto handle = nanovdb::io::readGrid(ASSET_PATH("assets/vdb/nvdb/smoke2.nvdb"), "density");
     const nanovdb::NanoGrid<float>* hostGrid = handle.grid<float>();
 
     size_t gridSizeInBytes = handle.size();

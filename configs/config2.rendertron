@@ -1,13 +1,16 @@
 Name: render2
 
-width: 1024
+width: 4896
+height: 2048
+
+width: 2448
 height: 1024
 
 Integrator: UNIDIRFAST
 Sample Count: 1000000000
 Post Process: true
 
-Unidirectional Max Depth: 6
+Unidirectional Max Depth: 24
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false
@@ -30,22 +33,33 @@ VCM Merge Radius Power Factor: 0.67
 VCM Initial Merge Radius Multiplier: 0.001
 
 Pinhole Camera: true
-Camera Position: -0.0 0.3 5.0
-Camera Rotation: -0.0 -0.0 -0.0
-Camera Apeture: 0.0
+Camera Position: 6.465 1.0 -1.050
+Camera Rotation: -10.138 106.800 0.0
+Camera Apeture: 0.00
 Camera FocalDist: 0.0
-Camera FOV: 30.0
+Camera FOV: 35.0
 
 Meshes (path; multiplier * emission; materialID):
-assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
-assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
-assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
-assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
-assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
+.assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
+.assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
+.assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
+.assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
+.assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
 .assets/scenedata/cornellbox/scatteredballs2.obj; 0.0 * (0.0, 0.0, 0.0); 5
-.assets/scenedata/miku.obj; 0.0 * (0.0, 0.0, 0.0); 26
-.assets/scenedata/dragon.obj; 0.0 * (0.0, 0.0, 0.0); 4
+.assets/scenedata/miku.obj; 0.0 * (0.0, 0.0, 0.0); 28
+.assets/scenedata/dragon.obj; 0.0 * (0.0, 0.0, 0.0); 5
 .assets/scenedata/cornellbox/scatteredballs1.obj; 0.0 * (0.0, 0.0, 0.0); 4
 
-assets/scenedata/cornellbox/lightMedium.obj; 10.0 * (8.0, 8.0, 6.0); 2
-.assets/scenedata/cornellbox/lightLarge.obj; 2.0 * (8.0, 8.0, 6.0); 2
+assets/scenedata/csgo/blade2.obj; 0.0 * (0.0, 0.0, 0.0); 33
+assets/scenedata/csgo/titanium2.obj; 0.0 * (0.0, 0.0, 0.0); 34
+assets/scenedata/csgo/dullmetal2.obj; 0.0 * (0.0, 0.0, 0.0); 35
+assets/scenedata/csgo/carbonfiber2.obj; 0.0 * (0.0, 0.0, 0.0); 36
+assets/scenedata/csgo/gloves2.obj; 0.0 * (0.0, 0.0, 0.0); 37
+
+.assets/scenedata/skyscene/floor.obj; 0.0 * (0.0, 0.0, 0.0); 17
+.assets/scenedata/skyscene/diffball.obj; 0.0 * (0.0, 0.0, 0.0); 2
+.assets/scenedata/skyscene/glassball.obj; 0.0 * (0.0, 0.0, 0.0); 5
+
+.assets/scenedata/skyscene/glowcoil.obj; 100.5 * (8.0, 1.0, 1.0); 2
+.assets/scenedata/skyscene/glowpyramid.obj; 100.5 * (1.0, 1.0, 8.0); 2
+.assets/scenedata/cornellbox/lightMedium.obj; 50.5 * (1.0, 1.0, 8.0); 2

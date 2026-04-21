@@ -8,8 +8,36 @@
 #include <sstream>
 #include <vector>
 #include <cuda_fp16.h>
+#include <nanovdb/NanoVDB.h>
 
-struct BVHnode
+struct Volume
+{
+    float4 aabbMIN;
+    float4 aabbMAX;
+    nanovdb::NanoGrid<float>* density_pointer;
+    nanovdb::NanoGrid<float>* temperature_pointer;
+    float densityScale;
+    float4 albedo;
+    float anisotropy;
+
+    __host__ Volume(
+        float4 min, 
+        float4 max, 
+        nanovdb::NanoGrid<float>* dp, 
+        nanovdb::NanoGrid<float>* tp, 
+        float ds,
+        float ani,
+        float4 alb
+    ) : aabbMIN(min), aabbMAX(max), density_pointer(dp), temperature_pointer(tp), densityScale(ds), albedo(alb), anisotropy(ani) {} 
+};
+
+enum PrimitiveType {
+    TYPE_INNER = 0,
+    TYPE_TRIANGLE = 1, // Leaf node pointing to Triangle array
+    TYPE_VOLUME = 2    // Leaf node pointing to Volume array
+};
+
+struct __align__(64) BVHnode
 {
     float4 aabbMIN;
     float4 aabbMAX;
@@ -152,7 +180,7 @@ struct Vertices
 {
     float4* positions;
     float4* normals;
-    float4* colors;
+    //float4* colors;
     float2* uvs;
 };
 
@@ -162,16 +190,15 @@ struct Triangle
     int bInd;
     int cInd;
     int naInd, nbInd, ncInd; // Normal indices
-    //int normInd; // THIS ISNT BEING USED
 
     int uvaInd, uvbInd, uvcInd;
     int materialID;
     float4 emission;
 
-    int lightInd;
-    int triInd;
+    int lightInd; // you might hit a emissive mesh but you need to know what LIGHT it corresponds to
+    int triInd; // used when drawing shadow rays and needing to ignore the target light
 
-    __device__ inline float area(Vertices* vertices) {
+    __device__ inline float area(const Vertices* vertices) {
         float4 apos = __ldg(&vertices->positions[aInd]);
         return 0.5f * length(cross3(
             __ldg(&vertices->positions[bInd]) - apos, 
@@ -872,6 +899,15 @@ struct MeshConfig {
     int materialID;
 };
 
+struct VolConfig {
+    std::string path;
+    float emissionMultiplier;
+    float tempScale;
+    float4 albedo;
+    float densityScale;
+    float anisotropy;
+};
+
 struct RenderConfig {
     // Window / System
     int width = 0;
@@ -913,6 +949,7 @@ struct RenderConfig {
 
     // Assets
     std::vector<MeshConfig> meshes;
+    std::vector<VolConfig> volumes;
 };
 
 __host__ inline bool loadConfig(const std::string& filepath, RenderConfig& config) {
@@ -924,6 +961,7 @@ __host__ inline bool loadConfig(const std::string& filepath, RenderConfig& confi
 
     std::string line;
     bool parsingMeshes = false;
+    bool parsingVolumes = false;
 
     while (std::getline(file, line)) {
         line = trim(line);
@@ -932,6 +970,13 @@ __host__ inline bool loadConfig(const std::string& filepath, RenderConfig& confi
         // Detect Mesh Section
         if (line.rfind("Meshes", 0) == 0) {
             parsingMeshes = true;
+            parsingVolumes = false;
+            continue;
+        }
+
+        if (line.rfind("Volumes", 0) == 0) {
+            parsingMeshes = false;
+            parsingVolumes = true;
             continue;
         }
 
@@ -968,7 +1013,40 @@ __host__ inline bool loadConfig(const std::string& filepath, RenderConfig& confi
             if(std::getline(ss, segment, ';')) mesh.materialID = std::stoi(trim(segment));
 
             config.meshes.push_back(mesh);
-        } 
+        } else if (parsingVolumes) {
+            VolConfig vol;
+            std::stringstream ss(line);
+            std::string segment;
+
+            // 1. Path
+            if(std::getline(ss, segment, ';')) vol.path = trim(segment);
+
+            // 2. Albedo Vector
+            if(std::getline(ss, segment, ';')) {
+                std::string vecStr = trim(segment);
+                size_t openParen = vecStr.find('(');
+                size_t closeParen = vecStr.find(')');
+
+                if (openParen != std::string::npos && closeParen != std::string::npos) {
+                    vecStr = vecStr.substr(openParen + 1, closeParen - openParen - 1);
+                    std::replace(vecStr.begin(), vecStr.end(), ',', ' ');
+                    vol.albedo = parseVec3(vecStr);
+                }
+            }
+
+            // 3. Density Scale
+            if(std::getline(ss, segment, ';')) vol.densityScale = std::stof(trim(segment));
+
+            // 4. Temperature Scale
+            if(std::getline(ss, segment, ';')) vol.tempScale = std::stof(trim(segment));
+
+            // 5. Emission Multiplier
+            if(std::getline(ss, segment, ';')) vol.emissionMultiplier = std::stof(trim(segment));
+
+            if(std::getline(ss, segment, ';')) vol.anisotropy = std::stof(trim(segment));
+
+            config.volumes.push_back(vol);
+        }
         else {
             // Standard Key-Value Parsing
             size_t delimiterPos = line.find(':');
@@ -1326,58 +1404,4 @@ __device__ __forceinline__ float getD_vcm(const Photons& x, int idx) {
 
 __device__ __forceinline__ void setD_vcm(Photons& x, int idx, float val) {
     x.d_vcm[idx] = val;
-}
-
-struct SceneContext
-{
-    Material* materials;
-    float4* textures;
-    BVHnode* BVH;
-    int* BVHindices;
-    Vertices* vertices; 
-    Triangle* scene; 
-    Triangle* lights;
-    int vertNum; 
-    int triNum;
-    int lightNum;
-};
-
-struct BVHContext
-{
-    BVHnode* BVH;
-    int* BVHindices;
-    Vertices* vertices;
-    Triangle* scene;
-    Material* materials;
-};
-
-struct ShadeContext
-{
-    Material* materials;
-    float4* textures;
-    Triangle* lights;
-    Triangle* scene;
-    Vertices* vertices; 
-    int lightNum;
-};
-
-__host__ inline BVHContext getBVHContext(const SceneContext& sc) {
-    BVHContext ctx;
-    ctx.BVH        = sc.BVH;
-    ctx.BVHindices = sc.BVHindices;
-    ctx.vertices   = sc.vertices;
-    ctx.scene      = sc.scene;
-    ctx.materials  = sc.materials;
-    return ctx;
-}
-
-__host__ inline ShadeContext getShadeContext(const SceneContext& sc) {
-    ShadeContext ctx;
-    ctx.materials = sc.materials;
-    ctx.textures  = sc.textures;
-    ctx.lights    = sc.lights;
-    ctx.scene     = sc.scene;
-    ctx.vertices  = sc.vertices;
-    ctx.lightNum  = sc.lightNum;
-    return ctx;
 }

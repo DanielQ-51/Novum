@@ -1,6 +1,6 @@
 #pragma once
 
-#include "objects.cuh"
+#include "sceneContexts.cuh"
 
 //__global__ void colorPixel (int w, int h, float4* colors);
 __host__ void updateConstants(RenderConfig& config);
@@ -11,7 +11,7 @@ __host__ void launch_unidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -30,7 +30,7 @@ __host__ void launch_naive_unidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -52,7 +52,7 @@ __host__ void launch_bidirectional(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -74,7 +74,7 @@ __host__ void launch_VCM(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 
@@ -99,7 +99,7 @@ __host__ void launch_SPPM(
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ vertices, 
     int vertNum, 
     const Triangle* __restrict__ scene, 

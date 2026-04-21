@@ -1,0 +1,46 @@
+Name: render
+
+width: 1080
+height: 1080
+
+Integrator: SIMPLEVOL
+Sample Count: 100000
+Post Process: true
+
+Unidirectional Max Depth: 128
+BVH recommended leaf size: 2
+
+SAMPLE_ENVIRONMENT: false
+BDPT Specifc Settings:
+Bidirectional Eye Depth: 20
+Bidirectional Light Depth: 12
+
+BDPT_LIGHTTRACE: true
+BDPT_NEE: true
+BDPT_NAIVE: true
+BDPT_CONNECTION: true
+
+VCM_DOMERGE: true
+
+BDPT_DRAWPATH: false
+BDPT_DOMIS: true
+BDPT_PAINTWEIGHT: false
+
+VCM Merge Radius Power Factor: 0.66
+VCM Initial Merge Radius Multiplier: 0.0005
+
+Pinhole Camera: true
+Camera Position: 2.668 12.300 62.461
+Camera Rotation: -0.0 -0.0 0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 30.0
+
+Meshes (path; multiplier * emission; materialID):
+assets/scenedata/smoke2pose.obj; 1.0 * (0.0, 0.0, 0.0); 4
+
+assets/scenedata/cornellbox/lightMedium.obj; 10.0 * (8.0, 8.0, 6.0); 2
+
+Volumes (path; albedo; densityScale; temperatureScale; emissionMultiplier; anisotropy):
+
+assets/vdb/nvdb/smoke2.nvdb; (0.95, 0.95, 0.95); 3.0; 1.0; 1.0; 0.6

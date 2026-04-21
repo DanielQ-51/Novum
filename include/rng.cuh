@@ -51,6 +51,14 @@ __device__ inline float rand(RNGState* state) {
 #endif
 }
 
+__device__ inline float4 rand4(RNGState* state) {
+#if RNG_MODE == 3
+    return make_float4(state->next_float(), state->next_float(), state->next_float(), state->next_float());
+#else
+    return make_float4(curand_uniform(state), curand_uniform(state), curand_uniform(state), curand_uniform(state));
+#endif
+}
+
 namespace RNGManager {
     void launchInitRNG(RNGState* d_rngStates, int width, int height, unsigned long seed);
     void cleanup();

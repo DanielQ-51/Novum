@@ -1,6 +1,7 @@
 #pragma once
 
 #include "reflectors.cuh"
+#include "sceneContexts.cuh"
 #include <cub/cub.cuh>
 #include <random>
 #include <ctime>
@@ -127,10 +128,135 @@ __device__ inline bool aabbIntersect(const Ray& r, float4 minCorner, float4 maxC
     return (tmax >= tmin) && (tmax > 0.0f);
 }
 
+
+/**
+ * Lightweight volume closest hit function. It is the responsibility of the caller to retrieve additional data. 
+ * This function only returns the bare minimum.
+ **/
+__device__ inline void BVHSceneIntersect_volume(
+    const Ray& r, 
+    const BVHContext bvhContext,
+    float4& bary,
+    float& min_t, // distance to nearest surface
+    float& min_vol_t, // distance to nearest volume aabb
+    int& volume_ID, // ID of the intersected volume, -1 for when closest hit is a surface
+    int& surface_primID // ID of the intersected surface, -1 when it misses a surface
+)
+{
+    min_t = 1e30f;
+    min_vol_t = 1e30f;
+    surface_primID = -1;
+    volume_ID = -1;
+    bary = f4(-1.0f);
+
+    int nodeStack[32];
+    int stackTop = 0;
+    nodeStack[stackTop++] = 0; // Push the root node (index 0)
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
+
+    while (stackTop > 0)
+    {
+        // Pop the next node to check
+        int currentIndex = nodeStack[--stackTop];
+        const BVHnode& node = bvhContext.BVH[currentIndex];
+
+        if (node.primCount > 0)
+        {
+            for (int i = node.first; i < node.primCount + node.first; i++)
+            {
+                int2 idx = __ldg(&bvhContext.BVHindices[i]);
+                
+                if (idx.x == TYPE_VOLUME) {
+                    const Volume& vol = bvhContext.volumes[idx.y];
+                    float tminV, tmaxV;
+                    bool hitVol = aabbIntersect(r, vol.aabbMIN, vol.aabbMAX, invDir, tminV, tmaxV);
+
+                    if (hitVol)
+                    {
+                        // If the ray starts INSIDE the cloud, tminV is negative, so we clamp to 0.0f for the distance check
+                        float entry_t = fmaxf(0.0f, tminV);
+                        
+                        if (entry_t < min_t && tminV < min_vol_t)
+                        {
+                            min_vol_t = tminV;
+                            volume_ID = idx.y;
+                        }
+                    }
+                    
+                } else if (idx.x == TYPE_TRIANGLE) {
+                    const Triangle* tri = &bvhContext.scene[idx.y];
+                    float4 barycentric;
+                    float t;
+                    bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
+
+                    if (hitTri && (t < min_t))
+                    {
+                        min_t = t; // Update the closest-hit distance
+                        surface_primID = idx.y;
+                        bary = barycentric;
+                    }
+                }
+                
+            }
+        }
+        else
+        {
+            if (node.left >= 0 || node.right >= 0)
+            {
+                float tminL, tmaxL, tminR, tmaxR;
+                bool hitLeft = false, hitRight = false;
+
+                // Test left child if it exists
+                if (node.left >= 0) {
+                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    if (tminL > min_t) hitLeft = false; // Cull!
+                }
+
+                // Test right child if it exists
+                if (node.right >= 0) {
+                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    if (tminR > min_t) hitRight = false; // Cull!
+                }
+
+                if (hitLeft && hitRight)
+                {
+                    if (tminL < tminR)
+                    {
+                        nodeStack[stackTop++] = node.right; // farther
+                        nodeStack[stackTop++] = node.left;  // nearer
+                    }
+                    else
+                    {
+                        nodeStack[stackTop++] = node.left;  // farther
+                        nodeStack[stackTop++] = node.right; // nearer
+                    }
+                }
+                else if (hitLeft)
+                {
+                    nodeStack[stackTop++] = node.left;
+                }
+                else if (hitRight)
+                {
+                    nodeStack[stackTop++] = node.right;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Closest hit function, returns a full intersect object. Only supports triangles.
+ */
 __device__ inline void BVHSceneIntersect(
     const Ray& r, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ verts, 
     const Triangle* __restrict__ scene, 
     Intersection& intersect, 
@@ -164,19 +290,23 @@ __device__ inline void BVHSceneIntersect(
         {
             for (int i = node.first; i < node.primCount + node.first; i++)
             {
-                int idx = __ldg(&BVHindices[i]);
-                if (idx == skipTri) continue;
-                const Triangle* tri = &scene[idx];
-                float4 barycentric;
-                float t;
-                bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
-
-                if (hitTri && (t < min_t) && (t < max_t))
+                int2 idx = __ldg(&BVHindices[i]);
+                if (idx.x == TYPE_TRIANGLE)
                 {
-                    min_t = t; // Update the closest-hit distance
-                    bestTriInd = idx;
-                    bestBarycentric = barycentric;
+                    if (idx.y == skipTri) continue;
+                    const Triangle* tri = &scene[idx.y];
+                    float4 barycentric;
+                    float t;
+                    bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
+
+                    if (hitTri && (t < min_t) && (t < max_t))
+                    {
+                        min_t = t; // Update the closest-hit distance
+                        bestTriInd = idx.y;
+                        bestBarycentric = barycentric;
+                    }
                 }
+                
             }
         }
         // 3. If it's an internal node, push its children onto the stack
@@ -188,12 +318,16 @@ __device__ inline void BVHSceneIntersect(
                 bool hitLeft = false, hitRight = false;
 
                 // Test left child if it exists
-                if (node.left >= 0)
+                if (node.left >= 0) {
                     hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    if (tminL > min_t) hitLeft = false; // Cull!
+                }
 
                 // Test right child if it exists
-                if (node.right >= 0)
+                if (node.right >= 0) {
                     hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    if (tminR > min_t) hitRight = false; // Cull!
+                }
 
                 // If both children were hit, push the farther one first
                 if (hitLeft && hitRight)
@@ -225,9 +359,9 @@ __device__ inline void BVHSceneIntersect(
     {
         const Triangle* tri = &scene[bestTriInd];
         intersect.point = r.at(min_t);
-        intersect.color = __ldg(&verts->colors[tri->aInd]) * bestBarycentric.z + 
-                            __ldg(&verts->colors[tri->bInd]) * bestBarycentric.x + 
-                            __ldg(&verts->colors[tri->cInd]) * bestBarycentric.y;
+        //intersect.color = __ldg(&verts->colors[tri->aInd]) * bestBarycentric.z + 
+        //                    __ldg(&verts->colors[tri->bInd]) * bestBarycentric.x + 
+        //                    __ldg(&verts->colors[tri->cInd]) * bestBarycentric.y;
         intersect.normal = normalize(
                             __ldg(&verts->normals[tri->naInd]) * bestBarycentric.z + 
                             __ldg(&verts->normals[tri->nbInd]) * bestBarycentric.x + 
@@ -289,8 +423,8 @@ __device__ inline void BVHSceneIntersect_lightweight(
         {
             for (int i = node.first; i < node.primCount + node.first; i++)
             {
-                int idx = __ldg(&bvhContext.BVHindices[i]);
-                const Triangle* tri = &bvhContext.scene[idx];
+                int2 idx = __ldg(&bvhContext.BVHindices[i]);
+                const Triangle* tri = &bvhContext.scene[idx.y];
                 float4 barycentric;
                 float t;
                 bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
@@ -298,7 +432,7 @@ __device__ inline void BVHSceneIntersect_lightweight(
                 if (hitTri && (t < min_t))
                 {
                     min_t = t; // Update the closest-hit distance
-                    triID = idx;
+                    triID = idx.y;
                     bary = barycentric;
                 }
             }
@@ -349,7 +483,7 @@ __device__ inline void BVHSceneIntersect_lightweight(
 __device__ inline void BVHShadowRay(
     const Ray& r, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ verts, 
     const Triangle* __restrict__ scene, 
     const Material* __restrict__ materials, 
@@ -381,13 +515,13 @@ __device__ inline void BVHShadowRay(
         {
             for (int i = node.first; i < node.primCount + node.first; i++)
             {
-                int idx = __ldg(&BVHindices[i]);
-                const Triangle* tri = &scene[idx];
+                int2 idx = __ldg(&BVHindices[i]);
+                const Triangle* tri = &scene[idx.y];
                 float4 barycentric;
                 float t;
                 bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
 
-                if (idx == skip_tri)
+                if (idx.y == skip_tri)
                     continue;
 
                 if (hitTri && (t < max_t))
@@ -477,16 +611,16 @@ __device__ inline void BVHShadowRay(
 __device__ inline void BVHShadowRay_NoAlpha(
     const Ray& r, 
     const BVHnode* __restrict__ BVH, 
-    const int* __restrict__ BVHindices, 
+    const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ verts, 
     const Triangle* __restrict__ scene, 
-    float4& throughputScale, // Kept for interface compatibility with your caller
+    float4& throughputScale,
     float max_t
 )
 {
     int nodeStack[32];
     int stackTop = 0;
-    nodeStack[stackTop++] = 0; // Push the root node (index 0)
+    nodeStack[stackTop++] = 0;
 
     float4 invDir = make_float4(
         1.0f / r.direction.x,
@@ -499,17 +633,15 @@ __device__ inline void BVHShadowRay_NoAlpha(
 
     while (stackTop > 0)
     {
-        // Pop the next node to check
         int currentIndex = nodeStack[--stackTop];
         const BVHnode& node = BVH[currentIndex];
 
-        // 2. If it's a leaf node, check its triangles
         if (node.primCount > 0)
         {
             for (int i = node.first; i < node.primCount + node.first; i++)
             {
-                int idx = __ldg(&BVHindices[i]);
-                const Triangle* tri = &scene[idx];
+                int2 idx = __ldg(&BVHindices[i]);
+                const Triangle* tri = &scene[idx.y];
                 
                 float4 barycentric;
                 float t;
@@ -517,7 +649,6 @@ __device__ inline void BVHShadowRay_NoAlpha(
 
                 if (hitTri && (t < max_t))
                 {
-                    // FAST EARLY OUT: Any geometry hit strictly between 0 and max_t is full occlusion.
                     throughputScale = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
                     return; 
                 }
@@ -528,17 +659,13 @@ __device__ inline void BVHShadowRay_NoAlpha(
             float tminL, tmaxL, tminR, tmaxR;
             bool hitLeft = false, hitRight = false;
 
-            // Test left child if it exists
             if (node.left >= 0)
                 hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
 
-            // Test right child if it exists
             if (node.right >= 0)
                 hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
 
-            // Because this is anyHit, sorting by distance isn't strictly mathematically required
-            // for correctness, but pushing the closer node first *usually* hits geometry faster, 
-            // triggering the early-out sooner.
+
             if (hitLeft && hitRight)
             {
                 if (tminL < tminR)
@@ -580,9 +707,9 @@ __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle
         {
             min_t = t; // Update the closest-hit distance
             intersect.point = r.at(t);
-            intersect.color = verts->colors[tri->aInd] * barycentric.z + 
-                                verts->colors[tri->bInd] * barycentric.x + 
-                                verts->colors[tri->cInd] * barycentric.y;
+            //intersect.color = verts->colors[tri->aInd] * barycentric.z + 
+            //                    verts->colors[tri->bInd] * barycentric.x + 
+            //                    verts->colors[tri->cInd] * barycentric.y;
             intersect.normal = normalize(verts->normals[tri->naInd] * barycentric.z + 
                                 verts->normals[tri->nbInd] * barycentric.x + 
                                 verts->normals[tri->ncInd] * barycentric.y);
@@ -674,8 +801,8 @@ __device__ inline float4 sampleSky(float4 direction)
 
     // Reduced multipliers to prevent extreme clipping
     // Horizon is usually brighter than the zenith, but 3.0 is very high
-    float4 c_horizon = 0.5f * f4(0.8f, 0.3f, 0.1f);
-    float4 c_zenith  = 0.4f * f4(0.3f, 0.2f, 0.9f);
+    float4 c_horizon = 4.5f * f4(0.8f, 0.3f, 0.1f);
+    float4 c_zenith  = f4(0.3f, 0.2f, 0.9f);
 
     float4 sky_color = (1.0f - t) * c_horizon + t * c_zenith;
 

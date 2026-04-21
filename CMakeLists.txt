@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(NovumRender LANGUAGES CXX CUDA)
+project(NovumRender LANGUAGES C CXX CUDA)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -20,11 +20,17 @@ add_executable(NovumRender
     src/imageUtil.cu
     src/rng.cu
     src/fastIntegrators.cu
+    src/volumeRendering.cu
+    src/tinyexr_impl.cpp
+    thirdparty/tinyexr/miniz.c
 )
 
 target_include_directories(NovumRender PRIVATE include)
 
 target_include_directories(NovumRender PRIVATE thirdparty)
+
+target_include_directories(NovumRender PRIVATE thirdparty/tinyexr)
+
 
 target_compile_definitions(NovumRender PRIVATE 
     ROOT_DIR=\"${CMAKE_SOURCE_DIR}\"

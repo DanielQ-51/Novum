@@ -4,6 +4,7 @@
 #include <iostream>
 #include "imageUtil.cuh"
 #include "wavefrontHelper.cuh"
+#include "sceneContexts.cuh"
 #include <cub/cub.cuh>
 
 __device__ __constant__ bool SAMPLE_ENVIRONMENT = false;
@@ -426,37 +427,44 @@ __global__ void shade(
     bool backface;
     float4 normal;
     float4 shadingPos;
+
+    RNGState localState = load_rng(pixelIdx, frameNum, depth, rngStates);
     // handle current interactiion
     {
         float u, v;
         float t;
         hits.getAllInfo(readIndex, t, u, v, triID);
-        uv.x = u;
-        uv.y = v;
 
         if (t >= 1e30f) // indicates a miss
         {
             predicate[idx] = 0;
-            float4 contribution = sampleSky(incomingDir) * throughput;
+            //float4 contribution = sampleSky(incomingDir) * throughput;
 
-            // TODO, implement proper importance sampling of the environment map
-            // current, we are not doing NEE on the environment map, which is mathematically correct but not optimal
+            float4 contribution = shadeContext.lightSampler.envMap.sampleDir(incomingDir) * throughput;
 
-            accumulateOutput(output, contribution, pixelIdx);
+            float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
+                lastPDF, // primary strategy
+                shadeContext.lightSampler.evaluateEnvPdf(incomingDir) // alternate strategy
+            );
+
+            accumulateOutput(output, contribution * misWeight, pixelIdx);
             shadowRays.setIgnore(idx);
             return;
         }
 
         // triangle is heavy on registers so we dont keep it around
-        Triangle tri = shadeContext.scene[triID];
+        const Triangle tri = shadeContext.scene[triID];
         materialID = tri.materialID;
+
+        uv = __ldg(&shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) + 
+            __ldg(&shadeContext.vertices->uvs[tri.uvbInd]) * u + 
+            __ldg(&shadeContext.vertices->uvs[tri.uvcInd]) * v;
 
         float4 apos = __ldg(&shadeContext.vertices->positions[tri.aInd]);
         float4 bpos = __ldg(&shadeContext.vertices->positions[tri.bInd]);
         float4 cpos = __ldg(&shadeContext.vertices->positions[tri.cInd]);
 
         shadingPos = (1.0f - u - v) * apos + u * bpos + v * cpos;
-        float area = 0.5f * length(cross3(bpos - apos, cpos - apos));
 
         float4 a_n = __ldg(&shadeContext.vertices->normals[tri.naInd]);
         float4 b_n = __ldg(&shadeContext.vertices->normals[tri.nbInd]);
@@ -472,53 +480,39 @@ __global__ void shade(
 
         float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
             lastPDF, // primary strategy
-            (t * t / (area * shadeContext.lightNum * fabsf(incomingDir.z))) // alternate strategy
+            (t * t * shadeContext.lightSampler.evaluateMeshPdf(tri) / (fabsf(incomingDir.z))) // alternate strategy
         );
 
         accumulateOutput(output, contribution * misWeight, pixelIdx);
     }
 
     bool currDelta = shadeContext.materials[materialID].isSpecular;
-    RNGState localState = load_rng(pixelIdx, frameNum, depth, rngStates);
-    int n;
     // NEE
     if (!currDelta) {
-        int index = min(static_cast<int>(rand(&localState) * shadeContext.lightNum), shadeContext.lightNum - 1);
-        float4 lightPos;
         float4 lightNormal;
         float4 emission;
-        float area;
+        float4 shadingPosToLightNormalized;
+        float t_max;
+        float pdf;
 
-        {
-            float u = sqrtf(rand(&localState));
-            float v = rand(&localState);
+        bool sampledEnv = shadeContext.lightSampler.sample(
+            rand(&localState), rand4(&localState), 
+            shadingPos, 
+            shadeContext.vertices, 
+            emission,
+            shadingPosToLightNormalized, 
+            lightNormal, 
+            t_max, 
+            pdf
+        );
 
-            Triangle l = shadeContext.lights[index];
-            float4 apos = __ldg(&shadeContext.vertices->positions[l.aInd]);
-            float4 bpos = __ldg(&shadeContext.vertices->positions[l.bInd]);
-            float4 cpos = __ldg(&shadeContext.vertices->positions[l.cInd]);
 
-            lightPos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
-            area = 0.5f * length(cross3(bpos - apos, cpos - apos));
-
-            float4 a_n = __ldg(&shadeContext.vertices->normals[l.naInd]);
-            float4 b_n = __ldg(&shadeContext.vertices->normals[l.nbInd]);
-            float4 c_n = __ldg(&shadeContext.vertices->normals[l.ncInd]);
-
-            //n = BurnCycles(1000);
-            
-            lightNormal = normalize((1.0f - u) * a_n + u * (1.0f - v) * b_n + u * v * c_n);
-            
-            emission = l.emission;
-        }
-
-        float4 shadingPosToLight = lightPos - shadingPos;
         float4 shadingPosToLightLocal;
-        float4 shadingPosToLightNormalized = normalize(shadingPosToLight);
         toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
 
-        if (dot(lightNormal, -shadingPosToLightNormalized) < 0.0f ||
-            dot(normal, shadingPosToLightNormalized) < 0.0f) { // sampled light is not reachable, skip NEE
+        bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
+        bool lightBackface = (!sampledEnv) && (dot(lightNormal, -shadingPosToLightNormalized) < 0.0f);
+        if (surfaceBackface || lightBackface) {
             shadowRays.setIgnore(idx);
         } else {
             float bsdfPDF;
@@ -548,25 +542,36 @@ __global__ void shade(
                 uv
             );
 
+            float4 contribution;
+            float misWeight;
 
-            float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
-            float cosSurface = dot(normal, shadingPosToLightNormalized);
+            if (sampledEnv) {
+                float cosSurface = dot(normal, shadingPosToLightNormalized);
+                contribution = throughput * f_val * emission * cosSurface / pdf; 
+                misWeight = powerHeuristicTwoStrategy(
+                    pdf,
+                    bsdfPDF
+                );
+            } else {
+                float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
+                float cosSurface = dot(normal, shadingPosToLightNormalized);
 
-            float4 contribution = throughput * // throughput
-                f_val * emission * cosLight * // NEE contribution
-                cosSurface * area * shadeContext.lightNum / fmaxf(lengthSquared(shadingPosToLight), EPSILON3);// inverse importance sampling pdf
-            
-            float misWeight = powerHeuristicTwoStrategy(
-                fmaxf(lengthSquared(shadingPosToLight), EPSILON3) / (area * shadeContext.lightNum * cosLight), // current strategy pdf
-                bsdfPDF // alternate strategy pdf
-            );
+                contribution = throughput * // throughput
+                    f_val * emission * cosLight * // NEE contribution
+                    cosSurface / (pdf * t_max * t_max); // "pdf" here is the raw flux over total flux area pdf
+
+                misWeight = powerHeuristicTwoStrategy(
+                    (t_max * t_max) * pdf / cosLight, // convert area pdf to SA
+                    bsdfPDF // alt strat
+                );
+            }
 
             shadowRays.setShadowRay(
                 idx, 
                 shadingPos + shadingPosToLightNormalized * RAY_EPSILON, 
                 shadingPosToLightNormalized, 
-                length(shadingPosToLight) * (1.0f - EPSILON3), 
-                contribution * (misWeight + (1E-20 * n)), 
+                t_max * (1.0f - EPSILON3), 
+                contribution * (misWeight), 
                 pixelIdx
             );
         }

@@ -12,10 +12,8 @@ extern "C" {
 }
 
 extern "C" __global__ void __closesthit__gather() {
-    // 1. Grab the hardware attributes
     float2 uvs = optixGetTriangleBarycentrics();
     
-    // 2. Pack the data into the 5 payload buckets
     optixSetPayload_0(1);                                   // p0: Hit flag (1 = true)
     optixSetPayload_1(__float_as_uint(optixGetRayTmax()));  // p1: Hit distance (t)
     optixSetPayload_2(__float_as_uint(uvs.x));              // p2: Barycentric U
@@ -24,7 +22,6 @@ extern "C" __global__ void __closesthit__gather() {
 }
 
 extern "C" __global__ void __miss__gather() {
-    // If the ray misses everything, set the hit flag to 0
     optixSetPayload_0(0);
 }
 

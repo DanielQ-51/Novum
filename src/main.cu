@@ -332,6 +332,16 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     else
         camera = Camera::NotPinhole(config.camPos, w, h, config.camRot.x, config.camRot.y, config.camRot.z, config.camFov, 
             config.camApeture, config.camFocalDist);
+        
+    // temporary code for turntable
+    
+    //float angleRad = (-92.0f) * (h_PI / 180.0f);
+    //float angleRad = ((renderNumber * -0.0f) + -122.0f) * (h_PI / 180.0f);
+    //camera.cameraOrigin.x = 2.668f + 500.0f * std::sin(angleRad);
+    //camera.cameraOrigin.z = -177.961f + 500.0f * std::cos(angleRad);
+    //camera.yRot = config.camRot.y + angleRad;
+
+    camera.preCompute();
 
     Image image = Image(w, h);
     image.postProcess = config.postProcess;
@@ -404,9 +414,8 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     {
         cout << "Rendering at " << w << " by " << h << " pixels, with " << 
             sampleCount << " samples per pixel, and a maximum leaf size of " <<
-            maxLeafSize << " primitives, with a max eye depth of " << 
-            eyePathDepth << ", and a max light depth of " << 
-            lightPathDepth << ".\nIntegrating with Volumetric Rendering." <<
+            maxLeafSize << " primitives, with a max depth of " << 
+            eyePathDepth << ".\nIntegrating with Volumetric Rendering." <<
             endl << endl;
     }
 
@@ -439,8 +448,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     // Loading environment map
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_8k.exr"));
-    envManager.setRotation(55.0f);
+    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_2k.exr"));
+    //envManager.setRotation(70.0f + (float)renderNumber);
+    envManager.setRotation(130.0f);
     
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Loading Textures
@@ -624,9 +634,6 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     cudaMemcpy(temp.uvs, uvs.data(), uvs.size() * sizeof(float2), cudaMemcpyHostToDevice);
     cudaMemcpy(verts, &temp, sizeof(Vertices), cudaMemcpyHostToDevice);
 
-    vector<int> indvec(mesh.size());
-    for (int i = 0; i < mesh.size(); i++) indvec[i] = i;
-
     if (mesh.size() == 0) {
         cout << "Error: No triangles loaded." << endl;
         return 1;
@@ -639,44 +646,48 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     vector<Volume> volumes;
 
-    for (const VolConfig& c : config.volumes) {
-        float4 aabbMIN;
-        float4 aabbMAX;
-        auto density_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "density");
+    for (const VolConfig& c : config.volumes) { 
+        char buffer[1024];
+        std::string pathTemplate = ASSET_PATH("assets/vdb/nvdb/industrial/smoke_%04d.nvdb");
+        snprintf(buffer, sizeof(buffer), pathTemplate.c_str(), renderNumber);
+
+        float4 aabbMIN = f4(0.0f);
+        float4 aabbMAX = f4(0.0f);
         void* d_density_gridBuffer = nullptr;
+        void* d_temp_gridBuffer = nullptr;
 
-        if (density_handle) {
-            const nanovdb::NanoGrid<float>* desnity_hostGrid = density_handle.grid<float>();
-
+        try {
+            //auto density_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "density");
+            auto density_handle = nanovdb::io::readGrid(buffer, "density");
+            const nanovdb::NanoGrid<float>* density_hostGrid = density_handle.grid<float>();
             size_t gridSizeInBytes = density_handle.size();
 
             cudaMalloc(&d_density_gridBuffer, gridSizeInBytes);
-            cudaMemcpy(d_density_gridBuffer, desnity_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_density_gridBuffer, density_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
 
             const nanovdb::GridMetaData* currentGrid = density_handle.gridMetaData(0);
-
             auto bbox = currentGrid->worldBBox();
             auto min = bbox.min();
             auto max = bbox.max();
             
             aabbMIN = f4(min[0], min[1], min[2]);
             aabbMAX = f4(max[0], max[1], max[2]);
-        } else {
-            std::cout << "Could not read desnity grid from file: " << ASSET_PATH(c.path) << std::endl;
+            
+        } catch (const std::exception& e) {
+            std::cout << "Could not read density grid from file: " << ASSET_PATH(c.path) << "\nReason: " << e.what() << std::endl;
+            continue;
         }
         
-        auto temp_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "temperature");
-        void* d_temp_gridBuffer = nullptr;
-
-        if (temp_handle) {
+        try {
+            auto temp_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "temperature");
             const nanovdb::NanoGrid<float>* temp_hostGrid = temp_handle.grid<float>();
-
             size_t gridSizeInBytes = temp_handle.size();
 
             cudaMalloc(&d_temp_gridBuffer, gridSizeInBytes);
             cudaMemcpy(d_temp_gridBuffer, temp_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
-        } else {
-            std::cout << "Could not read temperature grid from file: " << ASSET_PATH(c.path) << std::endl;
+            
+        } catch (const std::exception& e) {
+            std::cout << "Could not read temperature grid from file: " << ASSET_PATH(c.path) << "\nReason: " << e.what() << std::endl;
         }
 
         volumes.push_back(
@@ -690,6 +701,13 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
                 c.albedo
             )
         );
+
+        cout << "Added volume at" << c.path <<" with " << ((d_density_gridBuffer) ? ("density") : ("")) 
+             << ((d_temp_gridBuffer) ? (" and temperature") : "") << " grid(s), with" 
+             << "\nanisotropy " << c.anisotropy
+             << "\nalbedo (" << c.albedo.x << ", " << c.albedo.y << ", " << c.albedo.z << ")"
+             << "\ndensity scale " << c.densityScale
+             << "\n\n";
     }
 
     auto afterRead = std::chrono::high_resolution_clock::now();
@@ -710,11 +728,21 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     computeInfoForBVH(vertices, mesh, volumes, centroids, minboxes, maxboxes, primType, originalIndices);
 
+    int volCount = 0;
+    for(int type : primType) {
+        if(type == TYPE_VOLUME) volCount++;
+    }
+
+    std::cout << "Volumes found in primType: " << volCount << std::endl;
+
     cout << "BVH data computed" << endl;
+
+    vector<int> indvec(mesh.size() + volumes.size());
+    for (int i = 0; i < indvec.size(); i++) indvec[i] = i;
 
     int failcount = 0;
     int backupCt = 0;
-    int startNode = buildBVH(bvhvec, indvec, centroids, minboxes, maxboxes, 0, mesh.size(), maxLeafSize, failcount, backupCt);
+    int startNode = buildBVH(bvhvec, indvec, centroids, minboxes, maxboxes, 0, indvec.size(), maxLeafSize, failcount, backupCt);
 
     vector<int2> gpu_indirection(indvec.size());
     for (int i = 0; i < indvec.size(); i++) {
@@ -731,7 +759,12 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     cout << "BVH built. Scene radius is " << sceneRadius << "." << endl;
     cout << "Largest leaf is size: " << failcount << "." << " Backup was called "<< backupCt << " times." << endl;
     //printBVH(bvhvec, indvec);
+
     printBVHSummary(bvhvec);
+
+    for (int2 index : gpu_indirection) {
+        if (index.x == TYPE_VOLUME) printf("volume found!!\n");
+    }
 
     auto afterBVH = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed_seconds_afterBVH = afterBVH - afterRead;
@@ -1154,8 +1187,10 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         sc.vertNum = points.size();
         sc.materials = mats_d;
         sc.textures = textures_d;
+        sc.volumes = d_volumes;
+        sc.lightSampler = lightManager.getSampler();
         
-
+        lightManager.getSampler().printDebugState();
         launch_simple_volume(
             camera,
             sc,
@@ -1231,7 +1266,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     delete[] host_colors;
     delete[] host_overlay;
 
-    std::string filename = "renders/wateranim4/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
+    std::string filename = std::string(ROOT_DIR) + "/renders/glove/" + config.name + "" + std::to_string(renderNumber) + ".bmp";
     image.saveImageBMP(filename);
     filename = "render.bmp";
     image.saveImageBMP(filename);
@@ -1327,17 +1362,16 @@ void printNvdbMetadata(const std::string& filePath) {
 
 int main ()
 {
-    printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/smoke2.nvdb"));
-    string configName = ASSET_PATH("configs/config2.rendertron");
-    //for (int i = 0; i <= 150; i++)
-    //    initRender(configName, i);
+    printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/industrial/smoke_0000.nvdb"));
+    string configName = ASSET_PATH("configs/config.rendertron");
 
-    initRender(configName, 0); 
-    return;
-    for (int i = 250; i <= 250; ++i) {
+    //initRender(configName, 0); 
+    //return;
+    for (int i = 0; i < 250; ++i) {
         char buf[128];
         snprintf(buf, sizeof(buf), "assets/scenedata/watersim/tenbillionobj/wateranim%04d.obj", i);
-        initRender(configName, i, buf); 
+        //initRender(configName, i, buf); 
+        initRender(configName, i);
     }
 
     cout << "All Renders Finished" << endl;

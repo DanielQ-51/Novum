@@ -52,41 +52,6 @@ struct __align__(64) BVHnode
         : aabbMIN(min), aabbMAX(max), left(l), right(r), first(f), primCount(ct) {} 
 };
 
-inline void printBVH(const std::vector<BVHnode>& bvh, const std::vector<int>& indices, int level = 0, int nodeIdx = 0)
-{
-    if (nodeIdx >= bvh.size()) return;
-
-    const BVHnode& node = bvh[nodeIdx];
-
-    // Indent based on tree level
-    for (int i = 0; i < level; i++) std::cout << "  ";
-
-    std::cout << "Node " << nodeIdx 
-              << " | first=" << node.first 
-              << " primCount=" << node.primCount 
-              << " left=" << node.left 
-              << " right=" << node.right 
-              << "\n";
-
-    for (int i = 0; i < level; i++) std::cout << "  ";
-    std::cout << "  AABB min=(" << node.aabbMIN.x << "," << node.aabbMIN.y << "," << node.aabbMIN.z << ")"
-              << " max=(" << node.aabbMAX.x << "," << node.aabbMAX.y << "," << node.aabbMAX.z << ")\n";
-
-    // If leaf node, print its primitives
-    if (node.primCount > 0)
-    {
-        for (int i = 0; i < level; i++) std::cout << "  ";
-        std::cout << "  Primitives: ";
-        for (int i = node.first; i < node.first + node.primCount; i++)
-            std::cout << indices[i] << " ";
-        std::cout << "\n";
-    }
-
-    // Recurse into children
-    if (node.left != -1) printBVH(bvh, indices, level + 1, node.left);
-    if (node.right != -1) printBVH(bvh, indices, level + 1, node.right);
-}
-
 inline void traverseBVH(const std::vector<BVHnode>& bvh, int nodeIdx, int level,
                        int& totalNodes, 
                        std::vector<int>& leafDepths, 
@@ -175,6 +140,16 @@ inline void printBVHSummary(const std::vector<BVHnode>& bvh)
     
     std::cout << "\n===============================================\n\n";
 }
+
+struct VolumeNodeData {
+    int nodeIndex;
+    int depth;
+    int leafSize;
+    int originalVolumeID;
+    float4 aabbMIN;
+    float4 aabbMAX;
+};
+
 
 struct Vertices
 {
@@ -446,6 +421,13 @@ struct Camera
 
         return true;
     }
+
+    __host__ __device__ __forceinline__ inline float getInitialRayFootprint() const
+    {
+        return atanf(fovScale / (float)h);
+    }
+
+
 };
 
 __device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float4 p1, float4 p2, float4 color)
@@ -648,7 +630,8 @@ enum IntegratorChoice {
     VCM = 3,
     SPPM = 4,
     WAVEFRONT_UNIDIRECTIONAL = 5,
-    VOLUME_SIMPLE = 6
+    VOLUME_SIMPLE = 6,
+    OPTIX_NORMAL = 7
 };
 
 enum TransportMode {
@@ -665,6 +648,7 @@ __host__ inline int matchIntegrator(std::string name)
     else if (name == "SPPM") return 4;
     else if (name == "UNIDIRFAST") return 5;
     else if (name == "SIMPLEVOL") return 6;
+    else if (name == "OPTIXNORMAL") return 7;
 
     std::cerr << "Invalid Integrator Choice!\n";
     return -1;

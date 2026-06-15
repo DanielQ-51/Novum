@@ -1,4 +1,5 @@
 build/
+optixBranch/build
 .vs/
 out/
 

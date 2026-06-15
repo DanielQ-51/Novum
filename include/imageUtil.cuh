@@ -41,3 +41,9 @@ __global__ void cleanAndFormatImage(
     int w, int h, 
     int currentSampleCount
 );
+
+__global__ void cleanAndFormatImageNoOverlay(
+    float4* accumulationBuffer, // Your raw 'colors' buffer (Sum of samples)
+    float4* outputBuffer,       // A temporary buffer to store the result for saving
+    int w, int h, 
+    int currentSampleCount);

@@ -24,6 +24,8 @@ __device__ __constant__ int h;
 #endif
 
 
+
+
 __device__ bool approxEq(float a, float b, float tol = 1e-3f) {
     return fabsf(a - b) <= tol;
 }
@@ -383,7 +385,7 @@ __global__ void shade(
     int frameNum,
     int maxDepth,
 
-    unsigned int* shadowRayIndex,
+    unsigned int* shadowRayIndex, // ?
     
     float4* output,
 
@@ -452,8 +454,8 @@ __global__ void shade(
             return;
         }
 
-        // triangle is heavy on registers so we dont keep it around
-        const Triangle tri = shadeContext.scene[triID];
+        // triangle is heavy on registers so we dont keep it around too long
+        const Triangle& tri = shadeContext.scene[triID];
         materialID = tri.materialID;
 
         uv = __ldg(&shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) + 
@@ -905,7 +907,7 @@ __host__ void launch_wavefrontUnidirectional(
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    int saveIntervalSamples = 100;
+    int saveIntervalSamples = 2000;
     Image image = Image(h_w, h_h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(h_w * h_h);

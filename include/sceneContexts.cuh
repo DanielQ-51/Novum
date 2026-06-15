@@ -5,14 +5,14 @@
 
 struct SceneContext
 {
-    Material* materials;
-    float4* textures;
-    BVHnode* BVH;
-    int2* BVHindices;
-    Vertices* vertices; 
-    Triangle* scene; 
-    Triangle* lights;
-    Volume* volumes;
+    const Material* __restrict__ materials;
+    const float4* __restrict__ textures;
+    const BVHnode* __restrict__ BVH;
+    const int2* __restrict__ BVHindices;
+    const Vertices* __restrict__ vertices; 
+    const Triangle* __restrict__ scene; 
+    const Triangle* __restrict__ lights;
+    const Volume* __restrict__ volumes;
     LightSampler lightSampler;
     int vertNum; 
     int triNum;
@@ -21,21 +21,21 @@ struct SceneContext
 
 struct BVHContext
 {
-    BVHnode* BVH;
-    int2* BVHindices;
-    Vertices* vertices;
-    Triangle* scene;
-    Material* materials;
-    Volume* volumes;
+    const BVHnode* __restrict__ BVH;
+    const int2* __restrict__ BVHindices;
+    const Vertices* __restrict__ vertices;
+    const Triangle* __restrict__ scene;
+    const Material* __restrict__ materials;
+    const Volume* __restrict__ volumes;
 };
 
 struct ShadeContext
 {
-    Material* materials;
-    float4* textures;
-    Triangle* lights;
-    Triangle* scene;
-    Vertices* vertices; 
+    const Material* __restrict__ materials;
+    const float4* __restrict__ textures;
+    const Triangle* __restrict__ lights;
+    const Triangle* __restrict__ scene;
+    const Vertices* __restrict__ vertices; 
     LightSampler lightSampler;
     int lightNum;
 };

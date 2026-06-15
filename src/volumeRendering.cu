@@ -1,6 +1,7 @@
 #include "integratorUtilities.cuh"
 #include "reflectors.cuh"
 #include "volumeRendering.cuh"
+#include "volumeUtils.cuh"
 #include <chrono>
 #include <iostream>
 #include "imageUtil.cuh"
@@ -82,11 +83,30 @@ __device__ nanovdb::Vec3f sample_HG(const nanovdb::Vec3f& incoming_dir, float g,
     return world_dir;
 }
 
+__device__ inline float evaluate_HG(const float4& incoming_dir, const float4& outgoing_dir, float g) {
+    // Get the cosine of the angle between the two directions
+    float cos_theta = dot(incoming_dir, outgoing_dir);
+    
+    // Isotropic fast-path (matches the edge case in your sample_HG)
+    if (fabsf(g) < 1e-3f) {
+        return 1.0f / (4.0f * PI);
+    }
+    
+    // Anisotropic Henyey-Greenstein math
+    float g2 = g * g;
+    float denom = 1.0f + g2 - 2.0f * g * cos_theta;
+    
+    // Safety clamp to prevent NaN if denom somehow hits exactly 0
+    denom = fmaxf(denom, 1e-7f); 
+    
+    // Note: (denom * sqrtf(denom)) is computationally faster on the GPU than powf(denom, 1.5f)
+    return (1.0f / (4.0f * PI)) * (1.0f - g2) / (denom * sqrtf(denom));
+}
+
 __global__ void render_volume(
     RNGState* rngStates,
     Camera camera,
     const SceneContext sceneContext,
-    nanovdb::NanoGrid<float>* densityGrid,
     float4* __restrict__ colors,
     int maxDepth,
     int frameNum
@@ -106,22 +126,21 @@ __global__ void render_volume(
         nanovdb::Vec3f(r.direction.x, r.direction.y, r.direction.z)
     );
 
-    auto accessor = densityGrid->getAccessor();
+    auto accessor = sceneContext.volumes->density_pointer->getAccessor();
     auto sampler = nanovdb::math::createSampler<1>(accessor);
 
     float4 throughput = f4(1.0f);
     float4 pixelColor = f4();
     float density_scale = 3.0f;
-
     // --- 1. BOUNCE LOOP ---
     for (int depth = 0; depth < maxDepth; depth++) {
         localState = load_rng(pixelIdx, frameNum, depth+1, rngStates);
-        nanovdb::Ray<float> indexRay = worldRay.worldToIndexF(*densityGrid);
+        nanovdb::Ray<float> indexRay = worldRay.worldToIndexF(*sceneContext.volumes->density_pointer);
         nanovdb::math::TreeMarcher<leaf_t, nanovdb::Ray<float>, decltype(accessor)> marcher(accessor);
 
         if (!marcher.init(indexRay)) {
             nanovdb::Vec3f nv_dir = worldRay.dir();
-            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
+            pixelColor += throughput * sceneContext.lightSampler.envMap.sampleDir(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
             break;
         }
 
@@ -156,10 +175,10 @@ __global__ void render_volume(
         }
 
         if (hit_particle) {
-            throughput *= f4(0.9f, 0.9f, 0.9f);
+            throughput *= sceneContext.volumes->albedo;
 
             nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
-            nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
+            nanovdb::Vec3f world_hit_pos = sceneContext.volumes->density_pointer->indexToWorldF(index_hit_pos);
 
             nanovdb::Vec3f new_world_dir = sample_HG(worldRay.dir(), 0.6f, rand(&localState), rand(&localState));
 
@@ -167,7 +186,7 @@ __global__ void render_volume(
             
         } else {
             nanovdb::Vec3f nv_dir = worldRay.dir();
-            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
+            pixelColor += throughput * sceneContext.lightSampler.envMap.sampleDir(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
             break; // Break the depth loop
         }
     }
@@ -176,7 +195,100 @@ __global__ void render_volume(
     save_rng(pixelIdx, &localState, rngStates);
 }
 
-/*
+__device__ float estimate_volume_transmittance(
+    const Ray& worldRay, 
+    const BVHContext& bvhContext,
+    const VolumeInterval* volHits,
+    int num_volHits,
+    RNGState* localState
+) {
+    float global_transmittance = 1.0f;
+
+    // Convert custom Ray to NanoVDB Ray once
+    nanovdb::Vec3f world_origin(worldRay.origin.x, worldRay.origin.y, worldRay.origin.z);
+    nanovdb::Vec3f world_dir(worldRay.direction.x, worldRay.direction.y, worldRay.direction.z);
+    nanovdb::Ray<float> nanoWorldRay(world_origin, world_dir);
+
+    for (int v = 0; v < num_volHits; ++v) {
+        const VolumeInterval& hit = volHits[v];
+        const Volume& vol = bvhContext.volumes[hit.volume_ID];
+
+        const nanovdb::NanoGrid<float>* densityGrid = vol.density_pointer;
+        float densityScale = vol.densityScale; 
+
+        auto accessor = densityGrid->getAccessor();
+        auto sampler = nanovdb::math::createSampler<1>(accessor);
+
+        // 1. Transform ray to index space
+        nanovdb::Ray<float> indexRay = nanoWorldRay.worldToIndexF(*densityGrid);
+        nanovdb::Vec3f index_origin = indexRay.start();
+
+        // Calculate specific start and end points in INDEX space
+        nanovdb::Vec3f index_start_pos = densityGrid->worldToIndexF(world_origin + world_dir * hit.t_min);
+        nanovdb::Vec3f index_end_pos = densityGrid->worldToIndexF(world_origin + world_dir * hit.t_max);
+        
+        float index_start_t = (index_start_pos - index_origin).length();
+        float index_end_t = (index_end_pos - index_origin).length();
+
+        index_start_t = fmaxf(index_start_t, 1e-5f);
+        index_end_t = fmaxf(index_end_t, index_start_t + 1e-5f); // Ensure t1 is strictly > t0
+
+        // Apply tight bounds directly to the index ray using the correct API
+        indexRay.setTimes(index_start_t, index_end_t);
+
+        // 2. Initialize the TreeMarcher using leaf_t
+        nanovdb::math::TreeMarcher<leaf_t, nanovdb::Ray<float>, decltype(accessor)> marcher(accessor);
+
+        // If the shadow segment misses the active volume entirely, skip to the next volume
+        if (!marcher.init(indexRay)) {
+            continue; 
+        }
+
+        const leaf_t* leaf = nullptr;
+        float t0, t1;
+
+        // 3. March through the active nodes
+        while (marcher.step(&leaf, t0, t1)) {
+            
+            // Clamp the node bounds to our specific intersection interval
+            float node_start_t = fmaxf(t0, index_start_t);
+            float node_end_t = fminf(t1, index_end_t);
+
+            if (node_start_t >= node_end_t) continue;
+
+            float local_majorant = leaf->maximum() * densityScale;
+            if (local_majorant <= 0.0f) continue; // Empty space
+
+            float t_current = node_start_t;
+
+            // 4. Ratio Tracking Loop
+            while (true) {
+                float step = -log(rand(localState)) / local_majorant;
+                t_current += step;
+
+                if (t_current >= node_end_t) break; 
+
+                float true_density = sampler(indexRay(t_current)) * densityScale;
+                float prob_null_collision = 1.0f - (true_density / local_majorant);
+                
+                global_transmittance *= prob_null_collision;
+
+                // 5. Russian Roulette
+                if (global_transmittance < 0.1f) {
+                    float termination_prob = fmaxf(0.05f, 1.0f - global_transmittance);
+                    if (rand(localState) < termination_prob) {
+                        return 0.0f; // Ray was absorbed
+                    }
+                    global_transmittance /= (1.0f - termination_prob);
+                }
+            }
+        }
+    }
+
+    return global_transmittance;
+}
+
+
 __global__ void render_volume_surface_integrated(
     RNGState* rngStates,
     Camera camera,
@@ -198,94 +310,426 @@ __global__ void render_volume_surface_integrated(
 
     float4 throughput = f4(1.0f);
     float4 pixelColor = f4();
+
+    float lastPDF = -1.0f;
+    bool prevDelta = true;
     
+    // upper level loop, that runs once per bvh query
     for (int depth = 0; depth < maxDepth; depth++) {
-{
-        localState = load_rng(pixelIdx, frameNum, depth+1, rngStates);
 
         float4 bary;
         float min_t_surface;
         float min_t_volume;
         int primID_surface;
         int primID_volume;
-        BVHSceneIntersect_volume(r, bvhContext, bary, min_t_surface, min_t_volume, primID_surface, primID_volume);
+        BVHSceneIntersect_volume(r, bvhContext, bary, min_t_surface, min_t_volume, primID_volume, primID_surface);
 
-        if (primID_surface == -1 && primID_volume == -1) { // skybox hit
+        bool hit_particle = false;
+        bool hit_surface = false;
 
-        } else if (min_t_surface < min_t_volume) { // surface only hit
-            
-        } else { // volume first hit
+        // case 1, a real surface is interseceted before any volume
+        if (min_t_surface < min_t_volume && primID_surface != -1) {
+            hit_surface = true;
+        // volume aabb hit before any surface (internally handles whether its actually a surface or volume hit)
+        } else if (min_t_surface > min_t_volume && primID_volume != -1) {
             nanovdb::NanoGrid<float>* densityGrid = sceneContext.volumes[primID_volume].density_pointer;
 
             auto accessor = densityGrid->getAccessor();
             auto sampler = nanovdb::math::createSampler<1>(accessor);
 
+            nanovdb::Ray<float> worldRay = toNanoVDB(r);
 
+            nanovdb::Ray<float> indexRay = worldRay.worldToIndexF(*densityGrid);
+
+            // the t val of the surface intersection, in index space
+            float index_t_surface = 1e30f;
+            if (primID_surface != -1) {
+                nanovdb::Vec3f world_surf_pos = worldRay(min_t_surface);
+                nanovdb::Vec3f index_surf_pos = densityGrid->worldToIndexF(world_surf_pos);
+                index_t_surface = (index_surf_pos - indexRay.start()).length() / indexRay.dir().length();
+            }
+
+            nanovdb::math::TreeMarcher<leaf_t, nanovdb::Ray<float>, decltype(accessor)> marcher(accessor);
+
+            if (marcher.init(indexRay)) {
+                const leaf_t* leaf = nullptr;
+                float t0, t1;
+                
+                float t_hit = 0.0f;
+
+                // this one steps through the voxel grid voxel by voxel
+                // Double check: This is a very pure, no importance sampling loop,
+                // its purpose is soley to break down the volume into more specfic discrete majorants,
+                // for the inner delta tracking loop to figure out
+                while (marcher.step(&leaf, t0, t1)) {
+                    if (t0 >= index_t_surface) {
+                        hit_surface = true;
+                        break;
+                    }
+
+                    // not neccesary?
+                    float node_exit_t = fminf(t1, index_t_surface);
+
+                    float local_majorant = leaf->maximum() * sceneContext.volumes[primID_volume].densityScale;
+                    if (local_majorant <= 0.0f) continue;
+
+                    float t_current = t0;
+
+                    // this one steps through the voxel itself, using the majorant sampling to determine whether to stop or continue
+                    while (true) {
+                        float step = -log(rand(&localState)) / local_majorant;
+                        t_current += step;
+
+                        if (t_current >= index_t_surface) {
+                            hit_surface = true;
+                            break;
+                        }
+
+                        if (t_current >= t1) break; // Exited the node
+
+                        float true_density = sampler(indexRay(t_current)) * sceneContext.volumes[primID_volume].densityScale;
+
+                        if (rand(&localState) < (true_density / local_majorant)) {
+                            hit_particle = true;
+                            t_hit = t_current; // Save the exact hit distance
+                            break;
+                        }
+                    }
+                    
+                    if (hit_particle) break; 
+                }
+
+/** hit_particle and hit_Surface cannot BOTH be true.
+ * 
+ * If hit_particle: apply heyney greenstein and perform volume NEE 
+ *  (with f_val calculaed using modified formula to account for the lack of a bsdf)
+ * 
+ * If hit_surface: apply bsdf and also perform volume NEE
+ * 
+ * If neither: sample sky.
+ */
+                if (hit_particle) {
+
+                    float4 lightNormal;
+                    float4 emission;
+                    float4 shadingPosToLightNormalized;
+                    float4 shadingPos;
+                    float t_max;
+                    float pdf;
+                    {
+                        nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
+                        nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
+                        shadingPos = toNovum(world_hit_pos);
+                    }
+
+                    bool sampledEnv = sceneContext.lightSampler.sample(
+                        rand(&localState), rand4(&localState), 
+                        shadingPos, 
+                        sceneContext.vertices, 
+                        emission,
+                        shadingPosToLightNormalized, 
+                        lightNormal, 
+                        t_max, 
+                        pdf
+                    );
+
+                    bool lightBackface = (!sampledEnv) && (dot(lightNormal, -shadingPosToLightNormalized) < 0.0f);
+
+                    if (!lightBackface) {
+                        VolumeInterval volHits[2];
+                        int num_volHits = 0;
+                        float4 throughputScale = f4(1.0f);
+
+                        if (!BVHShadow_volume(
+                            Ray(shadingPos, shadingPosToLightNormalized),
+                            bvhContext,
+                            t_max,
+                            volHits,
+                            2,
+                            num_volHits)
+                        ) {
+                            if (num_volHits > 0) {
+                                throughputScale *= estimate_volume_transmittance(
+                                    Ray(shadingPos, shadingPosToLightNormalized),
+                                    bvhContext, 
+                                    volHits,
+                                    num_volHits,
+                                    &localState
+                                );
+                            }
+                        } else {
+                            throughputScale = f4(0.0f);
+                        }
+
+                        if (lengthSquared(throughputScale) > EPSILON) {
+                            float phaseval = evaluate_HG(
+                                r.direction, 
+                                shadingPosToLightNormalized, 
+                                sceneContext.volumes[primID_volume].anisotropy
+                            );
+
+                            float phasepdf = phaseval;
+
+                            float4 contribution;
+                            float misWeight;
+
+                            if (sampledEnv) {
+                                contribution = throughput * phaseval * emission * throughputScale / pdf; 
+                                
+                                misWeight = powerHeuristicTwoStrategy(
+                                    pdf,        // Env map PDF is already in Solid Angle
+                                    phasepdf   // Alternate strategy: Phase function PDF
+                                );
+                                
+                            } else {                      
+                                float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
+                                
+                                if (cosLight > 0.0f) {
+                                    contribution = throughput * phaseval * emission * cosLight * throughputScale / 
+                                        (pdf * t_max * t_max); 
+
+                                    misWeight = powerHeuristicTwoStrategy(
+                                        (t_max * t_max) * pdf / cosLight, // Convert area pdf to Solid Angle
+                                        phasepdf                         // Alternate strategy: Phase function PDF
+                                    );
+                                } else {
+                                    contribution = f4(0.0f);
+                                    misWeight = 0.0f;
+                                }
+                                
+                            }
+                            // VOLUME NEE from volume hit
+                            pixelColor += fireflyClamp(contribution * misWeight);
+                        }
+                    }
+                    
+
+                    nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
+                    nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
+
+                    nanovdb::Vec3f new_world_dir = 
+                        sample_HG(worldRay.dir(), 
+                                    sceneContext.volumes[primID_volume].anisotropy, 
+                                    rand(&localState), 
+                                    rand(&localState)
+                        );
+
+                    nanovdb::Vec3f offset_pos = world_hit_pos + new_world_dir * RAY_EPSILON;
+                    worldRay = nanovdb::Ray<float>(offset_pos, new_world_dir);
+                    r = toNovumRay(worldRay);
+
+                    lastPDF = evaluate_HG(toNovum(worldRay.dir()), toNovum(new_world_dir), sceneContext.volumes[primID_volume].anisotropy);
+                    prevDelta = false;
+
+                    throughput *= sceneContext.volumes[primID_volume].albedo;
+                } else if (primID_surface != -1) {
+                    hit_surface = true;
+                }
+            }
         }
-}
 
-        auto accessor = densityGrid->getAccessor();
-        auto sampler = nanovdb::math::createSampler<1>(accessor);
 
-        nanovdb::Ray<float> indexRay = worldRay.worldToIndexF(*densityGrid);
-        nanovdb::math::TreeMarcher<leaf_t, nanovdb::Ray<float>, decltype(accessor)> marcher(accessor);
+        if (hit_surface) {
+            const Triangle& tri = sceneContext.scene[primID_surface];
+            int materialID;
+            float2 uv;
+            bool backface;
+            float4 normal;
+            float4 shadingPos;
 
-        if (!marcher.init(indexRay)) {
-            nanovdb::Vec3f nv_dir = worldRay.dir();
-            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
-            break;
-        }
+            {
+                materialID = tri.materialID;
 
-        const leaf_t* leaf = nullptr;
-        float t0, t1;
-        
-        bool hit_particle = false;
-        float t_hit = 0.0f;
+                uv = __ldg(&sceneContext.vertices->uvs[tri.uvaInd]) * (1.0f - bary.x - bary.y) + 
+                    __ldg(&sceneContext.vertices->uvs[tri.uvbInd]) * bary.x + 
+                    __ldg(&sceneContext.vertices->uvs[tri.uvcInd]) * bary.y;
 
-        while (marcher.step(&leaf, t0, t1)) {
-            float local_majorant = leaf->maximum() * density_scale;
-            if (local_majorant <= 0.0f) continue;
+                float4 apos = __ldg(&sceneContext.vertices->positions[tri.aInd]);
+                float4 bpos = __ldg(&sceneContext.vertices->positions[tri.bInd]);
+                float4 cpos = __ldg(&sceneContext.vertices->positions[tri.cInd]);
 
-            float t_current = t0;
+                shadingPos = (1.0f - bary.x - bary.y) * apos + bary.x * bpos + bary.y * cpos;
 
-            while (true) {
-                float step = -log(rand(&localState)) / local_majorant;
-                t_current += step;
+                float4 a_n = __ldg(&sceneContext.vertices->normals[tri.naInd]);
+                float4 b_n = __ldg(&sceneContext.vertices->normals[tri.nbInd]);
+                float4 c_n = __ldg(&sceneContext.vertices->normals[tri.ncInd]);
+                
+                normal = (1.0f - bary.x - bary.y) * a_n + bary.x * b_n + bary.y * c_n;
+                backface = dot(normal, r.direction) > 0.0f;
+                normal = backface ? -normal : normal;
+            }
 
-                if (t_current >= t1) break; // Exited the node
+            float4 incomingDir;
+            toLocal(r.direction, normal, incomingDir);
+            
+            
+            if (!sceneContext.materials[materialID].isSpecular) {
+                float4 lightNormal;
+                float4 emission;
+                float4 shadingPosToLightNormalized;
+                float t_max;
+                float pdf;
 
-                float true_density = sampler(indexRay(t_current)) * density_scale;
+                bool sampledEnv = sceneContext.lightSampler.sample(
+                    rand(&localState), rand4(&localState), 
+                    shadingPos, 
+                    sceneContext.vertices, 
+                    emission,
+                    shadingPosToLightNormalized, 
+                    lightNormal, 
+                    t_max, 
+                    pdf
+                );
 
-                if (rand(&localState) < (true_density / local_majorant)) {
-                    hit_particle = true;
-                    t_hit = t_current; // Save the exact hit distance
-                    break;
+                float4 shadingPosToLightLocal;
+                toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
+
+                bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
+                bool lightBackface = (!sampledEnv) && (dot(lightNormal, -shadingPosToLightNormalized) < 0.0f);
+
+                if (!surfaceBackface && !lightBackface) {
+                    VolumeInterval volHits[2];
+                    int num_volHits = 0;
+                    float4 throughputScale = f4(1.0f);
+
+                    if (!BVHShadow_volume(
+                        Ray(shadingPos + normal * RAY_EPSILON, shadingPosToLightNormalized),
+                        bvhContext,
+                        t_max,
+                        volHits,
+                        2,
+                        num_volHits)
+                    ) {
+                        if (num_volHits > 0) {
+                            throughputScale *= estimate_volume_transmittance(
+                                Ray(shadingPos, shadingPosToLightNormalized),
+                                bvhContext, 
+                                volHits,
+                                num_volHits,
+                                &localState
+                            );
+                        }
+                    } else {
+                        throughputScale = f4(0.0f);
+                    }
+
+
+                    if (lengthSquared(throughputScale) > EPSILON) {
+                        float bsdfPDF;
+
+                        pdf_eval(
+                            sceneContext.materials, 
+                            materialID, 
+                            sceneContext.textures, 
+                            incomingDir,
+                            shadingPosToLightLocal,
+                            1.5f, // change later when medium stack integrated
+                            1.5f, // change later
+                            bsdfPDF,
+                            uv
+                        );
+
+                        float4 f_val;
+                        f_eval(
+                            sceneContext.materials, 
+                            materialID, 
+                            sceneContext.textures, 
+                            incomingDir,
+                            shadingPosToLightLocal,
+                            1.5f, // change later when medium stack integrated
+                            1.5f, // change later
+                            f_val,
+                            uv
+                        );
+
+                        float4 contribution;
+                        float misWeight;
+
+                        if (sampledEnv) {
+                            float cosSurface = dot(normal, shadingPosToLightNormalized);
+                            contribution = throughput * f_val * emission * cosSurface / pdf; 
+                            misWeight = powerHeuristicTwoStrategy(
+                                pdf,
+                                bsdfPDF
+                            );
+                        } else {
+                            float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
+                            float cosSurface = dot(normal, shadingPosToLightNormalized);
+
+                            contribution = throughput * // throughput
+                                f_val * emission * cosLight * // NEE contribution
+                                cosSurface / (pdf * t_max * t_max); // "pdf" here is the raw flux over total flux area pdf
+
+                            misWeight = powerHeuristicTwoStrategy(
+                                (t_max * t_max) * pdf / cosLight, // convert area pdf to SA
+                                bsdfPDF // alt strat
+                            );
+                        }
+
+                        // Volume NEE from a surface
+                        pixelColor += fireflyClamp(contribution * misWeight * throughputScale);
+                    }
                 }
             }
             
-            if (hit_particle) break; 
-        }
 
-        if (hit_particle) {
-            throughput *= f4(0.9f, 0.9f, 0.9f);
+            float4 implicitContribution = backface ? f4(0.0f) : tri.emission * throughput;
 
-            nanovdb::Vec3f index_hit_pos = indexRay(t_hit); // Use the saved t_hit
-            nanovdb::Vec3f world_hit_pos = densityGrid->indexToWorldF(index_hit_pos);
+            float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
+                lastPDF, // primary strategy
+                (lengthSquared(r.origin - shadingPos) * sceneContext.lightSampler.evaluateMeshPdf(tri) / (fabsf(incomingDir.z))) // alternate strategy
+            );
 
-            nanovdb::Vec3f new_world_dir = sample_HG(worldRay.dir(), 0.6f, rand(&localState), rand(&localState));
+            pixelColor += fireflyClamp(misWeight * implicitContribution);
 
-            worldRay = nanovdb::Ray<float>(world_hit_pos, new_world_dir);
+            float4 outgoing;
+            float4 f_val;
+            float pdf;
+
+            sample_f_eval(
+                localState, 
+                sceneContext.materials, 
+                materialID, 
+                sceneContext.textures, 
+                incomingDir,
+                1.5f, // change later when medium stack integrated
+                1.5f, // change later
+                backface,
+                outgoing,
+                f_val,
+                pdf,
+                uv,
+                TRANSPORTMODE_RADIANCE
+            );
+
+            if (pdf < EPSILON) { break; }
             
-        } else {
-            nanovdb::Vec3f nv_dir = worldRay.dir();
-            pixelColor += throughput * sampleSky(f4(nv_dir[0], nv_dir[1], nv_dir[2]));
-            break; // Break the depth loop
+            throughput *= f_val * fabsf(outgoing.z) / pdf;
+            toWorld(outgoing, normal, outgoing);
+
+            r.direction = outgoing;
+            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+
+            lastPDF = pdf;
+            prevDelta = sceneContext.materials[materialID].isSpecular;
         }
+
+        if (!hit_particle && !hit_surface) {
+
+            float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
+                lastPDF, // primary strategy
+                sceneContext.lightSampler.evaluateEnvPdf(r.direction) // alternate strategy (already in solid angle)
+            );
+
+            // hitting env
+            pixelColor += fireflyClamp(throughput * sceneContext.lightSampler.envMap.sampleDir(r.direction) * misWeight);
+            break; // We flew out into the sky, kill the bounce loop.
+        }
+
     }
-    
     colors[pixelIdx] += pixelColor;
     save_rng(pixelIdx, &localState, rngStates);
-} */
+} 
 
 __host__ void launch_simple_volume(
     Camera camera, 
@@ -317,15 +761,6 @@ __host__ void launch_simple_volume(
     
     cudaDeviceSynchronize();
 
-    auto handle = nanovdb::io::readGrid(ASSET_PATH("assets/vdb/nvdb/smoke2.nvdb"), "density");
-    const nanovdb::NanoGrid<float>* hostGrid = handle.grid<float>();
-
-    size_t gridSizeInBytes = handle.size();
-
-    void* d_gridBuffer = nullptr;
-    cudaMalloc(&d_gridBuffer, gridSizeInBytes);
-    cudaMemcpy(d_gridBuffer, hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
-
     float4* d_finalOutput;
     float4* d_overlay;
     cudaMalloc(&d_finalOutput, h_w * h_h * sizeof(float4));
@@ -340,23 +775,24 @@ __host__ void launch_simple_volume(
             totalB / (1024.0*1024));
 
     // Image Object (CPU) & Saving logic from SPPM
-    int saveIntervalSamples = 30; // Matches SPPM logic
+    int saveIntervalSamples = 300; // Matches SPPM logic
     Image image = Image(h_w, h_h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(h_w * h_h); 
 
-    std::cout << "Running Kernels Unidirectional" << std::endl;
+    std::cout << "Running Kernels volume" << std::endl;
     
     // Start total timer
     auto renderStartTime = std::chrono::steady_clock::now();
     
     for (int currSample = 0; currSample < numSample; currSample++)
     {
-        render_volume<<<gridSize, blockSize>>>(
+        
+        render_volume_surface_integrated<<<gridSize, blockSize>>>(
             d_rngStates,
             camera,
             sceneContext,
-            reinterpret_cast<nanovdb::NanoGrid<float>*>(d_gridBuffer),
+            getBVHContext(sceneContext),
             colors,
             maxDepth,
             currSample
@@ -401,7 +837,6 @@ __host__ void launch_simple_volume(
     printf("\n"); // Move to a new line when the render loop finishes completely
     cudaDeviceSynchronize();
     cudaFree(d_rngStates);
-    cudaFree(d_gridBuffer);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {

@@ -22,6 +22,7 @@ add_executable(NovumRender
     src/fastIntegrators.cu
     src/volumeRendering.cu
     src/tinyexr_impl.cpp
+    #src/realTime.cu
     thirdparty/tinyexr/miniz.c
 )
 
@@ -35,9 +36,10 @@ target_include_directories(NovumRender PRIVATE thirdparty/tinyexr)
 target_compile_definitions(NovumRender PRIVATE 
     ROOT_DIR=\"${CMAKE_SOURCE_DIR}\"
 )
+
 target_compile_options(NovumRender PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
-    $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>
+    #$<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>
 )
 
 target_compile_options(NovumRender PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)

@@ -177,14 +177,15 @@ __device__ inline void BVHSceneIntersect_volume(
                     float tminV, tmaxV;
                     bool hitVol = aabbIntersect(r, vol.aabbMIN, vol.aabbMAX, invDir, tminV, tmaxV);
 
-                    if (hitVol)
+                    if (hitVol && tmaxV > 0.0f)
                     {
-                        // If the ray starts INSIDE the cloud, tminV is negative, so we clamp to 0.0f for the distance check
+                        // If the ray starts INSIDE the cloud, tminV is negative, clamp to 0.0f.
                         float entry_t = fmaxf(0.0f, tminV);
                         
-                        if (entry_t < min_t && tminV < min_vol_t)
+                        // CHANGE 2: Compare entry_t to min_vol_t to properly handle overlapping/inside volumes
+                        if (entry_t < min_t && entry_t < min_vol_t)
                         {
-                            min_vol_t = tminV;
+                            min_vol_t = entry_t;
                             volume_ID = idx.y;
                         }
                     }
@@ -248,6 +249,123 @@ __device__ inline void BVHSceneIntersect_volume(
             }
         }
     }
+
+    if (min_t < min_vol_t) {
+        volume_ID = -1;
+    }
+}
+
+struct VolumeInterval {
+    int volume_ID;
+    float t_min;
+    float t_max;
+};
+
+/**
+ * Lightweight shadow ray traversal. 
+ * Returns TRUE if fully occluded by an opaque surface.
+ * Otherwise, returns FALSE and populates an array of volume intersections.
+ **/
+__device__ inline bool BVHShadow_volume(
+    const Ray& r, 
+    const BVHContext& bvhContext,
+    float max_t, // Distance to the light source
+    VolumeInterval* volHits, // Fixed size array allocated by caller
+    int max_vol_hits, // Capacity of the array (e.g., 4 or 8)
+    int& num_volHits // Out: Number of volumes intersected
+)
+{
+    num_volHits = 0;
+
+    int nodeStack[32];
+    int stackTop = 0;
+    nodeStack[stackTop++] = 0;
+
+    float4 invDir = make_float4(
+        1.0f / r.direction.x,
+        1.0f / r.direction.y,
+        1.0f / r.direction.z,
+        0.0f
+    );
+
+    while (stackTop > 0)
+    {
+        int currentIndex = nodeStack[--stackTop];
+        const BVHnode& node = bvhContext.BVH[currentIndex];
+
+        if (node.primCount > 0)
+        {
+            for (int i = node.first; i < node.primCount + node.first; i++)
+            {
+                int2 idx = __ldg(&bvhContext.BVHindices[i]);
+                
+                if (idx.x == TYPE_TRIANGLE) {
+                    const Triangle* tri = &bvhContext.scene[idx.y];
+                    float4 barycentric;
+                    float t;
+                    bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
+
+                    // EARLY OUT: If we hit a surface closer than the light, we are in shadow.
+                    if (hitTri && t < max_t)
+                    {
+                        return true; 
+                    }
+                } 
+                else if (idx.x == TYPE_VOLUME) {
+                    const Volume& vol = bvhContext.volumes[idx.y];
+                    float tminV, tmaxV;
+                    bool hitVol = aabbIntersect(r, vol.aabbMIN, vol.aabbMAX, invDir, tminV, tmaxV);
+
+                    // Extract intersection segment, clamped to ray bounds [0, max_t]
+                    if (hitVol && tminV < max_t && tmaxV > 0.0f)
+                    {
+                        if (num_volHits < max_vol_hits) {
+                            volHits[num_volHits].volume_ID = idx.y;
+                            volHits[num_volHits].t_min = fmaxf(0.0f, tminV);
+                            volHits[num_volHits].t_max = fminf(max_t, tmaxV);
+                            num_volHits++;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (node.left >= 0 || node.right >= 0)
+            {
+                float tminL, tmaxL, tminR, tmaxR;
+                bool hitLeft = false, hitRight = false;
+
+                // Test left child. CULL using max_t instead of min_t
+                if (node.left >= 0) {
+                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    if (tminL > max_t) hitLeft = false; 
+                }
+
+                // Test right child. CULL using max_t instead of min_t
+                if (node.right >= 0) {
+                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    if (tminR > max_t) hitRight = false; 
+                }
+
+                if (hitLeft && hitRight)
+                {
+                    if (tminL < tminR) {
+                        nodeStack[stackTop++] = node.right; 
+                        nodeStack[stackTop++] = node.left;  
+                    } else {
+                        nodeStack[stackTop++] = node.left;  
+                        nodeStack[stackTop++] = node.right; 
+                    }
+                }
+                else if (hitLeft) { nodeStack[stackTop++] = node.left; }
+                else if (hitRight) { nodeStack[stackTop++] = node.right; }
+            }
+        }
+    }
+
+    // If we reach here, no opaque surface blocked the ray.
+    return false; 
 }
 
 /**

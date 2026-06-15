@@ -21,14 +21,34 @@
     struct StatelessRNG {
         unsigned int state;
 
-        __device__ void init(unsigned int pixel_id, unsigned int frame, unsigned int depth) {
-            unsigned int seed = pixel_id + pcg_hash(frame) + pcg_hash(depth);
-            state = pcg_hash(seed);
+        __device__ inline void init(unsigned int pixel_id, unsigned int frame, unsigned int depth) {
+            unsigned int seed = pixel_id ^ (frame * 1973u) ^ (depth * 9277u);
+            
+            state = 0u;
+            state = state * 747796405u + (seed | 1u);
+            next_float();
         }
 
-        __device__ float next_float() {
-            state = pcg_hash(state);
-            return uint_to_float(state);
+        __device__ inline void init(unsigned int seed) {
+            state = seed;
+        }
+
+        /** Gets the current state to be stored in the ReSTIR reservoir.
+         *  Must be called BEFORE any next_float() queries for this path!
+         */
+        __device__ inline unsigned int getSeed() {
+            return state;
+        }
+
+        __device__ inline float next_float() {
+            unsigned int old_state = state;
+            
+            state = old_state * 747796405u + 2891336453u; 
+            
+            unsigned int word = ((old_state >> ((old_state >> 28u) + 4u)) ^ old_state) * 277803737u;
+            unsigned int result = (word >> 22u) ^ word;
+            
+            return __uint_as_float(0x3f800000 | (result >> 9)) - 1.0f;
         }
     };
 #endif

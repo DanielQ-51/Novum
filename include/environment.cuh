@@ -197,7 +197,6 @@ public:
             for (int i = 0; i < numPixels; ++i) {
                 pixelEnergies[i] = 1.0f / numPixels; 
             }
-            totalPower = 1.0f;
         } else {
             for (int i = 0; i < numPixels; ++i) {
                 pixelEnergies[i] /= totalPower; 

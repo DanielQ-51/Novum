@@ -37,7 +37,7 @@ __device__ __constant__ float INVPI = 0.3183098f;
 
 
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 40.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 30.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
@@ -48,6 +48,16 @@ constexpr bool DO_PROGRESSIVERENDER = true;
 #ifndef DO_FIREFLY_CLAMP
 #define DO_FIREFLY_CLAMP 1
 #endif
+
+inline __host__ __device__ __forceinline__ float3 f3() {return make_float3(0,0,0);}
+
+inline __host__ __device__ __forceinline__ float3 f3(float4 x) {
+    return make_float3(x.x, x.y, x.z);
+}
+
+inline __host__ __device__ __forceinline__ float4 f4(float3 x) {
+    return make_float4(x.x, x.y, x.z, 0.0f);
+}
 
 inline __host__ __device__ __forceinline__ float4 f4(float x, float y, float z, float w = 0.0f) {
     return make_float4(x, y, z, w);
@@ -189,6 +199,19 @@ inline __device__ __forceinline__ void toWorld(const float4& wo_local, const flo
     wo_world = wo_local.x * t + wo_local.y * b + wo_local.z * n;
 }
 
+inline __device__ __forceinline__ float4 toWorld(const float4& wo_local, const float4& n)
+{
+    float4 t, b;
+    if (fabs(n.x) > fabs(n.z))
+        t = normalize(f4(-n.y, n.x, 0.0f));
+    else
+        t = normalize(f4(0.0f, -n.z, n.y));
+
+    b = cross3(n, t);
+    return wo_local.x * t + wo_local.y * b + wo_local.z * n;
+}
+
+
 inline __device__ __forceinline__ void toLocal(const float4& wo_world, const float4& n, float4& wo_local)
 {
     float4 t, b;
@@ -199,6 +222,18 @@ inline __device__ __forceinline__ void toLocal(const float4& wo_world, const flo
 
     b = cross3(n, t);
     wo_local = f4(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n), 0.0f);
+}
+
+inline __device__ __forceinline__ float4 toLocal(const float4& wo_world, const float4& n)
+{
+    float4 t, b;
+    if (fabs(n.x) > fabs(n.z))
+        t = normalize(f4(-n.y, n.x, 0.0f));
+    else
+        t = normalize(f4(0.0f, -n.z, n.y));
+
+    b = cross3(n, t);
+    return f4(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n), 0.0f);
 }
 
 // Component-wise min of two float4s
@@ -416,6 +451,57 @@ __device__ __forceinline__ float4 unpackOct(uint32_t p) {
     return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
 }
 
+__device__ __forceinline__ float3 unpackOctF3(uint32_t p) {
+    int16_t packedX = (int16_t)(p & 0xFFFF);
+    int16_t packedY = (int16_t)(p >> 16);
+
+    // 2. Convert back to float [-1, 1]
+    // Using max(-1.0f, ...) prevents -32768 (if it occurred) from breaking things
+    float x = fmaxf(-1.0f, packedX / 32767.0f);
+    float y = fmaxf(-1.0f, packedY / 32767.0f);
+
+    // 3. Map back to Sphere
+    float3 v;
+    v.x = x;
+    v.y = y;
+    v.z = 1.0f - (fabsf(x) + fabsf(y));
+
+    float t = fmaxf(-v.z, 0.0f);
+    v.x += (v.x >= 0.0f) ? -t : t;
+    v.y += (v.y >= 0.0f) ? -t : t;
+
+    float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
+}
+
+__device__ __forceinline__ unsigned int packOctF3(float3 v)
+{
+    float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
+    float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
+    
+    float2 res;
+    res.x = v.x * invL1;
+    res.y = v.y * invL1;
+
+    // 2. Reflect folds if in lower hemisphere
+    if (v.z < 0.0f) {
+        float tempX = res.x;
+        float tempY = res.y;
+        res.x = (1.0f - fabsf(tempY)) * signNotZero(tempX);
+        res.y = (1.0f - fabsf(tempX)) * signNotZero(tempY);
+    }
+
+    // 3. SNORM Quantization (The Fix)
+    // We map [-1, 1] -> [-32767, 32767]
+    // We use __float2int_rn to Round-to-Nearest, reducing error further.
+    int16_t x = (int16_t)__float2int_rn(fminf(fmaxf(res.x, -1.0f), 1.0f) * 32767.0f);
+    int16_t y = (int16_t)__float2int_rn(fminf(fmaxf(res.y, -1.0f), 1.0f) * 32767.0f);
+
+    // Pack two int16s into one uint32
+    // We cast to uint16_t first to ensure bits are preserved correctly during shift
+    return ((uint32_t)(uint16_t)x) | (((uint32_t)(uint16_t)y) << 16);
+}
+
 __device__ __forceinline__ uint32_t packOctFlags(float4 v, bool flag1, bool flag2)
 {
     // 1. Octahedral Projection
@@ -539,9 +625,25 @@ __device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 c
     atomicAdd(&colors[idx].z, contribution.z);
 }
 
+__device__ __forceinline__ inline float4 fireflyClamp(float4 contribution) {
+#if DO_FIREFLY_CLAMP == 1
+    float lum = luminance(contribution);
+    if (lum > MAX_FIREFLY_LUM)
+    {
+        contribution *= (MAX_FIREFLY_LUM / lum);
+    }
+#endif
+    return contribution;
+}
+
 __device__ __forceinline__ inline float powerHeuristicTwoStrategy(float primary, float other)
 {
     return 1.0f / (1.0f + (other/primary) * (other/primary));
+}
+
+__device__ __forceinline__ inline float balanceHeuristicTwoStrategy(float primary, float other)
+{
+    return 1.0f / (1.0f + (other/primary));
 }
 
 __device__ __forceinline__ int BurnCycles(int iterations) {

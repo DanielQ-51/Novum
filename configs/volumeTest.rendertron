@@ -1,13 +1,13 @@
-Name: render
+Name: industrialSmoke_large_
 
-width: 1080
-height: 1080
+width: 3200
+height: 1600
 
 Integrator: SIMPLEVOL
-Sample Count: 100000
+Sample Count: 1000
 Post Process: true
 
-Unidirectional Max Depth: 128
+Unidirectional Max Depth: 32
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false
@@ -30,17 +30,32 @@ VCM Merge Radius Power Factor: 0.66
 VCM Initial Merge Radius Multiplier: 0.0005
 
 Pinhole Camera: true
-Camera Position: 2.668 12.300 62.461
-Camera Rotation: -0.0 -0.0 0.0
+Camera Position: -120.0 18.300 120.461
+Camera Rotation: 3.0 -45.0 0.0
 Camera Apeture: 0.0
 Camera FocalDist: 0.0
 Camera FOV: 30.0
 
-Meshes (path; multiplier * emission; materialID):
-assets/scenedata/smoke2pose.obj; 1.0 * (0.0, 0.0, 0.0); 4
+Pinhole Camera: true
+Camera Position: -80.0 35.300 80.461
+Camera Rotation: 8.0 -0.0 0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 50.0
 
-assets/scenedata/cornellbox/lightMedium.obj; 10.0 * (8.0, 8.0, 6.0); 2
+Meshes (path; multiplier * emission; materialID):
+.assets/scenedata/smoke2pose.obj; 1.0 * (0.0, 0.0, 0.0); 4
+
+.assets/scenedata/volumescene/box.obj; 0.0 * (8.0, 8.0, 6.0); 2
+.assets/scenedata/volumescene/leftwall.obj; 0.0 * (8.0, 8.0, 6.0); 1
+.assets/scenedata/volumescene/rightwall.obj; 0.0 * (8.0, 8.0, 6.0); 3
+.assets/scenedata/volumescene/biglight.obj; 0.5 * (8.0, 8.0, 6.0); 2
+.assets/scenedata/volumescene/smalllight.obj; 80.5 * (8.0, 8.0, 6.0); 2
+.assets/scenedata/volumescene/lightbig.obj; 30.5 * (1.0, 1.0, 8.0); 2
+.assets/scenedata/volumescene/lightsmall.obj; 600.5 * (8.0, 1.0, 1.0); 2
+assets/scenedata/volumescene/lmaowtf.obj; 0.01 * (8.0, 1.0, 1.0); 2
+assets/scenedata/volumescene/largefloor.obj; 0.0 * (8.0, 8.0, 6.0); 2
 
 Volumes (path; albedo; densityScale; temperatureScale; emissionMultiplier; anisotropy):
 
-assets/vdb/nvdb/smoke2.nvdb; (0.95, 0.95, 0.95); 3.0; 1.0; 1.0; 0.6
+assets/vdb/nvdb/smoke2.nvdb; (0.75, 0.75, 0.75); 1.0 ; 1.0; 1.0; 0.7

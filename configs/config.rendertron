@@ -4,7 +4,7 @@ width: 800
 height: 800
 
 Integrator: UNIDIRFAST
-Sample Count: 100000
+Sample Count: 1000000
 Post Process: true
 
 Unidirectional Max Depth: 12
@@ -30,18 +30,16 @@ VCM Merge Radius Power Factor: 0.66
 VCM Initial Merge Radius Multiplier: 0.0005
 
 Pinhole Camera: true
-Camera Position: -0.0 -0.3 0.0
+Camera Position: -0.0 -0.0 5.0
 Camera Rotation: -0.0 -0.0 0.0
 Camera Apeture: 0.0
 Camera FocalDist: 0.0
 Camera FOV: 40.0
 
 Meshes (path; multiplier * emission; materialID):
-scenedata/smallbox.obj; 1.0 * (0.0, 0.0, 0.0); 2
-scenedata/backwall.obj; 1.0 * (0.0, 0.0, 0.0); 2
-scenedata/leftwall.obj; 1.0 * (0.0, 0.0, 0.0); 1
-scenedata/rightwall.obj; 1.0 * (0.0, 0.0, 0.0); 3
-scenedata/ring.obj; 1.0 * (0.0, 0.0, 0.0); 4
-scenedata/gear.obj; 1.0 * (0.0, 0.0, 0.0); 5
-scenedata/bowl.obj; 1.0 * (0.0, 0.0, 0.0); 5
-scenedata/smallwaterlight5.obj; 80.1 * (8.0, 8.0, 8.0); 2
+assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
+assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
+assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
+assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
+assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
+assets/scenedata/cornellbox/lightMedium.obj; 50.5 * (1.0, 1.0, 1.0); 2

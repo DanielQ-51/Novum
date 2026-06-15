@@ -143,6 +143,90 @@ struct LightSampler {
         }
     }
 
+    /**
+     * Specialized helper for when the ReSTIR algorithm evalutes DI contributions, returns the reconnection data
+     */
+    __device__ inline bool sample_ReSTIR_rc_data(
+        float rand_macro,
+        float4 rand_micro,
+        float4 probePos,
+        const Vertices* verts,
+        float4& output,
+        float4& outDir,
+        float4& lightNorm,
+        float& t_max,
+        float& pdf,
+        unsigned int& primID,
+        float2& barycentrics
+    ) const {
+        
+        // 1. Categorical Selection
+        if (rand_macro < envWeight) {
+            // --- Sample Environment Map ---
+            float microPDF;
+            t_max = 1E30;
+
+            envMap.sample(rand_micro, outDir, output, microPDF);
+            pdf = microPDF * envWeight;
+            primID = 0xFFFFFFFF;
+            return 1;
+
+        } else {
+            // --- Sample Mesh Light ---
+            if (numLights == 0) {
+                pdf = 0.0f;
+                return 0; // Edge case: branched to mesh but none exist
+            }
+
+            // Remap rand_macro to [0, 1) to search the mesh-only CDF
+            float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
+
+            int index = binarySearchCDF(topLevelCDF, numLights, mapped_rand);
+            primID = index;
+            LightDescriptor light = lights[index];
+
+            // PDF of choosing this specific mesh light given we chose the mesh category
+
+            int lightTriInd = light.startInd + 
+                binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
+
+            float4 pos;
+            float area;
+            {
+                Triangle l = triLights[lightTriInd]; 
+
+                output = l.emission;
+                        
+                float4 apos = __ldg(&verts->positions[l.aInd]);
+                float4 bpos = __ldg(&verts->positions[l.bInd]);
+                float4 cpos = __ldg(&verts->positions[l.cInd]);
+
+                float u = sqrtf(rand_micro.y);
+                float v = rand_micro.z;
+
+                pos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
+                area = 0.5f * length(cross3(bpos-apos, cpos-apos));
+
+                float4 anorm = __ldg(&verts->normals[l.naInd]);
+                float4 bnorm = __ldg(&verts->normals[l.nbInd]);
+                float4 cnorm = __ldg(&verts->normals[l.ncInd]);
+
+                lightNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
+                barycentrics = f2(u * (1.0f - v), u * v);
+            }
+
+            float pdf_chooseLight = (1.0f - envWeight) * (light.totalPower / totalMeshPower);
+            
+            float triPdf = (area * luminance(output) * PI) / light.totalPower;
+            pdf = pdf_chooseLight * triPdf * (1.0f / area);
+
+            outDir = normalize(pos - probePos);
+            
+            t_max = length(pos-probePos);
+            return 0;
+        }
+    }
+
     __host__ void printDebugState(int maxPrimsToPrint = 16) const {
         std::cout << "\n========== LIGHT SAMPLER STATE ==========\n";
         std::cout << "Environment Weight:    " << envWeight << " (" << (envWeight * 100.0f) << "% rays to Env)\n";
@@ -235,7 +319,7 @@ struct LightSamplerManager {
         const std::vector<float4>& points,
         Triangle*& d_triLights,
         EnvMapView env,
-        float desiredEnvWeight = 0.5f // Exposed variable for the split
+        float desiredEnvWeight = 1.0f // Exposed variable for the split
     ) {
         envMap = env;
         numLights = ld.size();
@@ -260,9 +344,9 @@ struct LightSamplerManager {
         }
 
         // 3. Robustly determine the envWeight based on scene contents
-        if (env.totalPower <= 0.0f) {
+        if (env.totalPower <= 1E-3) {
             envWeight = 0.0f; // No env map, dedicate 100% rays to mesh lights
-        } else if (meshPower <= 0.0f) {
+        } else if (meshPower <= 1E-3) {
             envWeight = 1.0f; // No mesh lights, dedicate 100% rays to env map
         } else {
             envWeight = desiredEnvWeight; // Use the requested split

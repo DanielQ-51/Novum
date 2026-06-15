@@ -337,3 +337,39 @@ __global__ void cleanAndFormatImage(
     // 5. Write to the output buffer
     outputBuffer[pixelIndex] = finalColor;
 }
+
+__global__ void cleanAndFormatImageNoOverlay(
+    float4* accumulationBuffer, // Your raw 'colors' buffer (Sum of samples)
+    float4* outputBuffer,       // A temporary buffer to store the result for saving
+    int w, int h, 
+    int currentSampleCount) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (idx >= w || idy >= h) return;
+
+    int pixelIndex = idy * w + idx;
+
+    // 1. Read the raw accumulated color
+    float4 acc = accumulationBuffer[pixelIndex];
+    float4 finalColor;
+
+    // 2. Check for NaNs/Infs BEFORE normalization
+    if (isnan(acc.x) || isnan(acc.y) || isnan(acc.z)) {
+        finalColor = f4(1.0f, 0.0f, 1.0f);
+    } 
+    else if (isinf(acc.x) || isinf(acc.y) || isinf(acc.z)) {
+        finalColor = f4(0.0f, 1.0f, 0.0f);
+    } 
+    else if (acc.x < 0 || acc.y < 0 || acc.z < 0) {
+        finalColor = f4(0.0f, 0.0f, 1.0f);
+    } 
+    else {
+        // 3. Normalize (Average the samples)
+        float scale = 1.0f / (float)(currentSampleCount + 1);
+        finalColor = make_float4(acc.x * scale, acc.y * scale, acc.z * scale, 1.0f);
+    }
+
+    outputBuffer[pixelIndex] = finalColor;
+}

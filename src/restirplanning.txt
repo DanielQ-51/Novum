@@ -1,0 +1,21 @@
+
+Stage 1: Canonical Sample Generation
+
+KER - Generate initial ray queries
+
+KER - Ray trace primary hits:
+    Populate Gbuffer (including motion vec)
+    Populate Shade Queue
+
+KER - shading
+
+
+
+Planned optimizations for after making the actual version/ comparisons to make:
+
+Implement the shared memory optimization for decorrelation. (also light sampling if applicable)
+
+Further: Implement experimental shared memory for spatial reuse via modifying the noise patterns for spatial reuse to guarantee memory locality
+
+
+Also, maybe check how much time the 48 vs 64 byte struct saves

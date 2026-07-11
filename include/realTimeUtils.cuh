@@ -7,22 +7,7 @@
 #include "objects.cuh"
 #include <curand_kernel.h>
 
-struct __align__(32) LinearCameraAnimation {
-    float3 dxyz;
-    unsigned int frameCount;
-    float3 dxyzrot;
-    unsigned int currentFrame;
 
-    __host__ inline void update(Camera& cam) {
-        cam.cameraOrigin.x += dxyz.x;
-        cam.cameraOrigin.y += dxyz.y;
-        cam.cameraOrigin.z += dxyz.z;
-
-        cam.xRot += dxyzrot.x;
-        cam.yRot += dxyzrot.y;
-        cam.zRot += dxyzrot.z;
-    }
-};
 
 /**
  * Thin GBuffer for ReSTIR purposes.
@@ -30,7 +15,7 @@ struct __align__(32) LinearCameraAnimation {
 struct GBuffer {
     // Used for path shift rejection
     float* __restrict__ depth;
-    unsigned int* __restrict__ normal;
+    uint32_t* __restrict__ normal;
     
     __device__ __forceinline__ inline void setPayload(
         int idx,
@@ -75,7 +60,7 @@ struct ReSTIRRayQueue
         float4& outThroughput,
         int& outPixelIdx,
         int& outDepth,
-        unsigned int& outTotalPDF,
+        uint32_t& outTotalPDF,
         float& outLastPDF
     ) const {
         // 1. One 128-bit load for Geometry
@@ -83,7 +68,7 @@ struct ReSTIRRayQueue
         outOrigin = make_float4(o_d.x, o_d.y, o_d.z, 1.0f);
         
         // Extract the raw bits from the float .w channel, then unpack
-        unsigned int rawDir = __float_as_uint(o_d.w);
+        uint32_t rawDir = __float_as_uint(o_d.w);
         outDir = unpackOctFlags(rawDir, &outPrevDelta, &outFoundXk);
 
         // 2. One 128-bit load for Payload
@@ -160,7 +145,7 @@ struct ReSTIRRayQueue
     }
 
     __device__ __forceinline__ void getPackedState(int idx, int& pixelIdx, int& depth) const {
-        unsigned int state = __ldg(&payload[idx]).y;
+        uint32_t state = __ldg(&payload[idx]).y;
         pixelIdx = state & 0x03FFFFFF;
         depth    = state >> 26;
     }
@@ -174,8 +159,8 @@ struct ReSTIRRayQueue
 struct ReSTIRShadowQueue {
     // used for shadow ray anyhit
     float4* __restrict__ origin_plus_dist; 
-    unsigned int* __restrict__ direction;   
-    unsigned int* __restrict__ pixelIdx;           
+    uint32_t* __restrict__ direction;   
+    uint32_t* __restrict__ pixelIdx;           
 
 
     // does NOT indicate a miss; indicates that this shadow ray doesnt exist
@@ -226,7 +211,7 @@ struct ReSTIRShadowQueue {
         int idx, int& index
     ) const {
         // Fetch ONLY the 4-byte direction to check the sentinel flag
-        unsigned int dir_flag = __ldg(&direction[idx]);
+        uint32_t dir_flag = __ldg(&direction[idx]);
         
         // 0xFFFFFFFF is our sentinel for a "Blocked" ray
         if (dir_flag == 0xFFFFFFFF) return false;
@@ -287,7 +272,7 @@ struct Reservoir1 {
     float* __restrict__ W;
 
     //(8-bit M | 8-bit rcIndex | 8-bit length | 8-bit technique 0 for bsdf 1 for nee).
-    unsigned int* __restrict__ pathFlags;
+    uint32_t* __restrict__ pathFlags;
 
     // yzw are all updated at similar times, so vectorized store/load
     uint4* __restrict__ shiftState;
@@ -321,7 +306,7 @@ struct Reservoir1 {
 
     float* __restrict__ footprint;
     float* __restrict__ weightSum;
-    unsigned int* __restrict__ suffixThroughput;
+    uint32_t* __restrict__ suffixThroughput;
 
 
     uint4* __restrict__ backupRCGeometry;
@@ -360,7 +345,7 @@ struct Reservoir1 {
 
     __device__ __forceinline__ void setRCGeometry(
         int idx,
-        unsigned int rcPrimIdx, 
+        uint32_t rcPrimIdx, 
         float3 rcVertexWi, 
         float2 rcVertexBarycentrics, 
         float cachedJacobianProduct
@@ -369,14 +354,14 @@ struct Reservoir1 {
         rcGeometry[idx] = make_uint4(
             rcPrimIdx, 
             packOct(f4(rcVertexWi.x, rcVertexWi.y, rcVertexWi.z)),
-            reinterpret_cast<const unsigned int&>(baryHalf),
+            reinterpret_cast<const uint32_t&>(baryHalf),
             __float_as_uint(cachedJacobianProduct)
         );
     }
 
     __device__ __forceinline__ void setShiftState(
         int idx,
-        unsigned int seed,
+        uint32_t seed,
         float3 F,
         float3 rcVertexRadiance,
         float neePdf
@@ -393,11 +378,11 @@ struct Reservoir1 {
         int idx, 
         float W_val, 
         float3 F, 
-        unsigned int seed, 
-        unsigned int M, unsigned int rcIndex, unsigned int length, unsigned int technique, 
+        uint32_t seed, 
+        uint32_t M, uint32_t rcIndex, uint32_t length, uint32_t technique, 
         float jacobianProduct, 
         float neePdf,
-        unsigned int rcPrimIdx, 
+        uint32_t rcPrimIdx, 
         float3 rcVertexWi, 
         float2 rcVertexBarycentrics, 
         float3 rcVertexRadiance
@@ -437,11 +422,11 @@ struct CandidateReservoirs {
     //       (The cached light selection PDF).
 
     __device__ __forceinline__ void initialize(
-        unsigned int idx,
+        uint32_t idx,
         float w,
         float3 f,
-        unsigned int length,
-        unsigned int technique,
+        uint32_t length,
+        uint32_t technique,
         float jacobianProduct,
         float neePDF
     ) {
@@ -458,11 +443,11 @@ struct CandidateReservoirs {
     }
 
     __device__ __forceinline__ void getAll(
-        unsigned int idx,
+        uint32_t idx,
         float& w,
         float3& f,
-        unsigned int& length,
-        unsigned int& technique,
+        uint32_t& length,
+        uint32_t& technique,
         float& jacobianProduct,
         float& neePDF
     ) {
@@ -483,17 +468,17 @@ struct UnoptimizedReservoir {
     float* __restrict__ W;
     float3* __restrict__ F;
     
-    unsigned int* __restrict__ initRandomSeed;
-    unsigned int* __restrict__ rcVertexRandomSeed;
+    uint32_t* __restrict__ initRandomSeed;
+    uint32_t* __restrict__ rcVertexRandomSeed;
 
     //(8-bit M | 8-bit rcIndex | 8-bit length | 8-bit technique 0 for bsdf 1 for nee).
-    unsigned int* __restrict__ pathFlags;
+    uint32_t* __restrict__ pathFlags;
 
-    unsigned int* __restrict__ rcVertexInstanceID;
-    unsigned int* __restrict__ rcVertexPrimitiveIndex;
+    uint32_t* __restrict__ rcVertexInstanceID;
+    uint32_t* __restrict__ rcVertexPrimitiveIndex;
 
-    unsigned int* __restrict__ rcVertexBarycentrics;
-    unsigned int* __restrict__ rcVertexWi;
+    uint32_t* __restrict__ rcVertexBarycentrics;
+    uint32_t* __restrict__ rcVertexWi;
 
     float3* __restrict__ rcVertexRadiance;
 
@@ -503,21 +488,21 @@ struct UnoptimizedReservoir {
 
 struct LessUnoptimizedReservoir {
     float* __restrict__ W;
-    unsigned int* __restrict__ F;
+    uint32_t* __restrict__ F;
     
-    unsigned int* __restrict__ initRandomSeed;
-    unsigned int* __restrict__ rcVertexRandomSeed;
+    uint32_t* __restrict__ initRandomSeed;
+    uint32_t* __restrict__ rcVertexRandomSeed;
 
     //(8-bit M | 8-bit rcIndex | 8-bit length | 8-bit technique 0 for bsdf 1 for nee).
-    unsigned int* __restrict__ pathFlags;
+    uint32_t* __restrict__ pathFlags;
 
-    unsigned int* __restrict__ rcVertexInstanceID;
-    unsigned int* __restrict__ rcVertexPrimitiveIndex;
+    uint32_t* __restrict__ rcVertexInstanceID;
+    uint32_t* __restrict__ rcVertexPrimitiveIndex;
 
-    unsigned int* __restrict__ rcVertexBarycentrics;
-    unsigned int* __restrict__ rcVertexWi;
+    uint32_t* __restrict__ rcVertexBarycentrics;
+    uint32_t* __restrict__ rcVertexWi;
 
-    unsigned int* __restrict__ rcVertexRadiance;
+    uint32_t* __restrict__ rcVertexRadiance;
 
     // Cached jacobian, and hen nee pdf
     float2* __restrict__ rcVertexCachedValues;

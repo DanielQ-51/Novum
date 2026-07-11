@@ -38,6 +38,7 @@ struct ShadeContext
     const Vertices* __restrict__ vertices; 
     LightSampler lightSampler;
     int lightNum;
+    uint32_t triNum;
 };
 
 __host__ inline BVHContext getBVHContext(const SceneContext& sc) {
@@ -60,5 +61,6 @@ __host__ inline ShadeContext getShadeContext(const SceneContext& sc) {
     ctx.vertices  = sc.vertices;
     ctx.lightNum  = sc.lightNum;
     ctx.lightSampler = sc.lightSampler;
+    ctx.triNum = sc.triNum;
     return ctx;
 }

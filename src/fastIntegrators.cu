@@ -47,7 +47,7 @@ __global__ void testWriteKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq) {
     float4 inThroughput = make_float4(0.25f, 0.5f, 0.75f, 1.0f);
     int inPixelIdx = 1234567;
     int inDepth = 14;         
-    unsigned int inStack = 0xABCD; 
+    uint32_t inStack = 0xABCD; 
     float inLastPDF = 3.14159f;
 
     rq.setAll(0, inOrigin, inDir, inPrevDelta, inThroughput, inPixelIdx, inDepth, inStack, inLastPDF);
@@ -75,7 +75,7 @@ __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* p
     float4 outOrigin, outDir, outThroughput;
     bool outPrevDelta;
     int outPixelIdx, outDepth;
-    unsigned int outStack;
+    uint32_t outStack;
     float outLastPDF;
 
     // --- TEST: RayQueue ---
@@ -154,7 +154,7 @@ void runDataStructureTests() {
     cudaMalloc(&rq.payload, maxRays * sizeof(uint4));
     cudaMalloc(&hb.data, maxRays * sizeof(float4));
     cudaMalloc(&sq.origin_plus_dist, maxRays * sizeof(float4));
-    cudaMalloc(&sq.direction, maxRays * sizeof(unsigned int));
+    cudaMalloc(&sq.direction, maxRays * sizeof(uint32_t));
     cudaMalloc(&sq.payload, maxRays * sizeof(uint2));
 
     // Allocate host/device tracking ints
@@ -203,18 +203,18 @@ __host__ void allocateBuffers(
     RayQueue& q2, 
     HitBuffer& hb, 
     ShadowQueue& sq, 
-    unsigned int*& pr,
-    unsigned int*& si,
+    uint32_t*& pr,
+    uint32_t*& si,
     float4*& out,
-    unsigned int*& skeys,
-    unsigned int*& svals,
-    unsigned int*& skeys1,
-    unsigned int*& svals1,
+    uint32_t*& skeys,
+    uint32_t*& svals,
+    uint32_t*& skeys1,
+    uint32_t*& svals1,
     int maxRays
 )
 {
     size_t f4Size    = maxRays * sizeof(float4);
-    size_t uIntSize  = maxRays * sizeof(unsigned int);
+    size_t uIntSize  = maxRays * sizeof(uint32_t);
     size_t uInt2Size = maxRays * sizeof(uint2);
     size_t uInt4Size = maxRays * sizeof(uint4);
 
@@ -243,29 +243,29 @@ __host__ void allocateBuffers(
     sq.origin_plus_dist = (float4*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    sq.direction = (unsigned int*)temp_ptr;
+    sq.direction = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uInt2Size);
     sq.payload = (uint2*)temp_ptr;
 
     // Compaction Buffers
     cudaMalloc(&temp_ptr, uIntSize);
-    pr = (unsigned int*)temp_ptr;
+    pr = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    si = (unsigned int*)temp_ptr;
+    si = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    skeys = (unsigned int*)temp_ptr;
+    skeys = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    svals = (unsigned int*)temp_ptr;
+    svals = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    skeys1 = (unsigned int*)temp_ptr;
+    skeys1 = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    svals1 = (unsigned int*)temp_ptr;
+    svals1 = (uint32_t*)temp_ptr;
 
     // Output Buffer
     cudaMalloc(&temp_ptr, f4Size);
@@ -277,12 +277,12 @@ void freeBuffers(
     RayQueue& q2, 
     HitBuffer& hb, 
     ShadowQueue& sq, 
-    unsigned int* pr,
-    unsigned int* si,
-    unsigned int* skeys,
-    unsigned int* svals,
-    unsigned int* skeys1,
-    unsigned int* svals1,
+    uint32_t* pr,
+    uint32_t* si,
+    uint32_t* skeys,
+    uint32_t* svals,
+    uint32_t* skeys1,
+    uint32_t* svals1,
     float4* out
 ) {
     cudaFree(q1.origin_plus_dir);
@@ -379,17 +379,17 @@ __global__ void shade(
     RayQueue writeQueue,
     ShadowQueue shadowRays,
     
-    unsigned int* predicate,
+    uint32_t* predicate,
     int activeRays,
 
     int frameNum,
     int maxDepth,
 
-    unsigned int* shadowRayIndex, // ?
+    uint32_t* shadowRayIndex, // ?
     
     float4* output,
 
-    unsigned int* sortValuesOut
+    uint32_t* sortValuesOut
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -407,7 +407,7 @@ __global__ void shade(
     float4 throughput;
     int pixelIdx;
     int depth;
-    unsigned int mediumStack;
+    uint32_t mediumStack;
     float lastPDF;
 
     readQueue.getAll(
@@ -710,8 +710,8 @@ __global__ void shadeShadowRay(
 __global__ void compactRayQueue_NOSORT(
     const RayQueue sparseQueue,
     RayQueue denseQueue,
-    const unsigned int* __restrict__ predicates,
-    const unsigned int* __restrict__ scanIndices,
+    const uint32_t* __restrict__ predicates,
+    const uint32_t* __restrict__ scanIndices,
     int activeRays
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -731,10 +731,10 @@ __global__ void compactRayQueue_NOSORT(
 __global__ void compactRayQueue_SORT(
     const RayQueue sparseQueue,
     RayQueue denseQueue,
-    const unsigned int* __restrict__ predicates,
-    const unsigned int* __restrict__ scanIndices,
-    unsigned int* sortKeysIn,
-    unsigned int* sortValuesIn,
+    const uint32_t* __restrict__ predicates,
+    const uint32_t* __restrict__ scanIndices,
+    uint32_t* sortKeysIn,
+    uint32_t* sortValuesIn,
     int activeRays
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -762,8 +762,8 @@ __global__ void calculateMaterialSortKeys(
     const HitBuffer hitBuffer,
     const Material* __restrict__ materials,
     const Triangle* __restrict__ scene,
-    unsigned int* sortKeysIn,
-    unsigned int* sortValuesIn,
+    uint32_t* sortKeysIn,
+    uint32_t* sortValuesIn,
     int activeRays
 ) 
 {
@@ -778,7 +778,7 @@ __global__ void calculateMaterialSortKeys(
     int textureStartIndex = (materialID < 0) ? 
         0 : __ldg(&materials[materialID].textureIndex);
 
-    unsigned int key = generateMaterialSortKey(materialID, textureStartIndex);
+    uint32_t key = generateMaterialSortKey(materialID, textureStartIndex);
     sortKeysIn[idx] = key;
     sortValuesIn[idx] = idx;
 }
@@ -787,14 +787,14 @@ __global__ void calculateMaterialSortKeys(
 __global__ void reorderRayQueue(
     const RayQueue unsortedQueue,
     RayQueue sortedQueue,
-    const unsigned int* __restrict__ sortedIndices,
+    const uint32_t* __restrict__ sortedIndices,
     int activeRays
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
 
-    unsigned int sortedIdx = sortedIndices[idx];
+    uint32_t sortedIdx = sortedIndices[idx];
 
     sortedQueue.origin_plus_dir[idx] = __ldg(&unsortedQueue.origin_plus_dir[sortedIdx]);
     sortedQueue.payload[idx]         = __ldg(&unsortedQueue.payload[sortedIdx]);
@@ -845,17 +845,17 @@ __host__ void launch_wavefrontUnidirectional(
     RayQueue temp_rayQueue2;
     HitBuffer temp_hitBuffer;
     ShadowQueue temp_shadowQueue;
-    unsigned int* d_predicate;
-    unsigned int* d_scanIndices;
+    uint32_t* d_predicate;
+    uint32_t* d_scanIndices;
     float4* d_finalOutput;
 
-    unsigned int* d_sortKeysIn;
-    unsigned int* d_sortValuesOut;
-    unsigned int* d_sortKeysOut;
-    unsigned int* d_sortValuesIn;
+    uint32_t* d_sortKeysIn;
+    uint32_t* d_sortValuesOut;
+    uint32_t* d_sortKeysOut;
+    uint32_t* d_sortValuesIn;
 
-    unsigned int* d_shadowRayIndex;
-    cudaMalloc(&d_shadowRayIndex, sizeof(unsigned int));
+    uint32_t* d_shadowRayIndex;
+    cudaMalloc(&d_shadowRayIndex, sizeof(uint32_t));
 
     allocateBuffers(
         temp_rayQueue1, 
@@ -907,7 +907,7 @@ __host__ void launch_wavefrontUnidirectional(
             totalB / (1024.0*1024));
     
     auto lastSaveTime = std::chrono::steady_clock::now();
-    int saveIntervalSamples = 2000;
+    int saveIntervalSamples = 20000;
     Image image = Image(h_w, h_h);
     image.postProcess = postProcess;
     std::vector<float4> h_finalOutput(h_w * h_h);
@@ -1011,13 +1011,13 @@ __host__ void launch_wavefrontUnidirectional(
                 d_predicate, d_scanIndices, activeRays
             );
 
-            unsigned int lastPredicate = 0;
-            unsigned int lastScanIndex = 0;
+            uint32_t lastPredicate = 0;
+            uint32_t lastScanIndex = 0;
 
             int lastIndex = activeRays - 1;
 
-            cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
             int newActiveRays = lastScanIndex + lastPredicate;
             if (newActiveRays == 0) {

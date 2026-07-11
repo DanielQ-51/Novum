@@ -1,0 +1,528 @@
+#pragma once
+#include <optix.h>
+#include <cuda_runtime.h>
+#include "sceneContexts.cuh"
+#include "objects.cuh"
+#include "util.cuh"
+
+/*
+enum TechniqueType{
+    TYPE_INTERNAL_RC = 0u,
+    TYPE_BSDF = 1u
+};*/
+
+using TechniqueType = uint32_t;
+
+#ifndef RESERVOIR_SIZE
+#define RESERVOIR_SIZE 44
+#endif
+
+#ifndef GBUFFER_SIZE
+#define GBUFFER_SIZE 20
+#endif
+
+#define SHIFT_IS_NEE           (1 << 0) // 0 = BSDF, 1 = NEE
+#define SHIFT_IS_ENV           (1 << 1) // 0 = Area/Mesh, 1 = Environment
+#define SHIFT_K_IS_D           (1 << 2) // 1 if k == d
+#define SHIFT_K_IS_D_MINUS_1   (1 << 3) // 1 if k == d - 1
+#define SHIFT_K_LESS_D_MINUS_1 (1 << 4) // 1 if k <= d - 1
+
+// --- K = D (Reconnecting directly to the light) ---
+#define PATH_TYPE_NEE_AREA_K_EQ_D  (SHIFT_IS_NEE | SHIFT_K_IS_D)
+#define PATH_TYPE_NEE_ENV_K_EQ_D   (SHIFT_IS_NEE | SHIFT_IS_ENV | SHIFT_K_IS_D)
+#define PATH_TYPE_BSDF_AREA_K_EQ_D (SHIFT_K_IS_D) // Implicitly 0 for NEE and ENV
+#define PATH_TYPE_BSDF_ENV_K_EQ_D  (SHIFT_IS_ENV | SHIFT_K_IS_D)
+
+// --- K = D - 1 (Reconnecting one bounce before the light) ---
+#define PATH_TYPE_NEE_AREA_K_EQ_D_MINUS_1  (SHIFT_IS_NEE | SHIFT_K_IS_D_MINUS_1)
+#define PATH_TYPE_NEE_ENV_K_EQ_D_MINUS_1   (SHIFT_IS_NEE | SHIFT_IS_ENV | SHIFT_K_IS_D_MINUS_1)
+#define PATH_TYPE_BSDF_AREA_K_EQ_D_MINUS_1 (SHIFT_K_IS_D_MINUS_1)
+#define PATH_TYPE_BSDF_ENV_K_EQ_D_MINUS_1  (SHIFT_IS_ENV | SHIFT_K_IS_D_MINUS_1)
+
+// --- K < D - 1 (Reconnecting deep inside the path) ---
+#define PATH_TYPE_NEE_AREA_K_LESS_D_MINUS_1  (SHIFT_IS_NEE | SHIFT_K_LESS_D_MINUS_1)
+#define PATH_TYPE_NEE_ENV_K_LESS_D_MINUS_1   (SHIFT_IS_NEE | SHIFT_IS_ENV | SHIFT_K_LESS_D_MINUS_1)
+#define PATH_TYPE_BSDF_AREA_K_LESS_D_MINUS_1 (SHIFT_K_LESS_D_MINUS_1)
+#define PATH_TYPE_BSDF_ENV_K_LESS_D_MINUS_1  (SHIFT_IS_ENV | SHIFT_K_LESS_D_MINUS_1)
+
+#define FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND 0xFFFFFFFF
+#define FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY 0xFF
+#define FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_DIRECTION_COPY 0xFE
+
+__device__ __forceinline__ uint32_t packPathFlags(
+    uint32_t M, uint32_t pathLength, uint32_t rcVertexInd, TechniqueType type
+) {
+    return (M & 0xFF) | 
+           ((pathLength  & 0xFF) << 8) | 
+           ((rcVertexInd & 0xFF) << 16) | 
+           ((static_cast<uint32_t>(type) & 0xFF) << 24);
+}
+
+__device__ __forceinline__ uint32_t extractM(
+    uint32_t packed
+) {
+    return (packed & 0xFF);
+}
+
+__device__ __forceinline__ uint32_t extractType(
+    uint32_t packed
+) {
+    return (packed >> 24);
+}
+
+__device__ __forceinline__ uint32_t extractPathLength(
+    uint32_t packed
+) {
+    return ((packed >> 8) & 0xFF);
+}
+
+__device__ __forceinline__ uint32_t updateM(
+    uint32_t packed, uint32_t M
+) {
+    return (M & 0xFF) | (packed & 0xFFFFFF00);
+}
+
+__device__ __forceinline__ uint4 packRcGeometry(
+    uint32_t primID,
+    float2 barycentrics,
+    float4 rcVertexWi,
+    float4 rcVertexRadiance
+) {
+    uint4 data;
+    data.x = primID;
+    data.y = packFloat2ToUnorm16(barycentrics);
+    data.z = packOct(rcVertexWi);
+    data.w = toRGB9E5(rcVertexRadiance);
+    return data;
+}
+
+__device__ __forceinline__ uint4 packRcGeometry(
+    uint32_t primID,
+    float2 barycentrics,
+    float3 rcVertexWi,
+    float3 rcVertexRadiance
+) {
+    uint4 data;
+    data.x = primID;
+    data.y = packFloat2ToUnorm16(barycentrics);
+    data.z = packOctF3(rcVertexWi);
+    data.w = toRGB9E5(f4(rcVertexRadiance));
+    return data;
+}
+
+// Takes in a packed uint4, and just replaces the last channel with what the raidance should be.
+__device__ __forceinline__ uint4 updateRcVertexRadiance(const uint4& in, float4 radiance) {
+    return make_uint4(in.x, in.y, in.z, toRGB9E5(radiance));
+}
+
+// Takes in a packed uint4, and just replaces the 3rd channel with what the wi should be.
+__device__ __forceinline__ uint4 updateRcVertexWi(const uint4& in, float4 wi) {
+    return make_uint4(in.x, in.y, packOct(wi), in.w);
+}
+
+// 40 bytes
+struct Reservoir {
+    float* __restrict__ W;
+
+    // RGB9E5 encoded
+    uint32_t* __restrict__ F;
+
+    uint32_t* __restrict__ initRandomSeed;
+    
+    /**
+     * Bit  0 -  7: M
+     * Bit  8 - 15: Path length
+     * Bit 16 - 23: rc vertex index
+     * Bit 24 - 31: Technique
+     */
+    uint32_t* __restrict__ pathFlags;
+
+    /**
+     *  x: rcVertexInstanceID
+     *  y: rcVertexBarycentrics (2 x 16 bit unorm)
+     *  z: rcVertexWi (octahedral 2 x 16 bit snorm)
+     *  w: rcVertexRadiance (RBG9E5)
+     */
+    uint4* __restrict__ rcVertexGeometry;
+
+    /**
+     *  x: cached jacobian terms
+     *  y: nee light pdf
+     */
+    float2* __restrict__ rcVertexCachedValues;
+
+    uint32_t* __restrict__ rcVertexRandomSeed;
+
+    __device__ __forceinline__ float3 getF_globalLoad(uint32_t idx) const {
+        return f3(fromRGB9E5(__ldg(&(F[idx]))));
+    }
+
+    __device__ __forceinline__ float getW_globalLoad(uint32_t idx) const {
+        return __ldg(&(W[idx]));
+    }
+
+    __device__ __forceinline__ float getCachedJacobian_globalLoad(uint32_t idx) const {
+        return __ldg(&(rcVertexCachedValues[idx].x));
+    }
+
+    __device__ __forceinline__ float setCachedJacobian(uint32_t idx, float val) const {
+        return rcVertexCachedValues[idx].x = val;
+    }
+
+    __device__ __forceinline__ float getCachedNEE_globalLoad(uint32_t idx) const {
+        return __ldg(&(rcVertexCachedValues[idx].y));
+    }
+
+    __device__ __forceinline__ void getCachedValues_globalLoad(uint32_t idx, float& jacobian, float& neePDF) const {
+        float2 cached = __ldg(&(rcVertexCachedValues[idx]));
+        jacobian = cached.x;
+        neePDF = cached.y;
+    }
+
+    __device__ __forceinline__ void getRcVertexGeometry_globalLoad(uint32_t idx, uint32_t& primID, float2& bary, float3& wi, float3& radiance) const {
+        uint4 data = __ldg(&rcVertexGeometry[idx]);
+        primID = data.x;
+        bary = unpackUnorm16ToFloat2(data.y);
+        wi = unpackOctF3(data.z);
+        radiance = f3(fromRGB9E5(data.w));
+    }
+
+    __device__ __forceinline__ void getPathFlags(
+        uint32_t idx, uint32_t& M, uint32_t& pathLength, uint32_t& rcVertexInd, TechniqueType& technique) const {
+        uint32_t flags = __ldg(&pathFlags[idx]);
+        M = flags & 0x000000FF;
+        pathLength = (flags >> 8) & 0x000000FF;
+        rcVertexInd = (flags >> 16) & 0x000000FF;
+        technique = static_cast<TechniqueType>((flags >> 24) & 0x000000FF);
+    }
+
+    __device__ __forceinline__ void setInitRandomSeed(uint32_t idx, uint32_t seed) const {
+        __stcs(&initRandomSeed[idx], seed);
+    }
+
+    __device__ __forceinline__ uint32_t getInitRandomSeed(uint32_t idx) const {
+        return __ldg(&initRandomSeed[idx]);
+    }
+
+    __device__ __forceinline__ uint32_t getSeed(uint32_t idx) const {
+        return __ldcs(&initRandomSeed[idx]);
+    }
+
+    // prefer to keep values in cache for the dupe map generation stage
+    __device__ __forceinline__ uint32_t getSeed_notstreaming(uint32_t idx) const {
+        return __ldg(&initRandomSeed[idx]);
+    }
+
+    __device__ __forceinline__ void setW(uint32_t idx, float w) const {
+        __stcs(&W[idx], w);
+    }
+
+    __device__ __forceinline__ void setW_noCS(uint32_t idx, float w) const {
+        W[idx] = w;
+    }
+
+    __device__ __forceinline__ void setPathFlags(uint32_t idx, uint32_t currPathFlags) const {
+        pathFlags[idx] = currPathFlags;
+    }
+
+    __device__ __forceinline__ void saveReservoirFinal(
+        uint32_t idx,
+        float inW,
+        uint32_t inF,
+        uint32_t inPathFlags,
+        uint4 inRcVertexGeometry,
+        float inRcVertexJacobian,
+        float inNeePDF
+    ) const {
+        W[idx] = inW;
+        F[idx] = inF;
+        pathFlags[idx] = inPathFlags;
+        rcVertexGeometry[idx] = inRcVertexGeometry;
+        rcVertexCachedValues[idx] = f2(inRcVertexJacobian, inNeePDF);
+    }
+
+    __device__ __forceinline__ void saveReservoirAll(
+        uint32_t idx,
+        float inW,
+        float3 inF,
+        uint32_t seed,
+        uint32_t M,
+        uint32_t pathLength,
+        uint32_t rcVertexIndex,
+        TechniqueType type,
+        uint32_t rcPrimID,
+        float2 rcBarycentrics,
+        float3 rcWi,
+        float3 rcRadiance,
+        float inRcVertexJacobian,
+        float inNeePDF
+    ) const {
+        W[idx] = inW;
+        F[idx] = toRGB9E5(f4(inF));
+        initRandomSeed[idx] = seed;
+        pathFlags[idx] = packPathFlags(M, pathLength, rcVertexIndex, type);
+        rcVertexGeometry[idx] = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcRadiance);
+        rcVertexCachedValues[idx] = f2(inRcVertexJacobian, inNeePDF);
+    }
+};
+
+// so professional i could cry
+__host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
+    numPixel = (numPixel + 31) & ~31;
+
+    void* raw;
+    cudaMalloc(&raw, numPixel * RESERVOIR_SIZE);
+
+    char* ptr = static_cast<char*>(raw);
+    r.W = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
+    r.F = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.initRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.pathFlags = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.rcVertexGeometry = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
+    r.rcVertexCachedValues = reinterpret_cast<float2*>(ptr); ptr += numPixel * sizeof(float2);
+    r.rcVertexRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    
+    return raw;
+}
+
+
+/**
+ * Gbuffer for shift rejection, primary footprint calculation, and guide layers for denoising
+ */
+struct GBuffer {
+    uint32_t* __restrict__ normals;
+    half2* __restrict__ distance_matID;
+
+    // RGB10A2
+    uint32_t* __restrict__ albedos;
+
+    half2* __restrict__ motionVector;
+    half2* __restrict__ dualMotionVector;
+
+    __device__ __forceinline__ uint32_t getMatID(uint32_t idx) const {
+        return __half_as_short(__ldcs(&distance_matID[idx].y));
+    }
+
+    __device__ __forceinline__ float3 getNormal(uint32_t idx) const {
+        return unpackOctF3(__ldcs(&normals[idx]));
+    }
+
+    __device__ __forceinline__ float getDepth(uint32_t idx) const {
+        return __half2float(__ldcs(&distance_matID[idx].x));
+    }
+    
+    // prefer to keep values in cache for the dual mv generation stage
+    __device__ __forceinline__ float getDepth_notstreaming(uint32_t idx) const {
+        return __half2float(__ldg(&distance_matID[idx].x));
+    }
+
+    // prefer to keep values in cache for the dual mv generation stage
+    __device__ __forceinline__ half2 getMV_notstreaming(uint32_t idx) const {
+        return __ldg(&motionVector[idx]);
+    }
+
+    __device__ __forceinline__ half2 getMV(uint32_t idx) const {
+        return __ldcs(&motionVector[idx]);
+    }
+
+    __device__ __forceinline__ half2 getDualMV(uint32_t idx) const {
+        return __ldcs(&dualMotionVector[idx]);
+    }
+
+    __device__ __forceinline__ void setGeometry(
+        uint32_t idx, 
+        float3 normal, 
+        float dist, 
+        uint32_t matID, 
+        float3 albedo
+    ) const {
+        __stcs(&normals[idx], packOctF3(normal));
+        __stcs(&distance_matID[idx], make_half2(__float2half(dist), __short_as_half(matID)));
+        __stcs(&albedos[idx], packRGB10A2(albedo, false));
+    }
+
+    __device__ __forceinline__ void setMotionVec(
+        uint32_t idx,
+        float2 motionVec
+    ) const {
+        __stcs(&motionVector[idx], make_half2(__float2half(motionVec.x), __float2half(motionVec.y)));
+    }
+
+    __device__ __forceinline__ void setDualMotionVec(
+        uint32_t idx,
+        float2 motionVec
+    ) const {
+        __stcs(&dualMotionVector[idx], make_half2(__float2half(motionVec.x), __float2half(motionVec.y)));
+    }
+
+    __device__ __forceinline__ void setDualMotionVec(
+        uint32_t idx,
+        half2 motionVec
+    ) const {
+        __stcs(&dualMotionVector[idx], motionVec);
+    }
+
+    __device__ __forceinline__ void setInvalidMotionVec(
+        uint32_t idx
+    ) const {
+        uint32_t sentinelBits = 0xFFFFFFFF; 
+        __stcs(&motionVector[idx], reinterpret_cast<const half2&>(sentinelBits));
+    }
+
+    __device__ __forceinline__ void setSkipShadeMotionVec(
+        uint32_t idx
+    ) const {
+        uint32_t sentinelBits = 0xFFFFFFFE; 
+        __stcs(&motionVector[idx], reinterpret_cast<const half2&>(sentinelBits));
+    }
+};
+
+__host__ inline void* allocateGBuffer(GBuffer& r, uint32_t numPixel) {
+    numPixel = (numPixel + 31) & ~31;
+
+    void* raw;
+    cudaMalloc(&raw, numPixel * GBUFFER_SIZE);
+
+    char* ptr = static_cast<char*>(raw);
+    r.normals = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.distance_matID = reinterpret_cast<half2*>(ptr); ptr += numPixel * sizeof(half2);
+    r.albedos = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.motionVector = reinterpret_cast<half2*>(ptr); ptr += numPixel * sizeof(half2);
+    r.dualMotionVector = reinterpret_cast<half2*>(ptr); ptr += numPixel * sizeof(half2);
+    
+    return raw;
+}
+
+__device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint32_t pixelIdx, uint32_t frame) {
+    // ==========================================
+    // 1. UNPACK RESERVOIR DATA
+    // ==========================================
+    float W = r.W[pixelIdx];
+    uint32_t initSeed = r.initRandomSeed[pixelIdx];
+
+    // Unpack F (Assuming fromRGB9E5 returns a float3 or float4)
+    float4 unF = fromRGB9E5(r.F[pixelIdx]);
+
+    // Unpack Path Flags
+    uint32_t flags = r.pathFlags[pixelIdx];
+    uint32_t M = flags & 0xFF;
+    uint32_t pathLength = (flags >> 8) & 0xFF;
+    uint32_t rcVertexInd = (flags >> 16) & 0xFF;
+    uint32_t tech = (flags >> 24) & 0xFF;
+
+    // Unpack RC Vertex Geometry
+    uint4 geom = r.rcVertexGeometry[pixelIdx];
+    uint32_t rcPrimID = geom.x;
+    float2 rcBary = unpackUnorm16ToFloat2(geom.y); 
+    float4 rcWi = unpackOct(geom.z);                 
+    float4 rcRadiance = fromRGB9E5(geom.w);
+
+    // Unpack Cached Values
+    float2 cached = r.rcVertexCachedValues[pixelIdx];
+    float jacobian = cached.x;
+    float neePDF = cached.y;
+
+    // ==========================================
+    // 2. UNPACK GBUFFER DATA
+    // ==========================================
+    // Unpack Normal
+    float3 normal = unpackOctF3(g.normals[pixelIdx]);
+
+    // Unpack Distance & Roughness (Using CUDA intrinsic for half2 -> float2)
+    float2 distmat = __half22float2(g.distance_matID[pixelIdx]);
+    float dist = distmat.x;
+    int matID = __half_as_short(distmat.y);
+
+    // Unpack Albedo
+    float3 albedo;
+    uint32_t matTypeFlag;
+    unpackRGB10A2(g.albedos[pixelIdx], albedo, matTypeFlag);
+
+    // Unpack Motion Vector
+    float2 mv = __half22float2(g.motionVector[pixelIdx]);
+
+    // ==========================================
+    // 3. FORMATTED PRINT
+    // ==========================================
+    printf("==================================================\n");
+    printf(" DATA FOR PIXEL INDEX: %u at Frame %u\n", pixelIdx, frame);
+    printf("==================================================\n");
+    printf("[ RESERVOIR STATE ]\n");
+    printf("  W (Weight)         : %f\n", W);
+    printf("  F (Unpacked RGB)   : (%.3f, %.3f, %.3f)\n", unF.x, unF.y, unF.z);
+    printf("  Init Random Seed   : %u\n", initSeed);
+    printf("  Path Flags         : M = %u | Length = %u | RcIdx = %u | Tech = %u\n", M, pathLength, (rcVertexInd == 254 || rcVertexInd == 255) ? pathLength : rcVertexInd, tech);
+    printf("\n");
+    printf("[ RC VERTEX GEOMETRY ]\n");
+    if (rcPrimID == 0xFFFFFFFF)
+        printf("  Prim ID            : Environment\n");
+    else
+        printf("  Prim ID            : %u\n", rcPrimID);
+    printf("  Barycentrics       : (%.3f, %.3f)\n", rcBary.x, rcBary.y);
+    printf("  Wi (Oct Unpacked)  : (%.3f, %.3f, %.3f)\n", rcWi.x, rcWi.y, rcWi.z);
+    printf("  Radiance           : (%.3f, %.3f, %.3f)\n", rcRadiance.x, rcRadiance.y, rcRadiance.z);
+    printf("  Cached Jacobian    : %f\n", jacobian);
+    printf("  NEE Light PDF      : %f\n", neePDF);
+    printf("\n");
+    printf("[ G-BUFFER STATE ]\n");
+    printf("  Normal             : (%.3f, %.3f, %.3f)\n", normal.x, normal.y, normal.z);
+    printf("  Hit Distance (t)   : %f\n", dist);
+    printf("  Material           : %d\n", matID);
+    printf("  Albedo             : (%.3f, %.3f, %.3f)\n", albedo.x, albedo.y, albedo.z);
+    printf("  Material Flag      : %u\n", matTypeFlag);
+    printf("  Motion Vector      : (%.3f, %.3f)\n", mv.x, mv.y);
+    printf("==================================================\n\n");
+}
+
+struct ShiftResult {
+    bool isValid;               // True if visibility, footprint, and pdfs pass
+    float3 contribution;        // The physical throughput * radiance
+    float p_hat;                // targetFunction(contribution)
+    float jacobian;             // The evaluated Jacobian for this shift
+    float new_cached_jacobian;  // To save to the reservoir if this path wins
+};
+
+struct ReverseShiftResult {
+    float2* __restrict__ phat_jacobian;
+
+    __device__ __forceinline__ void setShiftValues(uint32_t idx, float p_hat, float jacobian) {
+        phat_jacobian[idx] = f2(p_hat, jacobian);
+    }
+
+    __device__ __forceinline__ void getShiftValues(uint32_t idx, float& p_hat, float& jacobian) {
+        float2 data = __ldg(&phat_jacobian[idx]);
+        p_hat = data.x;
+        jacobian = data.y;
+    }
+};
+__device__ __forceinline__ bool needNeePDF(TechniqueType type) {
+    return (type & (SHIFT_K_IS_D | SHIFT_K_IS_D_MINUS_1));
+}
+
+__device__ __forceinline__ bool K_is_D(TechniqueType type) {
+    return (type & SHIFT_K_IS_D);
+}
+
+__device__ __forceinline__ bool K_is_D_minus_1(TechniqueType type) {
+    return (type & SHIFT_K_IS_D_MINUS_1);
+}
+
+__device__ __forceinline__ bool K_is_D_minus_1_nee(TechniqueType type) {
+    return (type & SHIFT_K_IS_D_MINUS_1) && (type & SHIFT_IS_NEE);
+}
+
+__device__ __forceinline__ bool is_nee(TechniqueType type) {
+    return (type & (SHIFT_IS_NEE));
+}
+
+__device__ __forceinline__ bool is_bsdf(TechniqueType type) {
+    return !(type & (SHIFT_IS_NEE));
+}
+
+__device__ __forceinline__ bool is_internal_rc_vertex(TechniqueType type) {
+    return !(type & SHIFT_K_IS_D);
+}
+
+__device__ __forceinline__ bool is_env(TechniqueType type) {
+    return (type & SHIFT_IS_ENV);
+}

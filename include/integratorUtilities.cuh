@@ -864,7 +864,7 @@ __device__ inline int3 GetGridIndex(float4 p, float4 sceneMin, float cellSize) {
     );
 }
 
-__device__ inline unsigned int ComputeGridHash(float4 pos, float4 sceneMin, float mergeRadius, int hashTableSize) {
+__device__ inline uint32_t ComputeGridHash(float4 pos, float4 sceneMin, float mergeRadius, int hashTableSize) {
     int3 gridPos;
     gridPos.x = floorf((pos.x - sceneMin.x) / mergeRadius);
     gridPos.y = floorf((pos.y - sceneMin.y) / mergeRadius);
@@ -874,17 +874,17 @@ __device__ inline unsigned int ComputeGridHash(float4 pos, float4 sceneMin, floa
     gridPos.y = gridPos.y * 19349663;
     gridPos.z = gridPos.z * 83492791;
     
-    unsigned int combined = (unsigned int)(gridPos.x ^ gridPos.y ^ gridPos.z);
-    unsigned int hash = combined % hashTableSize;
+    uint32_t combined = (uint32_t)(gridPos.x ^ gridPos.y ^ gridPos.z);
+    uint32_t hash = combined % hashTableSize;
     return hash;
 }
 
-__device__ inline unsigned int HashGridIndex(int3 gridPos, int hashTableSize) {
-    const unsigned int p1 = 73856093;
-    const unsigned int p2 = 19349663;
-    const unsigned int p3 = 83492791;
+__device__ inline uint32_t HashGridIndex(int3 gridPos, int hashTableSize) {
+    const uint32_t p1 = 73856093;
+    const uint32_t p2 = 19349663;
+    const uint32_t p3 = 83492791;
 
-    unsigned int n = (p1 * gridPos.x) ^ (p2 * gridPos.y) ^ (p3 * gridPos.z);
+    uint32_t n = (p1 * gridPos.x) ^ (p2 * gridPos.y) ^ (p3 * gridPos.z);
     return n % hashTableSize;
 }
 

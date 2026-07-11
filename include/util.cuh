@@ -49,7 +49,6 @@ constexpr bool DO_PROGRESSIVERENDER = true;
 #define DO_FIREFLY_CLAMP 1
 #endif
 
-inline __host__ __device__ __forceinline__ float3 f3() {return make_float3(0,0,0);}
 
 inline __host__ __device__ __forceinline__ float3 f3(float4 x) {
     return make_float3(x.x, x.y, x.z);
@@ -67,6 +66,14 @@ inline __host__ __device__ __forceinline__ float4 f4() {return make_float4(0,0,0
 
 inline __host__ __device__ __forceinline__ float4 f4(float a) {return make_float4(a,a,a,0);}
 
+inline __host__ __device__ __forceinline__ float3 f3(float x, float y, float z) {
+    return make_float3(x, y, z);
+}
+
+inline __host__ __device__ __forceinline__ float3 f3() {return make_float3(0,0,0);}
+
+inline __host__ __device__ __forceinline__ float3 f3(float a) {return make_float3(a,a,a);}
+
 inline __host__ __device__ __forceinline__ float2 f2(float x, float y) {return make_float2(x, y);}
 
 inline __host__ __device__ __forceinline__ float2 f2() {return make_float2(0,0);}
@@ -75,10 +82,6 @@ inline __host__ __device__ __forceinline__ float2 f2(float a) {return make_float
 
 inline __host__ __device__ __forceinline__ float4 operator+(const float4 &a, const float4 &b) {
     return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, 0.0f);
-}
-
-inline __host__ __device__ __forceinline__ float2 operator+(const float2 &a, const float2 &b) {
-    return make_float2(a.x + b.x, a.y + b.y);
 }
 
 inline __host__ __device__ __forceinline__ float4 operator-(const float4 &a, const float4 &b) {
@@ -90,14 +93,6 @@ inline __host__ __device__ __forceinline__ float4 operator*(const float4 &a, flo
 }
 
 inline __host__ __device__ __forceinline__ float4 operator*(float t, const float4 &a) {
-    return a * t;
-}
-
-inline __host__ __device__ __forceinline__ float2 operator*(const float2 &a, float t) {
-    return make_float2(a.x * t, a.y * t);
-}
-
-inline __host__ __device__ __forceinline__ float2 operator*(float t, const float2 &a) {
     return a * t;
 }
 
@@ -164,6 +159,139 @@ inline __host__ __device__ __forceinline__ float4 cross3(const float4 &a, const 
         a.x*b.y - a.y*b.x,
         0.0f
     );
+}
+
+inline __host__ __device__ __forceinline__ float3 operator+(const float3 &a, const float3 &b) {
+    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+inline __host__ __device__ __forceinline__ float3 operator-(const float3 &a, const float3 &b) {
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+inline __host__ __device__ __forceinline__ float3 operator*(const float3 &a, float t) {
+    return make_float3(a.x * t, a.y * t, a.z * t);
+}
+
+inline __host__ __device__ __forceinline__ float3 operator*(float t, const float3 &a) {
+    return a * t;
+}
+
+inline __host__ __device__ __forceinline__ float3 operator/(const float3 &a, float t) {
+    return make_float3(a.x / t, a.y / t, a.z / t);
+}
+
+inline __host__ __device__ __forceinline__ float3& operator+=(float3 &a, const float3 &b) {
+    a.x += b.x; a.y += b.y; a.z += b.z;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float3& operator*=(float3 &a, float t) {
+    a.x *= t; a.y *= t; a.z *= t;
+    return a;
+}
+
+inline __host__ __device__  __forceinline__ float3& operator*=(float3& a, const float3& b) {
+    a.x *= b.x; a.y *= b.y; a.z *= b.z;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float3& operator/=(float3 &a, float t) {
+    a.x /= t; a.y /= t; a.z /= t;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float3 operator*(const float3& a, const float3& b) {
+    return make_float3(a.x*b.x, a.y*b.y, a.z*b.z);
+}
+
+inline __host__ __device__ __forceinline__ float3 operator/(const float3& a, const float3& b) {
+    return make_float3(a.x/b.x, a.y/b.y, a.z/b.z);
+}
+
+inline __host__ __device__ __forceinline__ float3 operator-(const float3& v) {
+    return make_float3(-v.x, -v.y, -v.z);
+}
+
+inline __host__ __device__ __forceinline__ float dot(const float3 &a, const float3 &b) {
+    return a.x*b.x + a.y*b.y + a.z*b.z;
+}
+
+inline __host__ __device__ __forceinline__ float length(const float3 &v) {
+    return sqrtf(dot(v, v));
+}
+
+inline __host__ __device__ __forceinline__ float lengthSquared(const float3 &v) {
+    return dot(v, v);
+}
+
+inline __host__ __device__ __forceinline__ float3 normalize(const float3 &v) {
+    float invLen = rsqrtf(dot(v, v));
+    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
+}
+
+inline __host__ __device__ __forceinline__ float3 cross(const float3 &a, const float3 &b) {
+    return make_float3(
+        a.y*b.z - a.z*b.y,
+        a.z*b.x - a.x*b.z,
+        a.x*b.y - a.y*b.x
+    );
+}
+
+
+inline __host__ __device__ __forceinline__ float2 operator+(const float2 &a, const float2 &b) {
+    return make_float2(a.x + b.x, a.y + b.y);
+}
+
+inline __host__ __device__ __forceinline__ float2 operator-(const float2 &a, const float2 &b) {
+    return make_float2(a.x - b.x, a.y - b.y);
+}
+
+inline __host__ __device__ __forceinline__ float2 operator*(const float2 &a, float t) {
+    return make_float2(a.x * t, a.y * t);
+}
+
+inline __host__ __device__ __forceinline__ float2 operator*(float t, const float2 &a) {
+    return a * t;
+}
+
+inline __host__ __device__ __forceinline__ float2 operator/(const float2 &a, float t) {
+    return make_float2(a.x / t, a.y / t);
+}
+
+inline __host__ __device__ __forceinline__ float2& operator+=(float2 &a, const float2 &b) {
+    a.x += b.x; a.y += b.y;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float2& operator*=(float2 &a, float t) {
+    a.x *= t; a.y *= t;
+    return a;
+}
+
+inline __host__ __device__  __forceinline__ float2& operator*=(float2& a, const float2& b) {
+    a.x *= b.x; a.y *= b.y;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float2& operator/=(float2 &a, float t) {
+    a.x /= t; a.y /= t;
+    return a;
+}
+
+inline __host__ __device__ __forceinline__ float2 operator*(const float2& a, const float2& b)
+{
+    return make_float2(a.x*b.x, a.y*b.y);
+}
+
+inline __host__ __device__ __forceinline__ float2 operator/(const float2& a, const float2& b)
+{
+    return make_float2(a.x/b.x, a.y/b.y);
+}
+
+inline __host__ __device__ __forceinline__ float2 operator-(const float2& v)
+{
+    return make_float2(-v.x, -v.y);
 }
 
 inline __host__ __device__ __forceinline__ float clamp(float x, float minVal, float maxVal) {
@@ -336,6 +464,11 @@ __device__ __host__ inline float luminance(float4 c)
     return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
 }
 
+__device__ __host__ inline float luminance(float3 c)
+{
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
 __host__ inline std::string trim(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\r\n");
     if (std::string::npos == first) return str;
@@ -356,13 +489,21 @@ __host__ inline bool parseBool(const std::string& val) {
     return (v == "true");
 }
 
-__device__ __forceinline__ unsigned int toRGB9E5(float4 c)
+__device__ __forceinline__ uint32_t toRGB9E5(float4 c)
 {
     float r = fmaxf(0.0f, c.x);
     float g = fmaxf(0.0f, c.y);
     float b = fmaxf(0.0f, c.z);
     
     float maxRGB = fmaxf(r, fmaxf(g, b));
+
+    if (maxRGB > 65000.0f) {
+        float scaleDown = 65000.0f / maxRGB;
+        r *= scaleDown;
+        g *= scaleDown;
+        b *= scaleDown;
+        maxRGB = 65000.0f;
+    }
 
     int expShared = (maxRGB < 1.5258789e-05f) ? 0 : (int)floorf(log2f(maxRGB)) + 17;
     expShared = clamp(expShared, 0, 31);
@@ -381,10 +522,10 @@ __device__ __forceinline__ unsigned int toRGB9E5(float4 c)
         Bi = (int)roundf(b / denom);
     }
 
-    return (unsigned int)((expShared << 27) | ((Bi & 0x1FF) << 18) | ((Gi & 0x1FF) << 9) | (Ri & 0x1FF));
+    return (uint32_t)((expShared << 27) | ((Bi & 0x1FF) << 18) | ((Gi & 0x1FF) << 9) | (Ri & 0x1FF));
 }
 
-__device__ __forceinline__ float4 fromRGB9E5(unsigned int packed)
+__device__ __forceinline__ float4 fromRGB9E5(uint32_t packed)
 {
     int exponent = (int)(packed >> 27) - 15 - 9;
     
@@ -400,7 +541,7 @@ __device__ __forceinline__ float4 fromRGB9E5(unsigned int packed)
 // Encodes a unit vector into 32 bits (2x 16-bit snorm) with minimal error.
 __device__ __forceinline__ float signNotZero(float k) { return (k >= 0.0f) ? 1.0f : -1.0f; }
 
-__device__ __forceinline__ unsigned int packOct(float4 v)
+__device__ __forceinline__ uint32_t packOct(float4 v)
 {
     float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
     float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
@@ -409,7 +550,6 @@ __device__ __forceinline__ unsigned int packOct(float4 v)
     res.x = v.x * invL1;
     res.y = v.y * invL1;
 
-    // 2. Reflect folds if in lower hemisphere
     if (v.z < 0.0f) {
         float tempX = res.x;
         float tempY = res.y;
@@ -417,14 +557,9 @@ __device__ __forceinline__ unsigned int packOct(float4 v)
         res.y = (1.0f - fabsf(tempX)) * signNotZero(tempY);
     }
 
-    // 3. SNORM Quantization (The Fix)
-    // We map [-1, 1] -> [-32767, 32767]
-    // We use __float2int_rn to Round-to-Nearest, reducing error further.
     int16_t x = (int16_t)__float2int_rn(fminf(fmaxf(res.x, -1.0f), 1.0f) * 32767.0f);
     int16_t y = (int16_t)__float2int_rn(fminf(fmaxf(res.y, -1.0f), 1.0f) * 32767.0f);
 
-    // Pack two int16s into one uint32
-    // We cast to uint16_t first to ensure bits are preserved correctly during shift
     return ((uint32_t)(uint16_t)x) | (((uint32_t)(uint16_t)y) << 16);
 }
 
@@ -432,12 +567,9 @@ __device__ __forceinline__ float4 unpackOct(uint32_t p) {
     int16_t packedX = (int16_t)(p & 0xFFFF);
     int16_t packedY = (int16_t)(p >> 16);
 
-    // 2. Convert back to float [-1, 1]
-    // Using max(-1.0f, ...) prevents -32768 (if it occurred) from breaking things
     float x = fmaxf(-1.0f, packedX / 32767.0f);
     float y = fmaxf(-1.0f, packedY / 32767.0f);
 
-    // 3. Map back to Sphere
     float3 v;
     v.x = x;
     v.y = y;
@@ -455,12 +587,9 @@ __device__ __forceinline__ float3 unpackOctF3(uint32_t p) {
     int16_t packedX = (int16_t)(p & 0xFFFF);
     int16_t packedY = (int16_t)(p >> 16);
 
-    // 2. Convert back to float [-1, 1]
-    // Using max(-1.0f, ...) prevents -32768 (if it occurred) from breaking things
     float x = fmaxf(-1.0f, packedX / 32767.0f);
     float y = fmaxf(-1.0f, packedY / 32767.0f);
 
-    // 3. Map back to Sphere
     float3 v;
     v.x = x;
     v.y = y;
@@ -474,7 +603,7 @@ __device__ __forceinline__ float3 unpackOctF3(uint32_t p) {
     return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
 }
 
-__device__ __forceinline__ unsigned int packOctF3(float3 v)
+__device__ __forceinline__ uint32_t packOctF3(float3 v)
 {
     float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
     float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
@@ -483,7 +612,6 @@ __device__ __forceinline__ unsigned int packOctF3(float3 v)
     res.x = v.x * invL1;
     res.y = v.y * invL1;
 
-    // 2. Reflect folds if in lower hemisphere
     if (v.z < 0.0f) {
         float tempX = res.x;
         float tempY = res.y;
@@ -491,14 +619,9 @@ __device__ __forceinline__ unsigned int packOctF3(float3 v)
         res.y = (1.0f - fabsf(tempX)) * signNotZero(tempY);
     }
 
-    // 3. SNORM Quantization (The Fix)
-    // We map [-1, 1] -> [-32767, 32767]
-    // We use __float2int_rn to Round-to-Nearest, reducing error further.
     int16_t x = (int16_t)__float2int_rn(fminf(fmaxf(res.x, -1.0f), 1.0f) * 32767.0f);
     int16_t y = (int16_t)__float2int_rn(fminf(fmaxf(res.y, -1.0f), 1.0f) * 32767.0f);
 
-    // Pack two int16s into one uint32
-    // We cast to uint16_t first to ensure bits are preserved correctly during shift
     return ((uint32_t)(uint16_t)x) | (((uint32_t)(uint16_t)y) << 16);
 }
 
@@ -546,21 +669,13 @@ __device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* 
     if (flag1) *flag1 = (p >> 30) & 1;
     if (flag2) *flag2 = (p >> 31) & 1;
 
-    // 2. Unpack SNORMs with Sign Extension
-    // We need to interpret the 15-bit values as signed integers.
-    // The "Shift Left then Shift Right" trick propagates the sign bit.
-    
-    // X is bottom 15 bits. Shift left 17 (32-15), then arithmetic shift right 17.
     int32_t packedX = ((int32_t)(p << 17)) >> 17;
     
-    // Y is bits 15-29. Shift left 2 (remove flags), then arithmetic shift right 17 (remove X).
     int32_t packedY = ((int32_t)(p << 2)) >> 17;
 
-    // 3. Convert back to float [-1, 1]
     float x = fmaxf(-1.0f, packedX / 16383.0f);
     float y = fmaxf(-1.0f, packedY / 16383.0f);
 
-    // 4. Map back to Sphere (Standard Octahedral Decode)
     float3 v;
     v.x = x;
     v.y = y;
@@ -572,6 +687,91 @@ __device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* 
 
     float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
     return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
+}
+
+__device__ __forceinline__ uint32_t packFloat2ToSnorm16(float2 v) 
+{
+    float cx = fmaxf(-1.0f, fminf(v.x, 1.0f));
+    float cy = fmaxf(-1.0f, fminf(v.y, 1.0f));
+
+    int ix = (int)(cx >= 0.0f ? (cx * 32767.0f + 0.5f) : (cx * 32767.0f - 0.5f));
+    int iy = (int)(cy >= 0.0f ? (cy * 32767.0f + 0.5f) : (cy * 32767.0f - 0.5f));
+
+    uint32_t packed = ((uint32_t)ix & 0x0000FFFF) | ((uint32_t)iy << 16);
+
+    return packed;
+}
+
+inline __forceinline__ __device__ float2 unpackSnorm16ToFloat2(uint32_t packed) 
+{
+    int ix = (int)(packed << 16) >> 16;
+    int iy = (int)packed >> 16;
+
+    float fx = (float)ix / 32767.0f;
+    float fy = (float)iy / 32767.0f;
+
+    fx = fmaxf(fx, -1.0f);
+    fy = fmaxf(fy, -1.0f);
+
+    return make_float2(fx, fy);
+}
+
+__device__ __forceinline__ uint32_t packFloat2ToUnorm16(float2 v) 
+{
+    float cx = fmaxf(0.0f, fminf(v.x, 1.0f));
+    float cy = fmaxf(0.0f, fminf(v.y, 1.0f));
+
+    uint32_t ix = (uint32_t)(cx * 65535.0f + 0.5f);
+    uint32_t iy = (uint32_t)(cy * 65535.0f + 0.5f);
+
+    uint32_t packed = (ix & 0x0000FFFF) | (iy << 16);
+
+    return packed;
+}
+
+__device__ __forceinline__ float2 unpackUnorm16ToFloat2(uint32_t packed) 
+{
+    uint32_t ix = packed & 0x0000FFFF;
+    uint32_t iy = packed >> 16;
+
+    float fx = (float)ix / 65535.0f;
+    float fy = (float)iy / 65535.0f;
+
+    return make_float2(fx, fy);
+}
+
+__device__ __forceinline__ uint32_t packRGBA8(float3 albedo, float roughness) {
+    // __saturatef clamps to [0, 1] before multiplying
+    uint32_t r = __float2uint_rn(__saturatef(albedo.x) * 255.0f);
+    uint32_t g = __float2uint_rn(__saturatef(albedo.y) * 255.0f);
+    uint32_t b = __float2uint_rn(__saturatef(albedo.z) * 255.0f);
+    uint32_t a = __float2uint_rn(__saturatef(roughness) * 255.0f);
+    
+    return (a << 24) | (b << 16) | (g << 8) | r;
+}
+
+__device__ __forceinline__ void unpackRGBA8(uint32_t packed, float3& albedo, float& roughness) {
+    albedo.x  = (packed & 0xFF) / 255.0f;
+    albedo.y  = ((packed >> 8) & 0xFF) / 255.0f;
+    albedo.z  = ((packed >> 16) & 0xFF) / 255.0f;
+    roughness = ((packed >> 24) & 0xFF) / 255.0f;
+}
+
+__device__ __forceinline__ uint32_t packRGB10A2(float3 albedo, uint32_t matTypeFlag) {
+    uint32_t r = __float2uint_rn(__saturatef(albedo.x) * 1023.0f);
+    uint32_t g = __float2uint_rn(__saturatef(albedo.y) * 1023.0f);
+    uint32_t b = __float2uint_rn(__saturatef(albedo.z) * 1023.0f);
+    
+    uint32_t a = matTypeFlag & 0x3; 
+    
+    return (a << 30) | (b << 20) | (g << 10) | r;
+}
+
+__device__ __forceinline__ void unpackRGB10A2(uint32_t packed, float3& albedo, uint32_t& matTypeFlag) {
+    albedo.x    = (packed & 0x3FF) / 1023.0f;
+    albedo.y    = ((packed >> 10) & 0x3FF) / 1023.0f;
+    albedo.z    = ((packed >> 20) & 0x3FF) / 1023.0f;
+    matTypeFlag = (packed >> 30) & 0x3;
 }
 
 __host__ __device__ inline bool IsPrime(int n) {
@@ -681,4 +881,8 @@ __device__ inline float2 dirToUV(float4 dir) {
     float v = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y))) / PI; 
     
     return make_float2(u, v);
+}
+
+__host__ __device__ __forceinline__ inline float lerp(float a, float b, float t) {
+    return a + (b - a) * t;
 }

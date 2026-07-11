@@ -6,30 +6,26 @@
 #include "objects.cuh"
 #include "util.cuh"
 #include "reflectors.cuh"
+#include "helpers.cuh"
 
 extern "C" {
-    __constant__ PipelineParams params;
+    __constant__ PipelineParams allParams;
 }
 
 extern "C" __global__ void __closesthit__gather() {
     float2 uvs = optixGetTriangleBarycentrics();
     
-    optixSetPayload_0(1);                                   // p0: Hit flag (1 = true)
-    optixSetPayload_1(__float_as_uint(optixGetRayTmax()));  // p1: Hit distance (t)
-    optixSetPayload_2(__float_as_uint(uvs.x));              // p2: Barycentric U
-    optixSetPayload_3(__float_as_uint(uvs.y));              // p3: Barycentric V
-    optixSetPayload_4(optixGetPrimitiveIndex());            // p4: Primitive ID
-}
-
-extern "C" __global__ void __miss__gather() {
-    optixSetPayload_0(0);
+    optixSetPayload_0(__float_as_uint(uvs.x));
+    optixSetPayload_1(__float_as_uint(uvs.y));
 }
 
 extern "C" __global__ void __raygen__unidirectional() {
+    const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
+    
     uint3 launch_index = optixGetLaunchIndex();
     
-    unsigned int x = launch_index.x;
-    unsigned int y = launch_index.y;
+    uint32_t x = launch_index.x;
+    uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
 
     RNGState localState = load_rng(pixelIdx, params.frame_index, 0, nullptr);
@@ -54,30 +50,28 @@ extern "C" __global__ void __raygen__unidirectional() {
             break;
         }
 
+        int materialID;
+        float2 uv;
+        float4 shadingPos;
+        bool backface;
+        float4 normal;
+        float4 emission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
-        int materialID = tri.materialID;
-        float u = hitData.barycentrics.x;
-        float v = hitData.barycentrics.y;
+        getData(
+            tri,
+            params.shadeContext,
+            hitData.barycentrics, 
+            r.direction,
 
-        float2 uv = __ldcs(&params.shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) + 
-            __ldg(&params.shadeContext.vertices->uvs[tri.uvbInd]) * u + 
-            __ldg(&params.shadeContext.vertices->uvs[tri.uvcInd]) * v;
+            materialID,
+            uv,
+            shadingPos,
+            normal,
+            backface, 
+            emission
+        );
 
-        float4 apos = __ldg(&params.shadeContext.vertices->positions[tri.aInd]);
-        float4 bpos = __ldg(&params.shadeContext.vertices->positions[tri.bInd]);
-        float4 cpos = __ldg(&params.shadeContext.vertices->positions[tri.cInd]);
-
-        float4 shadingPos = (1.0f - u - v) * apos + u * bpos + v * cpos;
-
-        float4 a_n = __ldg(&params.shadeContext.vertices->normals[tri.naInd]);
-        float4 b_n = __ldg(&params.shadeContext.vertices->normals[tri.nbInd]);
-        float4 c_n = __ldg(&params.shadeContext.vertices->normals[tri.ncInd]);
-        
-        float4 normal = (1.0f - u - v) * a_n + u * b_n + v * c_n;
-        bool backface = dot(normal, r.direction) > 0.0f;
-        normal = backface ? -normal : normal;
-
-        float4 contribution = backface ? f4(0.0f) : tri.emission * throughput;
+        float4 contribution = backface ? f4(0.0f) : emission * throughput;
 
         float4 incomingDir;
         toLocal(r.direction, normal, incomingDir);

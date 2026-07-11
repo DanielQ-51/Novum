@@ -823,9 +823,6 @@ __device__ inline void sample_f_eval(RNGState& localState, const Material* __res
     const float4& wi, float etaI, float etaT, bool backface, float4& wo, float4& f_val, float& pdf, const float2 uv, 
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
-    if (isnan(wi.x) || isnan(wi.y) || isnan(wi.z)) {
-        //printf("NaN DETECTED ON INPUT WI: (%f, %f, %f)\n", wi.x, wi.y, wi.z);
-    }
     const Material& mat = materials[materialID];
     float4 albedo = mat.albedo;
     if (mat.hasTexture)
@@ -894,7 +891,7 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     }
     else if (mat.type == MAT_SMOOTHDIELECTRIC)
     {
-        pdf = 0.0f;
+        pdf = 999999999.0f;
     }
     else if (mat.type == MAT_LEAF)
     {
@@ -907,5 +904,75 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     else if (mat.type == MAT_MICROFACETDIELECTRIC)
     {
         microfacet_dielectric_pdf(etaI, etaT, mat.roughness, -wi, wo, pdf);
+    }
+}
+__device__ inline void f_pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
+    const float4& wi, const float4& wo, float etaI, float etaT, float4& f_val, float& pdf, const float2 uv,
+    int transportMode = TRANSPORTMODE_RADIANCE)
+{
+    const Material& mat = materials[materialID];
+    float4 albedo = mat.albedo;
+    if (mat.hasTexture)
+        sampleTexture(mat, textures, uv, albedo);
+
+    float trans = mat.transmission;
+    float4 trans4;
+    if (mat.hasTransMap)
+    {
+        sampleTexture(mat, textures, uv, trans4);
+        trans = trans4.x;
+    }
+
+    if (mat.type == MAT_DIFFUSE)
+    {
+        cosine_f(mat.albedo, f_val);
+        cosine_pdf(wo, pdf);
+    }
+    else if (mat.type == MAT_METAL)
+    {
+        microfacet_metal_f(mat.eta, mat.k, mat.roughness, -wi, wo, f_val);
+        microfacet_pdf(mat.roughness, -wi, wo, pdf);
+    }
+    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    {
+        //smooth_dielectric_f(-wi, wo, etaI, etaT, reflect_dielectric, TIR, f_val);
+        pdf = 999999999.0f;
+    }
+    else if (mat.type == MAT_LEAF)
+    {
+        leaf_f(albedo, mat.ior, etaI, mat.roughness, trans, -wi, wo, f_val);
+        leaf_pdf(mat.ior, etaI, mat.roughness, trans, -wi, wo, pdf);
+    }
+    else if (mat.type == MAT_DELTAMIRROR)
+    {
+        mirror_f(f_val, wo);
+        mirror_pdf(pdf);
+    }
+    else if (mat.type == MAT_MICROFACETDIELECTRIC)
+    {
+        microfacet_dielectric_f(etaI, etaT, mat.roughness, -wi, wo, f_val);
+        microfacet_dielectric_pdf(etaI, etaT, mat.roughness, -wi, wo, pdf);
+    }
+}
+
+
+__device__ inline void getAlbedo(
+    const Material* __restrict__ materials, 
+    int materialID, 
+    const float4* __restrict__ textures, 
+    const float2 uv,
+
+    float3& albedo
+) {
+    const Material& mat = materials[materialID];
+    albedo = f3(mat.albedo);
+    if (mat.hasTexture)
+        sampleTexture(mat, textures, uv, f4(albedo));
+    
+    if (mat.type == MAT_METAL) {
+        albedo = f3(((mat.eta - f4(1.0f)) * (mat.eta - f4(1.0f)) + mat.k * mat.k)/
+                 ((mat.eta + f4(1.0f)) * (mat.eta + f4(1.0f)) + mat.k * mat.k));
+    } else if (mat.type == MAT_DELTAMIRROR || mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_THINDIELECTRIC) {
+        albedo = f3(1.0f);
     }
 }

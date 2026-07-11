@@ -311,7 +311,7 @@ __global__ void cleanAndFormatImage(
     float4 acc = accumulationBuffer[pixelIndex];
     float4 ov = overlayBuffer[pixelIndex];
     float4 finalColor;
-
+    
     // 2. Check for NaNs/Infs BEFORE normalization
     if (isnan(acc.x) || isnan(acc.y) || isnan(acc.z)) {
         finalColor = f4(1.0f, 0.0f, 1.0f);

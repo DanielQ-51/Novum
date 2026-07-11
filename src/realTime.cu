@@ -28,7 +28,7 @@ __global__ void processPrimary(
 
     Reservoir writeReservoir,
     
-    unsigned int* predicate,
+    uint32_t* predicate,
     int activeRays,
 
     GBuffer gBuffer,
@@ -47,9 +47,9 @@ __global__ void processPrimary(
     RNGState localState = load_rng(pixelIdx, frameNum, 0, rngStates);
 
 #if RNG_MODE == 3
-    unsigned int seed = localState.getSeed();
+    uint32_t seed = localState.getSeed();
 #else // Restir integrator MUST use stateless RNG
-    unsigned int seed = 0xFFFFFFFF;
+    uint32_t seed = 0xFFFFFFFF;
 #endif
     
     float4 barycentric;
@@ -134,7 +134,7 @@ __global__ void processPrimary(
         float4 shadingPosToLightNormalized;
         float t_max;
         float pdf;
-        unsigned int primID; // 0xFFFFFFFF for env, otherwise the triangle primID
+        uint32_t primID; // 0xFFFFFFFF for env, otherwise the triangle primID
         float2 barycentrics;
 
         bool sampledEnv = shadeContext.lightSampler.sample_ReSTIR_rc_data(
@@ -312,13 +312,13 @@ __host__ void allocateBuffers(
     ReSTIRRayQueue& q2, 
     HitBuffer& hb, 
     ReSTIRShadowQueue& sq, 
-    unsigned int*& pr,
-    unsigned int*& si,
+    uint32_t*& pr,
+    uint32_t*& si,
     float4*& out,
-    unsigned int*& skeys,
-    unsigned int*& svals,
-    unsigned int*& skeys1,
-    unsigned int*& svals1,
+    uint32_t*& skeys,
+    uint32_t*& svals,
+    uint32_t*& skeys1,
+    uint32_t*& svals1,
     Reservoir& r1,
     Reservoir& r2,
     CandidateReservoirs& cr1,
@@ -329,7 +329,7 @@ __host__ void allocateBuffers(
     size_t f4Size    = maxRays * sizeof(float4);
     size_t floatSize = maxRays * sizeof(float);
     size_t halfSize  = maxRays * sizeof(half);
-    size_t uIntSize  = maxRays * sizeof(unsigned int);
+    size_t uIntSize  = maxRays * sizeof(uint32_t);
     size_t uInt2Size = maxRays * sizeof(uint2);
     size_t uInt4Size = maxRays * sizeof(uint4);
 
@@ -358,29 +358,29 @@ __host__ void allocateBuffers(
     sq.origin_plus_dist = (float4*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    sq.direction = (unsigned int*)temp_ptr;
+    sq.direction = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    sq.pixelIdx = (unsigned int*)temp_ptr;
+    sq.pixelIdx = (uint32_t*)temp_ptr;
 
     // Compaction Buffers
     cudaMalloc(&temp_ptr, uIntSize);
-    pr = (unsigned int*)temp_ptr;
+    pr = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    si = (unsigned int*)temp_ptr;
+    si = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    skeys = (unsigned int*)temp_ptr;
+    skeys = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    svals = (unsigned int*)temp_ptr;
+    svals = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    skeys1 = (unsigned int*)temp_ptr;
+    skeys1 = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    svals1 = (unsigned int*)temp_ptr;
+    svals1 = (uint32_t*)temp_ptr;
 
     // Output Buffer
     cudaMalloc(&temp_ptr, f4Size);
@@ -391,7 +391,7 @@ __host__ void allocateBuffers(
     r1.W = (float*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    r1.pathFlags = (unsigned int*)temp_ptr;
+    r1.pathFlags = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uInt4Size);
     r1.shiftState = (uint4*)temp_ptr;
@@ -409,14 +409,14 @@ __host__ void allocateBuffers(
     r1.weightSum = (float*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    r1.suffixThroughput = (unsigned int*)temp_ptr;
+    r1.suffixThroughput = (uint32_t*)temp_ptr;
 
     // Reservoir 2
     cudaMalloc(&temp_ptr, floatSize);
     r2.W = (float*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    r2.pathFlags = (unsigned int*)temp_ptr;
+    r2.pathFlags = (uint32_t*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uInt4Size);
     r2.shiftState = (uint4*)temp_ptr;
@@ -434,7 +434,7 @@ __host__ void allocateBuffers(
     r2.weightSum = (float*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    r2.suffixThroughput = (unsigned int*)temp_ptr;
+    r2.suffixThroughput = (uint32_t*)temp_ptr;
 
     // Candidate Reservoirs 1
     cudaMalloc(&temp_ptr, floatSize);
@@ -447,7 +447,7 @@ __host__ void allocateBuffers(
     gb.depth = (float*)temp_ptr;
 
     cudaMalloc(&temp_ptr, uIntSize);
-    gb.normal = (unsigned int*)temp_ptr;
+    gb.normal = (uint32_t*)temp_ptr;
 }
 
 void freeBuffers(
@@ -455,13 +455,13 @@ void freeBuffers(
     ReSTIRRayQueue& q2, 
     HitBuffer& hb, 
     ReSTIRShadowQueue& sq, 
-    unsigned int* pr,
-    unsigned int* si,
+    uint32_t* pr,
+    uint32_t* si,
     float4* out,
-    unsigned int* skeys,
-    unsigned int* svals,
-    unsigned int* skeys1,
-    unsigned int* svals1,
+    uint32_t* skeys,
+    uint32_t* svals,
+    uint32_t* skeys1,
+    uint32_t* svals1,
     Reservoir& r1,
     Reservoir& r2,
     CandidateReservoirs& cr1,
@@ -556,17 +556,17 @@ __global__ void shade(
 
     Reservoir writeReservoir,
     
-    unsigned int* predicate,
+    uint32_t* predicate,
     int activeRays,
 
     int frameNum,
     int maxDepth,
 
-    unsigned int* shadowRayIndex,
+    uint32_t* shadowRayIndex,
     
     float4* output,
 
-    unsigned int* sortValuesOut
+    uint32_t* sortValuesOut
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -585,7 +585,7 @@ __global__ void shade(
     float4 throughput;
     int pixelIdx;
     int depth;
-    unsigned int totalPDF;
+    uint32_t totalPDF;
     float lastPDF;
 
     readQueue.getAll(
@@ -930,8 +930,8 @@ __global__ void processShadowRay(
 __global__ void compactRayQueue_NOSORT(
     const ReSTIRRayQueue sparseQueue,
     ReSTIRRayQueue denseQueue,
-    const unsigned int* __restrict__ predicates,
-    const unsigned int* __restrict__ scanIndices,
+    const uint32_t* __restrict__ predicates,
+    const uint32_t* __restrict__ scanIndices,
     int activeRays
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -952,10 +952,10 @@ __global__ void compactRayQueue_NOSORT(
 __global__ void compactRayQueue_SORT(
     const ReSTIRRayQueue sparseQueue,
     ReSTIRRayQueue denseQueue,
-    const unsigned int* __restrict__ predicates,
-    const unsigned int* __restrict__ scanIndices,
-    unsigned int* sortKeysIn,
-    unsigned int* sortValuesIn,
+    const uint32_t* __restrict__ predicates,
+    const uint32_t* __restrict__ scanIndices,
+    uint32_t* sortKeysIn,
+    uint32_t* sortValuesIn,
     int activeRays
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -984,8 +984,8 @@ __global__ void calculateMaterialSortKeys(
     const HitBuffer hitBuffer,
     const Material* __restrict__ materials,
     const Triangle* __restrict__ scene,
-    unsigned int* sortKeysIn,
-    unsigned int* sortValuesIn,
+    uint32_t* sortKeysIn,
+    uint32_t* sortValuesIn,
     int activeRays
 ) 
 {
@@ -1000,7 +1000,7 @@ __global__ void calculateMaterialSortKeys(
     int textureStartIndex = (materialID < 0) ? 
         0 : __ldg(&materials[materialID].textureIndex);
 
-    unsigned int key = generateMaterialSortKey(materialID, textureStartIndex);
+    uint32_t key = generateMaterialSortKey(materialID, textureStartIndex);
     sortKeysIn[idx] = key;
     sortValuesIn[idx] = idx;
 }
@@ -1009,14 +1009,14 @@ __global__ void calculateMaterialSortKeys(
 __global__ void reorderRayQueue(
     const ReSTIRRayQueue unsortedQueue,
     ReSTIRRayQueue sortedQueue,
-    const unsigned int* __restrict__ sortedIndices,
+    const uint32_t* __restrict__ sortedIndices,
     int activeRays
 )
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
 
-    unsigned int sortedIdx = sortedIndices[idx];
+    uint32_t sortedIdx = sortedIndices[idx];
 
     __stcs(&sortedQueue.origin_plus_dir[idx], __ldcs(&unsortedQueue.origin_plus_dir[sortedIdx]));
     __stcs(&sortedQueue.payload[idx]        , __ldcs(&unsortedQueue.payload[sortedIdx]));
@@ -1052,8 +1052,8 @@ __host__ void launch_ReSTIR_PT(
     ReSTIRRayQueue writeQueue;
     HitBuffer hitBuffer;
     ReSTIRShadowQueue shadowQueue;
-    unsigned int* d_predicate;
-    unsigned int* d_scanIndices;
+    uint32_t* d_predicate;
+    uint32_t* d_scanIndices;
     float4* d_finalOutput;
 
     Reservoir readReservoir;
@@ -1062,13 +1062,13 @@ __host__ void launch_ReSTIR_PT(
     CandidateReservoirs temp_candidates;
     GBuffer gBuffer;
 
-    unsigned int* d_sortKeysIn;
-    unsigned int* d_sortValuesOut;
-    unsigned int* d_sortKeysOut;
-    unsigned int* d_sortValuesIn;
+    uint32_t* d_sortKeysIn;
+    uint32_t* d_sortValuesOut;
+    uint32_t* d_sortKeysOut;
+    uint32_t* d_sortValuesIn;
 
-    unsigned int* d_shadowRayIndex;
-    cudaMalloc(&d_shadowRayIndex, sizeof(unsigned int));
+    uint32_t* d_shadowRayIndex;
+    cudaMalloc(&d_shadowRayIndex, sizeof(uint32_t));
 
     allocateBuffers(
         readQueue, 
@@ -1149,12 +1149,12 @@ __host__ void launch_ReSTIR_PT(
             d_predicate, d_scanIndices, activeRays
         );
 
-        unsigned int lastPredicate = 0;
-        unsigned int lastScanIndex = 0;
+        uint32_t lastPredicate = 0;
+        uint32_t lastScanIndex = 0;
         int lastIndex = activeRays - 1;
 
-        cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
         activeRays = lastScanIndex + lastPredicate;
         
@@ -1250,13 +1250,13 @@ __host__ void launch_ReSTIR_PT(
                 d_predicate, d_scanIndices, activeRays
             );
 
-            unsigned int lastPredicate = 0;
-            unsigned int lastScanIndex = 0;
+            uint32_t lastPredicate = 0;
+            uint32_t lastScanIndex = 0;
 
             int lastIndex = activeRays - 1;
 
-            cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
-            cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(unsigned int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&lastPredicate, &d_predicate[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&lastScanIndex, &d_scanIndices[lastIndex], sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
             int newActiveRays = lastScanIndex + lastPredicate;
             if (newActiveRays == 0) {

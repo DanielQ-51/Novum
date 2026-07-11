@@ -19,17 +19,32 @@ set(OPTIX_INCLUDE_DIR "C:/ProgramData/NVIDIA Corporation/OptiX SDK 9.1.0/include
 # ==============================================================================
 
 # Treat the megakernel as an "OBJECT" library and tell CMake to output PTX
-add_library(optix_ptx OBJECT renderer.cu)
-set_property(TARGET optix_ptx PROPERTY CUDA_PTX_COMPILATION ON)
+add_library(optix_ptx_renderer OBJECT renderer.cu)
+set_property(TARGET optix_ptx_renderer PROPERTY CUDA_PTX_COMPILATION ON)
 
-# Reaching UP one directory (../) to grab your shared headers
-target_include_directories(optix_ptx PRIVATE
+target_include_directories(optix_ptx_renderer PRIVATE
     ../include
     ../thirdparty
     ${OPTIX_INCLUDE_DIR}
 )
 
-target_compile_options(optix_ptx PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+target_compile_options(optix_ptx_renderer PRIVATE 
+    $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
+    $<$<COMPILE_LANGUAGE:CUDA>:--generate-line-info>
+    
+)
+
+
+# --- PTX MODULE 2: ReSTIR Enhanced Shaders ---
+add_library(optix_ptx_restir OBJECT restirPTenhancedShaders.cu)
+set_property(TARGET optix_ptx_restir PROPERTY CUDA_PTX_COMPILATION ON)
+
+target_include_directories(optix_ptx_restir PRIVATE
+    ../include
+    ../thirdparty
+    ${OPTIX_INCLUDE_DIR}
+)
+target_compile_options(optix_ptx_restir PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 
 # ==============================================================================
 # 2. COMPILE THE HOST CODE (EXECUTABLE)
@@ -37,6 +52,7 @@ target_compile_options(optix_ptx PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_m
 
 add_executable(renderer_optix
     main.cu
+    restirPTenhanced_kernels.cu
     ../src/tinyexr_impl.cpp 
     ../thirdparty/tinyexr/miniz.c
     ../src/imageUtil.cu
@@ -80,7 +96,13 @@ target_link_libraries(renderer_optix PRIVATE
 # This automatically copies the generated PTX file and places it right next 
 # to renderer_optix.exe so read_file_to_string("renderer.ptx") finds it instantly!
 add_custom_command(TARGET renderer_optix POST_BUILD
+    # Copy renderer.ptx
     COMMAND ${CMAKE_COMMAND} -E copy
-    $<TARGET_OBJECTS:optix_ptx>
+    $<TARGET_OBJECTS:optix_ptx_renderer>
     $<TARGET_FILE_DIR:renderer_optix>/renderer.ptx
+
+    # Copy restirPTenhancedShaders.ptx
+    COMMAND ${CMAKE_COMMAND} -E copy
+    $<TARGET_OBJECTS:optix_ptx_restir>
+    $<TARGET_FILE_DIR:renderer_optix>/restirPTenhancedShaders.ptx
 )

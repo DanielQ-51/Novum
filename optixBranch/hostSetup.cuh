@@ -2,9 +2,11 @@
 
 #include "objects.cuh"
 #include "util.cuh"
+#include "helpers.cuh"
 #include "volumeRendering.cuh"
 #include "sceneContexts.cuh"
 #include "optixStructs.cuh"
+#include "restirPTenhanced_host.cuh"
 #include <chrono>
 #include <iostream>
 #include <exception>
@@ -38,20 +40,6 @@ __host__ std::string read_file_to_string(const std::string& filepath) {
     return buffer.str();
 }
 
-struct OptixEngineState {
-    OptixDeviceContext context = nullptr;
-    OptixPipeline pipeline = nullptr;
-    OptixShaderBindingTable sbt = {};
-    OptixProgramGroup raygenProgramGroup = nullptr;
-    OptixProgramGroup missProgramGroup = nullptr;
-    OptixProgramGroup hitgroupProgramGroup = nullptr;
-    OptixModule module = nullptr;
-    
-    CUdeviceptr d_rgRecord = 0;
-    CUdeviceptr d_msRecord = 0;
-    CUdeviceptr d_hgRecord = 0;
-};
-
 __host__ int initOptixSystem(OptixEngineState& engineState) {
     cudaFree(0); 
     CUcontext cuCtx = 0;
@@ -63,7 +51,7 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
 
     OptixDeviceContextOptions options = {};
     options.logCallbackLevel = 4;
-    options.logCallbackFunction = [](unsigned int level, const char* tag, const char* message, void*) {
+    options.logCallbackFunction = [](uint32_t level, const char* tag, const char* message, void*) {
         std::cerr << "[" << level << "][" << tag << "]: " << message << std::endl;
     };
 
@@ -87,6 +75,18 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         return -1;
     }
 
+    std::string restirPTX;
+    try {
+        std::string ptxPath = std::string(PTX_DIR) + "/restirPTenhancedShaders.ptx";
+        
+        std::cout << "Loading PTX from: " << ptxPath << std::endl;
+        restirPTX = read_file_to_string(ptxPath);
+        
+    } catch (const std::exception& e) {
+        std::cerr << "CRITICAL ERROR: " << e.what() << std::endl;
+        return -1;
+    }
+
     OptixModuleCompileOptions moduleOptions = {};
     moduleOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
     moduleOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
@@ -95,12 +95,11 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     OptixPipelineCompileOptions pipelineOptions = {}; 
     pipelineOptions.usesMotionBlur = false;
     pipelineOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
-    pipelineOptions.numPayloadValues = 5; 
-    pipelineOptions.numAttributeValues = 2; // For triangle barycentrics
+    pipelineOptions.numPayloadValues = 2; 
+    pipelineOptions.numAttributeValues = 2;
     pipelineOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
-    pipelineOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
-    
-    pipelineOptions.pipelineLaunchParamsVariableName = "params"; 
+    pipelineOptions.usesPrimitiveTypeFlags = (OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
+    pipelineOptions.pipelineLaunchParamsVariableName = "allParams"; 
 
     OptixModule module = nullptr;
     optixModuleCreate(
@@ -113,40 +112,77 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         &module
     );
 
+    OptixModule restirModule = nullptr;
+    optixModuleCreate(
+        context, 
+        &moduleOptions, 
+        &pipelineOptions, 
+        restirPTX.c_str(), 
+        restirPTX.size(), 
+        nullptr, nullptr, 
+        &restirModule
+    );
+
     OptixProgramGroupOptions pgOptions = {};
-    OptixProgramGroupDesc raygenDesc = {};
-    raygenDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    raygenDesc.raygen.module            = module;
-    raygenDesc.raygen.entryFunctionName = "__raygen__unidirectional"; 
+    
+    OptixProgramGroupDesc raygenUnidirectionalDesc = {};
+    raygenUnidirectionalDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    raygenUnidirectionalDesc.raygen.module            = module;
+    raygenUnidirectionalDesc.raygen.entryFunctionName = "__raygen__unidirectional"; 
 
     OptixProgramGroupDesc missDesc = {};
     missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-    missDesc.miss.module = module;
-    missDesc.miss.entryFunctionName = "__miss__gather";
+    missDesc.miss.module = nullptr;             
+    missDesc.miss.entryFunctionName = nullptr;
 
     OptixProgramGroupDesc hitgroupDesc = {};
     hitgroupDesc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
     hitgroupDesc.hitgroup.moduleCH = module;
     hitgroupDesc.hitgroup.entryFunctionNameCH = "__closesthit__gather";
 
-    OptixProgramGroupDesc programGroupDescs[] = { raygenDesc, missDesc, hitgroupDesc };
-    OptixProgramGroup programGroups[3];
+    OptixProgramGroupDesc restirCandidateGenDesc = {};
+    restirCandidateGenDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    restirCandidateGenDesc.raygen.module            = restirModule;
+    restirCandidateGenDesc.raygen.entryFunctionName = "__raygen__restirCandidateGeneration"; 
 
-    optixProgramGroupCreate(context, programGroupDescs, 3, &pgOptions, nullptr, nullptr, programGroups);
+    OptixProgramGroupDesc restirSpatialDesc = {};
+    restirSpatialDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    restirSpatialDesc.raygen.module            = restirModule;
+    restirSpatialDesc.raygen.entryFunctionName = "__raygen__restirSpatialReuse"; 
 
-    OptixProgramGroup raygenProgramGroup   = programGroups[0];
-    OptixProgramGroup missProgramGroup     = programGroups[1];
-    OptixProgramGroup hitgroupProgramGroup = programGroups[2];
+    OptixProgramGroupDesc restirTemporalDesc = {};
+    restirTemporalDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    restirTemporalDesc.raygen.module            = restirModule;
+    restirTemporalDesc.raygen.entryFunctionName = "__raygen__restirTemporalReuse"; 
+
+    OptixProgramGroupDesc programGroupDescs[] = { 
+        raygenUnidirectionalDesc, 
+        missDesc,
+        hitgroupDesc, 
+        restirCandidateGenDesc,
+        restirSpatialDesc,
+        restirTemporalDesc
+    };
+    OptixProgramGroup programGroups[6];
+
+    optixProgramGroupCreate(context, programGroupDescs, 6, &pgOptions, nullptr, nullptr, programGroups);
+
+    OptixProgramGroup raygenUnidirectionalProgramGroup = programGroups[0];
+    OptixProgramGroup missProgramGroup                 = programGroups[1];
+    OptixProgramGroup hitgroupProgramGroup             = programGroups[2];
+    OptixProgramGroup restirCandidateGenGroup          = programGroups[3];
+    OptixProgramGroup restirSpatialGroup               = programGroups[4];
+    OptixProgramGroup restirTemporalGroup              = programGroups[5];
 
     OptixPipeline pipeline = nullptr;
     OptixPipelineLinkOptions linkOptions = {};
-    linkOptions.maxTraceDepth = 1;
+    linkOptions.maxTraceDepth = 0;
 
     optixPipelineCreate(
         context, 
         &pipelineOptions, 
         &linkOptions, 
-        programGroups, 3, 
+        programGroups, 6, 
         nullptr, nullptr, 
         &pipeline
     );
@@ -155,18 +191,15 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
 
-    RaygenRecord rgRecord;
-    optixSbtRecordPackHeader(raygenProgramGroup, &rgRecord); 
+    RaygenRecord rgRecords[4];
+    optixSbtRecordPackHeader(programGroups[0], &rgRecords[0]); 
+    optixSbtRecordPackHeader(programGroups[3], &rgRecords[1]); 
+    optixSbtRecordPackHeader(programGroups[4], &rgRecords[2]); 
+    optixSbtRecordPackHeader(programGroups[5], &rgRecords[3]); 
 
-    CUdeviceptr d_rgRecord;
-    cudaMalloc(reinterpret_cast<void**>(&d_rgRecord), sizeof(RaygenRecord));
-    cudaMemcpy(reinterpret_cast<void*>(d_rgRecord), &rgRecord, sizeof(RaygenRecord), cudaMemcpyHostToDevice);
-
-    RaygenRecord msRecord;
-    optixSbtRecordPackHeader(missProgramGroup, &msRecord); 
-    CUdeviceptr d_msRecord;
-    cudaMalloc(reinterpret_cast<void**>(&d_msRecord), sizeof(RaygenRecord));
-    cudaMemcpy(reinterpret_cast<void*>(d_msRecord), &msRecord, sizeof(RaygenRecord), cudaMemcpyHostToDevice);
+    CUdeviceptr d_rgRecordArray;
+    cudaMalloc(reinterpret_cast<void**>(&d_rgRecordArray), sizeof(RaygenRecord) * 4);
+    cudaMemcpy(reinterpret_cast<void*>(d_rgRecordArray), rgRecords, sizeof(RaygenRecord) * 4, cudaMemcpyHostToDevice);
 
     RaygenRecord hgRecord;
     optixSbtRecordPackHeader(hitgroupProgramGroup, &hgRecord); 
@@ -174,41 +207,63 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     cudaMalloc(reinterpret_cast<void**>(&d_hgRecord), sizeof(RaygenRecord));
     cudaMemcpy(reinterpret_cast<void*>(d_hgRecord), &hgRecord, sizeof(RaygenRecord), cudaMemcpyHostToDevice);
 
-    OptixShaderBindingTable sbt = {};
-    sbt.raygenRecord                = d_rgRecord;
+    RaygenRecord msRecord;
+    optixSbtRecordPackHeader(missProgramGroup, &msRecord); 
 
-    sbt.missRecordBase              = d_msRecord;
-    sbt.missRecordStrideInBytes     = sizeof(RaygenRecord);
-    sbt.missRecordCount             = 1;
+    CUdeviceptr d_msRecord;
+    cudaMalloc(reinterpret_cast<void**>(&d_msRecord), sizeof(RaygenRecord));
+    cudaMemcpy(reinterpret_cast<void*>(d_msRecord), &msRecord, sizeof(RaygenRecord), cudaMemcpyHostToDevice);
 
-    sbt.hitgroupRecordBase          = d_hgRecord;
-    sbt.hitgroupRecordStrideInBytes = sizeof(RaygenRecord);
-    sbt.hitgroupRecordCount         = 1;
+    auto buildMenu = [&](int arrayIndex) -> OptixShaderBindingTable {
+        OptixShaderBindingTable sbt = {};
+        
+        sbt.raygenRecord = d_rgRecordArray + (arrayIndex * sizeof(RaygenRecord));
+
+        sbt.missRecordBase          = d_msRecord;
+        sbt.missRecordStrideInBytes = sizeof(RaygenRecord);
+        sbt.missRecordCount         = 1;
+        
+        sbt.hitgroupRecordBase          = d_hgRecord;
+        sbt.hitgroupRecordStrideInBytes = sizeof(RaygenRecord);
+        sbt.hitgroupRecordCount         = 1;
+        return sbt;
+    };
+
+    engineState.sbt_unidirectional  = buildMenu(0);
+    engineState.sbt_restirCandidate = buildMenu(1);
+    engineState.sbt_restirSpatial   = buildMenu(2);
+    engineState.sbt_restirTemporal  = buildMenu(3);
 
     engineState.context = context;
     engineState.pipeline = pipeline;
-    engineState.sbt = sbt;
-    engineState.raygenProgramGroup = raygenProgramGroup;
-    engineState.missProgramGroup = missProgramGroup;
+    engineState.raygenUnidirectionalProgramGroup = raygenUnidirectionalProgramGroup;
+    engineState.raygenRestirCandidateProgramGroup = restirCandidateGenGroup;
+    engineState.raygenRestirSpatialProgramGroup = restirSpatialGroup;
+    engineState.raygenRestirTemporalProgramGroup = restirTemporalGroup;
     engineState.hitgroupProgramGroup = hitgroupProgramGroup;
     engineState.module = module;
-    engineState.d_rgRecord = d_rgRecord;
-    engineState.d_msRecord = d_msRecord;
+    engineState.restirModule = restirModule;
+    engineState.d_rgRecord = d_rgRecordArray;
     engineState.d_hgRecord = d_hgRecord;
+    engineState.d_msRecord = d_msRecord;
 
     std::cout << "OptiX engine setup complete." << std::endl;
     return 0;
 }
 
-__host__ int optixEngineCleanup (OptixEngineState& engineState) {
+__host__ int optixEngineCleanup(OptixEngineState& engineState) {
     cudaFree(reinterpret_cast<void*>(engineState.d_rgRecord));
     cudaFree(reinterpret_cast<void*>(engineState.d_msRecord));
     cudaFree(reinterpret_cast<void*>(engineState.d_hgRecord));
     optixPipelineDestroy(engineState.pipeline);
-    optixProgramGroupDestroy(engineState.raygenProgramGroup);
-    optixProgramGroupDestroy(engineState.missProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenUnidirectionalProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenRestirCandidateProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenRestirSpatialProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenRestirTemporalProgramGroup);
     optixProgramGroupDestroy(engineState.hitgroupProgramGroup);
+    optixProgramGroupDestroy(engineState.missProgramGroup);
     optixModuleDestroy(engineState.module);
+    optixModuleDestroy(engineState.restirModule);
     optixDeviceContextDestroy(engineState.context);
 
     std::cout << "OptiX engine cleanup complete." << std::endl;
@@ -216,9 +271,6 @@ __host__ int optixEngineCleanup (OptixEngineState& engineState) {
 }
 
 using namespace std;
-
-void readObjSimple(string filename, vector<float4>& points, vector<float4>& normals, vector<float4>& colors, vector<float2>& uvs,vector<Triangle>& mesh, 
-    vector<Triangle>& lights, vector<LightDescriptor>& lightDescriptors, float4 c, float4 e, int materialID, float4 offset = f4(0.0f));
 
 __host__ OptixTraversableHandle buildOptixGAS(
     OptixDeviceContext context,
@@ -359,6 +411,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
     EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_2k.exr"));
+    //EnvironmentMapManager envManager(ASSET_PATH("assets/environment/black.exr"));
     //envManager.setRotation(70.0f + (float)renderNumber);
     envManager.setRotation(130.0f);
     
@@ -606,10 +659,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     sc.materials = mats_d;
     sc.textures = textures_d;
     sc.lightSampler = lightManager.getSampler();
+    sc.triNum = mesh.size();
 
     lightManager.getSampler().printDebugState();
 
-    PipelineParams params = {};
+    CommonParams params = {};
     params.w = w;
     params.h = h;
     params.frame_index = 0;
@@ -619,9 +673,14 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     params.shadeContext = sc;
     params.max_depth = maxDepth;
 
+    PipelineParams allParams = {};
+    allParams.common = params;
+
+    /*
     CUdeviceptr d_params;
     cudaMalloc(reinterpret_cast<void**>(&d_params), sizeof(PipelineParams));
-    cudaMemcpy(reinterpret_cast<void*>(d_params), &params, sizeof(PipelineParams), cudaMemcpyHostToDevice);
+    cudaMemcpy(reinterpret_cast<void*>(d_params), &allParams, sizeof(PipelineParams), cudaMemcpyHostToDevice);
+    */
 
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
@@ -630,22 +689,28 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     cudaStreamCreate(&stream);
 
     auto renderStartTime = std::chrono::steady_clock::now();
+    launch_restir(engineState, params, sampleCount);
+
+    /* sdasdasd\\\\
+    
     for (int sample = 0; sample < sampleCount; sample++) {
 
+
+        
         optixLaunch(
             engineState.pipeline,
             stream,
             d_params,               // The GPU pointer we just allocated
             sizeof(PipelineParams), // FIXED: Was sizeof(Params)
-            &engineState.sbt,           
+            &engineState.sbt_unidirectional,                  
             w,                   // Launch X
             h,                   // Launch Y
             1                       // Launch Z
         );
+        
 
-        cudaDeviceSynchronize();
 
-        if ((sample % 30000 == 0 || sample == sampleCount-1) && DO_PROGRESSIVERENDER) 
+        if ((sample % 1 == 0 || sample == sampleCount-1) && DO_PROGRESSIVERENDER) 
         {
             cleanAndFormatImageNoOverlay<<<gridSize, blockSize>>>(
                 params.accum_buffer, d_finalOutput, w, h, sample
@@ -673,6 +738,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
         }
 
         params.frame_index++;
+        
         cudaMemcpyAsync(
             reinterpret_cast<void*>(d_params), 
             &params, 
@@ -680,7 +746,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
             cudaMemcpyHostToDevice, 
             stream
         );
-    }
+    }*/
     
     cudaMemcpy(host_colors, out_colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
 
@@ -694,7 +760,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
 
     // memory freeing
     cudaFree(reinterpret_cast<void*>(out_d_gas_output_buffer));
-    cudaFree(reinterpret_cast<void*>(d_params));
+    //cudaFree(reinterpret_cast<void*>(d_params));
     cudaFree(out_colors);
     cudaFree(d_finalOutput);
     cudaFree(verts);
@@ -725,162 +791,4 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     std::cout << "Total Elapsed time (ms): " << elapsed_ms.count() << " milliseconds" << std::endl;
 
     return 0;
-}
-
-
-void readObjSimple(
-    string filename, 
-    vector<float4>& points, 
-    vector<float4>& normals, 
-    vector<float4>& colors, 
-    vector<float2>& uvs, 
-    vector<Triangle>& mesh, 
-    vector<Triangle>& lights, 
-    vector<LightDescriptor>& lightDescriptors, 
-    float4 c, float4 e, 
-    int materialID, 
-    float4 offset
-)
-{
-    std::ifstream file(filename);
-
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open OBJ file with path " << filename << endl;;
-        return;
-    }
-    int startIndex = points.size();
-    int normalStartIndex = normals.size();
-    int uvStartIndex = uvs.size();
-
-    int nextLightIndex = lights.size();
-
-    LightDescriptor ld;
-    if (lengthSquared(e) > 0.0f) {
-        ld.startInd = nextLightIndex;
-        ld.totalPower = 0.0f;
-    }
-
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty() || line[0] == '#' || line[0] == 's') continue; // skip comments
-
-        std::istringstream iss(line);
-        std::string prefix;
-        
-        iss >> prefix;
-        
-
-        if (prefix == "v") {
-            double x, y, z;
-            iss >> x >> y >> z;
-            float4 p = make_float4(x, y, z, 0.0f) + offset;
-            points.push_back(p);
-        }
-        else if (prefix == "vt") 
-        {
-            double u, v;
-            iss >> u >> v;
-
-            float2 uv = f2(u,1.0f-v);
-            uvs.push_back(uv);
-        }
-        else if (prefix == "vn") {
-            double x, y, z;
-            iss >> x >> y >> z;
-
-            if (iss.fail() || std::isnan(x) || std::isnan(y) || std::isnan(z)) {
-                normals.push_back(make_float4(0.0f, 1.0f, 0.0f, 0.0f)); // Safe dummy default
-                continue;
-            }
-            float4 n = make_float4((float)x, (float)y, (float)z, 0.0f);
-    
-            float lenSq = lengthSquared(n);
-            if (lenSq < 1e-12f) {
-                n = make_float4(0.0f, 1.0f, 0.0f, 0.0f);
-            }
-            normals.push_back(n);
-        }
-        else if (prefix == "f") {
-            vector<string> items;
-
-            string vertinfo;
-            vector<int> vertexIndices;
-            vector<int> normalIndices;
-            vector<int> uvIndices;
-            while (iss >> vertinfo) 
-            {
-                istringstream vss(vertinfo);
-                string idx;
-
-                if (getline(vss, idx, '/'))
-                {
-                    if (!idx.empty())
-                        vertexIndices.push_back(stoi(idx) - 1);
-                }
-                if (getline(vss, idx, '/'))
-                {
-                    if (!idx.empty())
-                        uvIndices.push_back(stoi(idx) - 1);
-                }
-                if (getline(vss, idx, '/'))
-                {
-                    if (!idx.empty())
-                        normalIndices.push_back(stoi(idx) - 1);
-                }
-            }
-            bool hasUV = uvIndices.size() == vertexIndices.size();
-            bool hasN  = normalIndices.size() == vertexIndices.size();
-            int n = vertexIndices.size();
-            // Triangulate the polygon as a fan from the first vertex
-            for (int i = 1; i < n - 1; ++i) {
-                bool isLight = lengthSquared(e) > 0;
-
-                int idx0 = vertexIndices[0] + startIndex;
-                int idx1 = vertexIndices[i] + startIndex;
-                int idx2 = vertexIndices[i + 1] + startIndex;
-
-                float4 p0 = points[idx0];
-                float4 p1 = points[idx1];
-                float4 p2 = points[idx2];
-
-                float4 e1 = f4(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
-                float4 e2 = f4(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
-                
-                float4 cp = cross3(e1, e2);
-                float area = 0.5f * length(cp);
-
-                if (area < 1e-18f) {
-                    continue; 
-                }
-
-                int uv_idx0 = hasUV ? uvIndices[0] + uvStartIndex : -1;
-                int uv_idx1 = hasUV ? uvIndices[i] + uvStartIndex : -1;
-                int uv_idx2 = hasUV ? uvIndices[i + 1] + uvStartIndex : -1;
-
-                int n_idx0  = hasN ? normalIndices[0] + normalStartIndex : -1;
-                int n_idx1  = hasN ? normalIndices[i] + normalStartIndex : -1;
-                int n_idx2  = hasN ? normalIndices[i + 1] + normalStartIndex : -1;
-
-                Triangle tri;
-                if (isLight)
-                    tri = Triangle(idx0, idx1, idx2, n_idx0, n_idx1, n_idx2, materialID, uv_idx0, uv_idx1, uv_idx2, e, nextLightIndex, mesh.size());
-                else
-                    tri = Triangle(idx0, idx1, idx2, n_idx0, n_idx1, n_idx2, materialID, uv_idx0, uv_idx1, uv_idx2, e, -51, mesh.size());
-                mesh.push_back(tri);
-
-                if (isLight) {
-                    lights.push_back(tri);
-                    ld.totalPower += luminance(e) * h_PI * area;
-                    nextLightIndex++;
-                }
-            }
-        }
-    }
-
-    if (lengthSquared(e) > 0.0f) {
-        ld.numPrim = lights.size() - ld.startInd;
-        lightDescriptors.push_back(ld);
-    }
-
-    file.close();
 }

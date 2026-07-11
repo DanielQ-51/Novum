@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "objects.cuh"
 #include "util.cuh"
 #include "environment.cuh"
 
@@ -156,10 +157,9 @@ struct LightSampler {
         float4& lightNorm,
         float& t_max,
         float& pdf,
-        unsigned int& primID,
+        uint32_t& primID,
         float2& barycentrics
     ) const {
-        
         // 1. Categorical Selection
         if (rand_macro < envWeight) {
             // --- Sample Environment Map ---
@@ -177,7 +177,7 @@ struct LightSampler {
                 pdf = 0.0f;
                 return 0; // Edge case: branched to mesh but none exist
             }
-
+    
             // Remap rand_macro to [0, 1) to search the mesh-only CDF
             float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
 
@@ -189,7 +189,7 @@ struct LightSampler {
 
             int lightTriInd = light.startInd + 
                 binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
-
+            
             float4 pos;
             float area;
             {
@@ -319,7 +319,7 @@ struct LightSamplerManager {
         const std::vector<float4>& points,
         Triangle*& d_triLights,
         EnvMapView env,
-        float desiredEnvWeight = 1.0f // Exposed variable for the split
+        float desiredEnvWeight = 0.5f // Exposed variable for the split
     ) {
         envMap = env;
         numLights = ld.size();

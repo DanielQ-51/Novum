@@ -5,13 +5,13 @@
 #if RNG_MODE != 3
 
 static curandDirectionVectors32_t* g_sobolVectors = nullptr;
-static unsigned int* g_scrambleConstants = nullptr;
+static uint32_t* g_scrambleConstants = nullptr;
 
 // 3. THE KERNEL
 __global__ void initRNG_Kernel(RNGState* states, int width, int height, 
 #if RNG_MODE == 2
     curandDirectionVectors32_t* directionVectors,
-    unsigned int* scrambleConstants
+    uint32_t* scrambleConstants
 #else
     unsigned long seed
 #endif
@@ -22,8 +22,8 @@ __global__ void initRNG_Kernel(RNGState* states, int width, int height,
     int idx = y * width + x;
 
 #if RNG_MODE == 2 
-    unsigned int stride = 50;
-    unsigned int offset = idx * stride; 
+    uint32_t stride = 50;
+    uint32_t offset = idx * stride; 
     
     curand_init(directionVectors[0], scrambleConstants[0], offset, &states[idx]);
 #else 
@@ -62,10 +62,10 @@ namespace RNGManager {
                 cudaMalloc(&g_sobolVectors, sizeof(curandDirectionVectors32_t) * 20000);
                 cudaMemcpy(g_sobolVectors, hostVecs, sizeof(curandDirectionVectors32_t) * 20000, cudaMemcpyHostToDevice);
 
-                unsigned int* hostScramble;
+                uint32_t* hostScramble;
                 curandGetScrambleConstants32(&hostScramble);
-                cudaMalloc(&g_scrambleConstants, sizeof(unsigned int) * 20000);
-                cudaMemcpy(g_scrambleConstants, hostScramble, sizeof(unsigned int) * 20000, cudaMemcpyHostToDevice);
+                cudaMalloc(&g_scrambleConstants, sizeof(uint32_t) * 20000);
+                cudaMemcpy(g_scrambleConstants, hostScramble, sizeof(uint32_t) * 20000, cudaMemcpyHostToDevice);
             }
             initRNG_Kernel<<<grid, block>>>(d_rngStates, width, height, g_sobolVectors, g_scrambleConstants);
         #else

@@ -237,7 +237,7 @@ struct Camera
     float4 right;
     float4 up;
 
-    __host__ static Camera Pinhole(const float4& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aajitter = 2.0f)
+    __host__ static Camera Pinhole(const float4& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aajitter = 0.0f)
     {
         Camera c;
 
@@ -284,14 +284,17 @@ struct Camera
 
 
     // returns a camera ray with normalized direction
-    __device__ __forceinline__ Ray generateCameraRay(RNGState& localState, int x, int y)
+    __device__ __forceinline__ Ray generateCameraRay(RNGState& localState, int x, int y) const
     {
         Ray r;
         float aspect = (float)w / (float)h;
 
-        // 1. Anti-Aliasing & Screen Coords
-        float jitterX = (rand(&localState) - 0.5f) * antiAliasJitterDist;
-        float jitterY = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+        float jitterX = 0.0f;
+        float jitterY = 0.0f;
+        if (antiAliasJitterDist != 0.0f) {
+            jitterX = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+            jitterY = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+        }
 
         float u = (2.0f * ((x + jitterX) / (float)w) - 1.0f) * aspect * fovScale;
         float v = (2.0f * ((y + jitterY) / (float)h) - 1.0f) * fovScale;
@@ -355,6 +358,35 @@ struct Camera
         return r;
     }
 
+    __device__ __forceinline__ Ray generateCameraRayRecordOffset(RNGState& localState, int x, int y, half2& jitter) const
+    {
+        Ray r;
+        float aspect = (float)w / (float)h;
+
+        float jitterX = 0.0f;
+        float jitterY = 0.0f;
+        if (x == 400 && y == 250)
+            printf("before calling rand, seed is %u\n", localState.getSeed());
+        if (antiAliasJitterDist != 0.0f) {
+            jitterX = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+            jitterY = (rand(&localState) - 0.5f) * antiAliasJitterDist;
+        }
+        if (x == 400 && y == 250)
+            printf("after calling rand, seed is %u\n", localState.getSeed());
+        jitter.x = __float2half(jitterX);
+        jitter.y = __float2half(jitterY);
+
+        float u = (2.0f * ((x + jitterX) / (float)w) - 1.0f) * aspect * fovScale;
+        float v = (2.0f * ((y + jitterY) / (float)h) - 1.0f) * fovScale;
+
+        float4 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
+
+        r.origin = cameraOrigin;
+        r.direction = normalize(focalPoint - r.origin);
+
+        return r;
+    }
+
     __host__ void preCompute()
     {
         float4 localForward = f4(0.0f, 0.0f, -1.0f, 0.0f);
@@ -389,7 +421,7 @@ struct Camera
     }
 
     // dark magic
-    __device__ __forceinline__ bool worldToRaster(const float4& pointWorld, float2& pixelPos)
+    __device__ __forceinline__ bool worldToRaster(const float4& pointWorld, float2& pixelPos) const
     {
         float4 dir = pointWorld - cameraOrigin;
 
@@ -430,7 +462,7 @@ struct Camera
 
 };
 
-__device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float4 p1, float4 p2, float4 color)
+__device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float4 p1, float4 p2, float4 color, int thickness)
 {
     float nearClip = 0.002f; 
     float4 camPos = camera.cameraOrigin;
@@ -467,13 +499,28 @@ __device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float4 
     int sy = y0 < y1 ? 1 : -1;
     int err = dx + dy; 
 
+    // --- THICKNESS LOGIC ---
+    // 1. Determine the major axis (is the line more vertical or horizontal?)
+    bool isSteep = abs(y1 - y0) > abs(x1 - x0);
+    
+    // 2. Calculate the span offsets based on thickness
+    int startW = -(thickness / 2);
+    int endW = startW + thickness - 1;
+
     while (true) {
-        if (x0 >= 0 && x0 < camera.w && y0 >= 0 && y0 < camera.h) {
-            int pixelIndex = y0 * camera.w + x0;
-            
-            atomicExch(&overlay[pixelIndex].x, color.x);
-            atomicExch(&overlay[pixelIndex].y, color.y);
-            atomicExch(&overlay[pixelIndex].z, color.z);
+        // 3. Draw the perpendicular span instead of a single point
+        for (int w = startW; w <= endW; ++w) {
+            // Offset X if steep, offset Y if shallow
+            int px = isSteep ? (x0 + w) : x0;
+            int py = isSteep ? y0 : (y0 + w);
+
+            if (px >= 0 && px < camera.w && py >= 0 && py < camera.h) {
+                int pixelIndex = py * camera.w + px;
+                
+                atomicExch(&overlay[pixelIndex].x, color.x);
+                atomicExch(&overlay[pixelIndex].y, color.y);
+                atomicExch(&overlay[pixelIndex].z, color.z);
+            }
         }
 
         if (x0 == x1 && y0 == y1) break;
@@ -553,7 +600,7 @@ __device__ __forceinline__ void drawPath(float4* overlay, PathVertices* path, Ca
         //float ratio = (float)(i+1) / float(depth); 
         int pathIDX1 = pathBufferIdx(w, x, y, i, maxDepth);
         int pathIDX2 = pathBufferIdx(w, x, y, i+1, maxDepth);
-        drawLine(overlay, camera, path->pt[pathIDX1], path->pt[pathIDX2], color);
+        drawLine(overlay, camera, path->pt[pathIDX1], path->pt[pathIDX2], color, 3);
     }
 }
 
@@ -866,6 +913,8 @@ struct Material
         m.isSpecular = true;
         m.roughness = 0.0f;
 
+        m.albedo = f4(1.0f);
+
         return m;
     }
 };
@@ -1104,8 +1153,8 @@ struct VCMPathVertices
     These are decoded into float3's essentially, but because of the covnention used in this renderer, we will turn them
     to float4's in the kernels.
     */
-    unsigned int* packedNormal;
-    unsigned int* packedWo;
+    uint32_t* packedNormal;
+    uint32_t* packedWo;
 
     half* beta_x;
     half* beta_y;
@@ -1119,7 +1168,7 @@ struct VCMPathVertices
     bit 2-21: light index
     bit 22-31: material ID
     */
-    unsigned int* packedInfo;
+    uint32_t* packedInfo;
     
     float* d_vc;
     float* d_vcm;
@@ -1127,15 +1176,15 @@ struct VCMPathVertices
 
 __device__ __forceinline__ void setAllInfo(VCMPathVertices& x, int idx, bool isDelta, bool isBackface, int lightID, int matID) 
 {
-    unsigned int info = 0;
+    uint32_t info = 0;
     info |= (isDelta ? 1u : 0u);
     info |= (isBackface ? 1u : 0u) << 1;
     
     // (-1 & MASK) becomes 0xFFFFF automatically
     // (-2 & MASK) becomes 0xFFFFE automatically
-    info |= (unsigned int)(lightID & MASK_LIGHT) << 2; 
+    info |= (uint32_t)(lightID & MASK_LIGHT) << 2; 
     
-    info |= (unsigned int)(matID & MASK_MAT) << 22;
+    info |= (uint32_t)(matID & MASK_MAT) << 22;
     x.packedInfo[idx] = info;
 }
 
@@ -1148,7 +1197,7 @@ __device__ __forceinline__ void getAllInfo(
     int& matID
 ) 
 {
-    unsigned int info = __ldg(&x.packedInfo[idx]);
+    uint32_t info = __ldg(&x.packedInfo[idx]);
 
     // Bit 0: isDelta
     isDelta = (info & 1u);
@@ -1157,7 +1206,7 @@ __device__ __forceinline__ void getAllInfo(
     isBackface = (info >> 1) & 1u;
 
     // Bits 2-21: lightID (20 bits)
-    unsigned int rawLight = (info >> 2) & MASK_LIGHT;
+    uint32_t rawLight = (info >> 2) & MASK_LIGHT;
     
     // Decode special flags
     if (rawLight == RAW_LIGHT_NONE) {
@@ -1173,7 +1222,7 @@ __device__ __forceinline__ void getAllInfo(
 }
 
 __device__ __forceinline__ int getLightIndex(const VCMPathVertices& x, int idx) {
-    unsigned int rawLight = (__ldg(&x.packedInfo[idx]) >> 2) & MASK_LIGHT;
+    uint32_t rawLight = (__ldg(&x.packedInfo[idx]) >> 2) & MASK_LIGHT;
 
     if (rawLight == RAW_LIGHT_NONE) return -1;
     if (rawLight == RAW_LIGHT_ENV)  return -2;
@@ -1181,14 +1230,14 @@ __device__ __forceinline__ int getLightIndex(const VCMPathVertices& x, int idx) 
 }
 
 __device__ __forceinline__ void setLightIndex(VCMPathVertices& x, int idx, int val) {
-    unsigned int current = x.packedInfo[idx];
+    uint32_t current = x.packedInfo[idx];
     
     // Clear the current light bits (Bits 2-21)
     // ~(0xFFFFF << 2) 
     current &= ~(MASK_LIGHT << 2); 
     
     // Apply new value (implicitly handles -1/-2 via masking)
-    current |= (unsigned int)(val & MASK_LIGHT) << 2;
+    current |= (uint32_t)(val & MASK_LIGHT) << 2;
     
     x.packedInfo[idx] = current;
 }
@@ -1198,10 +1247,10 @@ __device__ __forceinline__ int getMaterialID(const VCMPathVertices& x, int idx) 
 }
 
 __device__ __forceinline__ void setMaterialID(VCMPathVertices& x, int idx, int val) {
-    unsigned int current = __ldg(&x.packedInfo[idx]);
+    uint32_t current = __ldg(&x.packedInfo[idx]);
     current &= ~(MASK_MAT << 22); 
     
-    current |= (unsigned int)(val & MASK_MAT) << 22;
+    current |= (uint32_t)(val & MASK_MAT) << 22;
     x.packedInfo[idx] = current;
 }
 
@@ -1214,14 +1263,14 @@ __device__ __forceinline__ bool getIsBackface(const VCMPathVertices& x, int idx)
 }
 
 __device__ __forceinline__ void setIsDelta(VCMPathVertices& x, int idx, bool val) {
-    unsigned int current = __ldg(&x.packedInfo[idx]);
+    uint32_t current = __ldg(&x.packedInfo[idx]);
     current &= ~MASK_DELTA; // Clear bit
     current |= (val ? 1u : 0u);
     x.packedInfo[idx] = current;
 }
 
 __device__ __forceinline__ void setIsBackface(VCMPathVertices& x, int idx, bool val) {
-    unsigned int current = __ldg(&x.packedInfo[idx]);
+    uint32_t current = __ldg(&x.packedInfo[idx]);
     current &= ~MASK_BACKFACE;
     current |= (val ? 1u : 0u) << 1;
     x.packedInfo[idx] = current;
@@ -1306,8 +1355,8 @@ struct Photons
 {
     float4* pos_plus_vm;
 
-    unsigned int* packedWi;
-    unsigned int* packedNormal;
+    uint32_t* packedWi;
+    uint32_t* packedNormal;
     
     half* beta_x;
     half* beta_y;

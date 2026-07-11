@@ -2931,8 +2931,8 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
     const VCMPathVertices lightPath, 
     const int* __restrict__ lightPathLengths, 
     const Photons photons_sorted, 
-    const unsigned int* __restrict__ cell_start, 
-    const unsigned int* __restrict__ cell_end, 
+    const uint32_t* __restrict__ cell_start, 
+    const uint32_t* __restrict__ cell_end, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
@@ -3268,9 +3268,9 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
                             centerIndex.z + z1
                         );
 
-                        unsigned int hash = HashGridIndex(neighborIndex, hashTableSize);
-                        unsigned int start = __ldg(&cell_start[hash]);
-                        unsigned int end   = __ldg(&cell_end[hash]);
+                        uint32_t hash = HashGridIndex(neighborIndex, hashTableSize);
+                        uint32_t start = __ldg(&cell_start[hash]);
+                        uint32_t end   = __ldg(&cell_end[hash]);
 
                         if (start == 0xFFFFFFFF) continue;
 
@@ -3377,8 +3377,8 @@ __global__ void __launch_bounds__(256, 2) doEyePass(
 __global__ void computeHashes(
     Photons photons, 
     int photonCount, 
-    unsigned int* d_hash_keys, 
-    unsigned int* d_indices, 
+    uint32_t* d_hash_keys, 
+    uint32_t* d_indices, 
     float4 sceneMin, 
     float mergeRadius, 
     int hashTableSize
@@ -3397,7 +3397,7 @@ __global__ void reorderPhotons(
     Photons photons, 
     Photons photons_sorted, 
     int photonCount,
-    unsigned int* d_indices_out
+    uint32_t* d_indices_out
 )
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -3420,9 +3420,9 @@ __global__ void reorderPhotons(
 }
 
 __global__ void buildTable(
-    unsigned int* d_hashes_sorted,
-    unsigned int* d_cell_start,
-    unsigned int* d_cell_end,
+    uint32_t* d_hashes_sorted,
+    uint32_t* d_cell_start,
+    uint32_t* d_cell_end,
     int numPhotons,
     int hashTableSize
 )
@@ -3430,7 +3430,7 @@ __global__ void buildTable(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numPhotons) return;
 
-    unsigned int hash = d_hashes_sorted[i];
+    uint32_t hash = d_hashes_sorted[i];
 
     if (hash >= hashTableSize) {
         printf("Error: Thread %d found invalid hash %u (Limit: %d)\n", i, hash, hashTableSize);
@@ -3450,14 +3450,14 @@ __host__ inline void buildHashGrid(
     Photons photons, 
     Photons photons_sorted, 
     int photonCount,
-    unsigned int* d_hash_keys_in,
-    unsigned int* d_hash_keys_out,
-    unsigned int* d_indices_in,
-    unsigned int* d_indices_out,
+    uint32_t* d_hash_keys_in,
+    uint32_t* d_hash_keys_out,
+    uint32_t* d_indices_in,
+    uint32_t* d_indices_out,
     void* d_temp_storage,
     size_t temp_storage_bytes,
-    unsigned int* d_cell_start,
-    unsigned int* d_cell_end,
+    uint32_t* d_cell_start,
+    uint32_t* d_cell_end,
     float4 sceneMin, 
     float mergeRadius, 
     int hashTableSize
@@ -3492,8 +3492,8 @@ __host__ inline void buildHashGrid(
 
     //checkCudaErrors("reorder photons");
 
-    cudaMemset(d_cell_start, 0xFF, hashTableSize * sizeof(unsigned int));
-    cudaMemset(d_cell_end,   0xFF, hashTableSize * sizeof(unsigned int));
+    cudaMemset(d_cell_start, 0xFF, hashTableSize * sizeof(uint32_t));
+    cudaMemset(d_cell_end,   0xFF, hashTableSize * sizeof(uint32_t));
 
     buildTable<<<numBlocks, blockSize>>>(
         d_hash_keys_out,
@@ -3524,8 +3524,8 @@ __global__ void paintPhotons(Photons photons, int numPhotons, float4* __restrict
 
 __global__ void paintGridBox(
     Photons photons_sorted,      // MUST use the sorted photon array
-    unsigned int* d_cell_start,
-    unsigned int* d_cell_end,
+    uint32_t* d_cell_start,
+    uint32_t* d_cell_end,
     float4 queryPos,             // The 3D world position to inspect
     float4 sceneMin,
     float mergeRadius,
@@ -3535,10 +3535,10 @@ __global__ void paintGridBox(
     Camera camera
 )
 {
-    unsigned int hash = ComputeGridHash(queryPos, sceneMin, mergeRadius, hashTableSize);
+    uint32_t hash = ComputeGridHash(queryPos, sceneMin, mergeRadius, hashTableSize);
 
-    unsigned int start = d_cell_start[hash];
-    unsigned int end = d_cell_end[hash];
+    uint32_t start = d_cell_start[hash];
+    uint32_t end = d_cell_end[hash];
 
     if (start == 0xFFFFFFFF || end == 0xFFFFFFFF || start >= end) {
         return; // Nothing in this grid cell
@@ -3619,23 +3619,23 @@ __host__ void launch_VCM(
     // set up buffers used to create the hash table
     int maxPhotonCount = h_w * h_h * lightDepth;
 
-    unsigned int* d_hash_keys_in;
-    unsigned int* d_hash_keys_out;
-    unsigned int* d_indices_in;
-    unsigned int* d_indices_out;
+    uint32_t* d_hash_keys_in;
+    uint32_t* d_hash_keys_out;
+    uint32_t* d_indices_in;
+    uint32_t* d_indices_out;
 
-    cudaMalloc(&d_hash_keys_in, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_hash_keys_out, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_indices_in, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_indices_out, maxPhotonCount * sizeof(unsigned int));
+    cudaMalloc(&d_hash_keys_in, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_hash_keys_out, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_indices_in, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_indices_out, maxPhotonCount * sizeof(uint32_t));
     
     int hashTableSize = GetNextPrime(maxPhotonCount * 2);
 
-    unsigned int* d_cell_start;
-    unsigned int* d_cell_end;
+    uint32_t* d_cell_start;
+    uint32_t* d_cell_end;
 
-    cudaMalloc(&d_cell_start, hashTableSize * sizeof(unsigned int));
-    cudaMalloc(&d_cell_end, hashTableSize * sizeof(unsigned int));
+    cudaMalloc(&d_cell_start, hashTableSize * sizeof(uint32_t));
+    cudaMalloc(&d_cell_end, hashTableSize * sizeof(uint32_t));
 
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
@@ -3984,8 +3984,8 @@ __global__ void traceEyePaths(
     RNGState* rngStates, 
     Camera camera, 
     const Photons photons_sorted, 
-    const unsigned int* __restrict__ cell_start, 
-    const unsigned int* __restrict__ cell_end, 
+    const uint32_t* __restrict__ cell_start, 
+    const uint32_t* __restrict__ cell_end, 
     const Material* __restrict__ materials, 
     const float4* __restrict__ textures, 
     const BVHnode* __restrict__ BVH, const int2* __restrict__ BVHindices, 
@@ -4092,9 +4092,9 @@ __global__ void traceEyePaths(
                             centerIndex.z + z1
                         );
 
-                        unsigned int hash = HashGridIndex(neighborIndex, hashTableSize);
-                        unsigned int start = __ldg(&cell_start[hash]);
-                        unsigned int end   = __ldg(&cell_end[hash]);
+                        uint32_t hash = HashGridIndex(neighborIndex, hashTableSize);
+                        uint32_t start = __ldg(&cell_start[hash]);
+                        uint32_t end   = __ldg(&cell_end[hash]);
 
                         if (start == 0xFFFFFFFF) continue;
 
@@ -4237,23 +4237,23 @@ __host__ void launch_SPPM(
     // set up buffers used to create the hash table
     int maxPhotonCount = w * h * lightDepth;
 
-    unsigned int* d_hash_keys_in;
-    unsigned int* d_hash_keys_out;
-    unsigned int* d_indices_in;
-    unsigned int* d_indices_out;
+    uint32_t* d_hash_keys_in;
+    uint32_t* d_hash_keys_out;
+    uint32_t* d_indices_in;
+    uint32_t* d_indices_out;
 
-    cudaMalloc(&d_hash_keys_in, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_hash_keys_out, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_indices_in, maxPhotonCount * sizeof(unsigned int));
-    cudaMalloc(&d_indices_out, maxPhotonCount * sizeof(unsigned int));
+    cudaMalloc(&d_hash_keys_in, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_hash_keys_out, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_indices_in, maxPhotonCount * sizeof(uint32_t));
+    cudaMalloc(&d_indices_out, maxPhotonCount * sizeof(uint32_t));
     
     int hashTableSize = GetNextPrime(maxPhotonCount * 2);
 
-    unsigned int* d_cell_start;
-    unsigned int* d_cell_end;
+    uint32_t* d_cell_start;
+    uint32_t* d_cell_end;
 
-    cudaMalloc(&d_cell_start, hashTableSize * sizeof(unsigned int));
-    cudaMalloc(&d_cell_end, hashTableSize * sizeof(unsigned int));
+    cudaMalloc(&d_cell_start, hashTableSize * sizeof(uint32_t));
+    cudaMalloc(&d_cell_end, hashTableSize * sizeof(uint32_t));
 
     void* d_temp_storage = NULL;
     size_t temp_storage_bytes = 0;

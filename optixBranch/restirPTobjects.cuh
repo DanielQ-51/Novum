@@ -70,6 +70,12 @@ __device__ __forceinline__ uint32_t extractType(
     return (packed >> 24);
 }
 
+__device__ __forceinline__ uint32_t extractRcInd(
+    uint32_t packed
+) {
+    return ((packed >> 16) & 0xFF);
+}
+
 __device__ __forceinline__ uint32_t extractPathLength(
     uint32_t packed
 ) {
@@ -428,10 +434,8 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     // Unpack Normal
     float3 normal = unpackOctF3(g.normals[pixelIdx]);
 
-    // Unpack Distance & Roughness (Using CUDA intrinsic for half2 -> float2)
-    float2 distmat = __half22float2(g.distance_matID[pixelIdx]);
-    float dist = distmat.x;
-    int matID = __half_as_short(distmat.y);
+    float dist = g.getDepth(pixelIdx);
+    int matID = g.getMatID(pixelIdx);
 
     // Unpack Albedo
     float3 albedo;
@@ -451,7 +455,11 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     printf("  W (Weight)         : %f\n", W);
     printf("  F (Unpacked RGB)   : (%.3f, %.3f, %.3f)\n", unF.x, unF.y, unF.z);
     printf("  Init Random Seed   : %u\n", initSeed);
-    printf("  Path Flags         : M = %u | Length = %u | RcIdx = %u | Tech = %u\n", M, pathLength, (rcVertexInd == 254 || rcVertexInd == 255) ? pathLength : rcVertexInd, tech);
+    printf("  Path Flags         : M = %u | Length = %u | RcIdx = %u | Tech = %u", M, pathLength, (rcVertexInd == 254 || rcVertexInd == 255) ? pathLength : rcVertexInd, tech);
+    if (rcVertexInd == 254)
+        printf(" with Direction Copy Sub Strategy\n");
+    else if (rcVertexInd == 255)
+        printf(" with Full Replay Sub Strategy\n");
     printf("\n");
     printf("[ RC VERTEX GEOMETRY ]\n");
     if (rcPrimID == 0xFFFFFFFF)
@@ -477,9 +485,29 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
 struct ShiftResult {
     bool isValid;               // True if visibility, footprint, and pdfs pass
     float3 contribution;        // The physical throughput * radiance
-    float p_hat;                // targetFunction(contribution)
     float jacobian;             // The evaluated Jacobian for this shift
     float new_cached_jacobian;  // To save to the reservoir if this path wins
+};
+
+struct ShiftResultBuffer {
+    uint4* buffer;
+
+    __device__ __forceinline__ void setResult(uint32_t idx, bool isValid, float phat, float jacobian, float new_cached_jacobian) {
+        uint4 data;
+        data.x = isValid;
+        data.y = __float_as_uint(phat);
+        data.z = __float_as_uint(jacobian);
+        data.w = __float_as_uint(new_cached_jacobian);
+        buffer[idx] = data;
+    }
+
+    __device__ __forceinline__ void getResult(uint32_t idx, bool& isValid, float& phat, float& jacobian, float& new_cached_jacobian) {
+        uint4 data = __ldg(&buffer[idx]);
+        isValid = data.x;
+        phat = __uint_as_float(data.y);
+        jacobian = __uint_as_float(data.z);
+        new_cached_jacobian = __uint_as_float(data.w);
+    }
 };
 
 struct ReverseShiftResult {
@@ -507,6 +535,10 @@ __device__ __forceinline__ bool K_is_D_minus_1(TechniqueType type) {
     return (type & SHIFT_K_IS_D_MINUS_1);
 }
 
+__device__ __forceinline__ bool K_less_D_minus_1(TechniqueType type) {
+    return (type & SHIFT_K_LESS_D_MINUS_1);
+}
+
 __device__ __forceinline__ bool K_is_D_minus_1_nee(TechniqueType type) {
     return (type & SHIFT_K_IS_D_MINUS_1) && (type & SHIFT_IS_NEE);
 }
@@ -525,4 +557,8 @@ __device__ __forceinline__ bool is_internal_rc_vertex(TechniqueType type) {
 
 __device__ __forceinline__ bool is_env(TechniqueType type) {
     return (type & SHIFT_IS_ENV);
+}
+
+__device__ __forceinline__ bool is_area(TechniqueType type) {
+    return !(type & SHIFT_IS_ENV);
 }

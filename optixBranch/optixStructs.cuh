@@ -13,6 +13,7 @@
 #include "objects.cuh"
 #include "util.cuh"
 #include "restirPTObjects.cuh"
+#include "settings.cuh"
 #include <fstream>
 #include <cuda_fp16.h>
 #include <string>
@@ -60,9 +61,9 @@ struct RestirCommonParams {
     GBuffer prevGbuffer;
     Camera lastFrameCamera;
     uint8_t* __restrict__ duplication_map;
-    short2* reuseTexture1;
-    short2* reuseTexture2;
-    short2* reuseTexture3;
+    short2* reuseTextures[NUM_REUSE_TEXTURES]; 
+    uint32_t reuseTextureSizes[NUM_REUSE_TEXTURES]; 
+    uint32_t currentSpatialReuseIndex; // The current index of the reuse textures
 };
 
 struct CandidateGenParams {

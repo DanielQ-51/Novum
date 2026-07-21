@@ -30,6 +30,7 @@
 // ideally should be decoupled from ray epsilon type things; look into this
 __device__ __constant__ float EPSILON = 0.0000001f;
 __device__ __constant__ float EPSILON3 = 0.001f;
+__device__ __constant__ float EPSILON2 = 0.01f;
 __device__ __constant__ float RAY_EPSILON = 0.0001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float INVPI = 0.3183098f;
@@ -885,4 +886,12 @@ __device__ inline float2 dirToUV(float4 dir) {
 
 __host__ __device__ __forceinline__ inline float lerp(float a, float b, float t) {
     return a + (b - a) * t;
+}
+
+__device__ __forceinline__ float targetFunction(float4 contribution) {
+    return luminance(fireflyClamp(contribution));
+}
+
+__device__ __forceinline__ float targetFunction(float3 contribution) {
+    return luminance(fireflyClamp(f4(contribution)));
 }

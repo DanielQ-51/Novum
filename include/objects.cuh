@@ -210,6 +210,7 @@ struct Ray
     __host__ __device__ Ray() {}
 
     __host__ __device__ Ray(float4 o, float4 d) : origin(o), direction(d) {}
+    __host__ __device__ Ray(float3 o, float3 d) : origin(f4(o)), direction(f4(d)) {}
 
     __host__ __device__ float4 at(float t) const {return origin + t*direction;}
 

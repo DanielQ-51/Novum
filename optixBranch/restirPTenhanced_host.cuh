@@ -33,6 +33,7 @@ __host__ void launch_restir (
     short2* reuseTexture1 = allocateReuseTexture(254, 16);
     short2* reuseTexture2 = allocateReuseTexture(230, 16);
     short2* reuseTexture3 = allocateReuseTexture(210, 16);
+    
 
     PipelineParams allParams = {};
     allParams.common = commonParams;
@@ -42,9 +43,12 @@ __host__ void launch_restir (
     restirParams.lastFrameReservoir = reservoir2;
     restirParams.gbuffer = gbuffer1;
     restirParams.prevGbuffer = gbuffer2;
-    restirParams.reuseTexture1 = reuseTexture1;
-    restirParams.reuseTexture2 = reuseTexture2;
-    restirParams.reuseTexture3 = reuseTexture3;
+    restirParams.reuseTextures[0] = reuseTexture1;
+    restirParams.reuseTextures[1] = reuseTexture2;
+    restirParams.reuseTextures[2] = reuseTexture3;
+    restirParams.reuseTextureSizes[0] = 254;
+    restirParams.reuseTextureSizes[1] = 230;
+    restirParams.reuseTextureSizes[2] = 210;
 
     allParams.restir = restirParams;
 
@@ -57,8 +61,12 @@ __host__ void launch_restir (
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.f, 90.0f, 0.0f);
-    //TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
+
+#if CAMERA_MOVES == 0 
+    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.0f, 90.0f, 0.0f);
+#else
+    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
+#endif
     //LinearCameraAnimation animation = LinearCameraAnimation(f3(commonParams.camera.cameraOrigin), f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.005f, 0.0f, 0.0f) ,f3());
     animation.update(allParams.common.camera, 0);
 
@@ -126,6 +134,7 @@ __host__ void launch_restir (
             commonParams.h
         );
         
+
         if (frame > 0) {
             optixLaunch(
                 engineState.pipeline,

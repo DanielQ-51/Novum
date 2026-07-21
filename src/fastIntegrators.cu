@@ -597,7 +597,7 @@ __global__ void shade(
         throughput /= p; 
     }
 
-    if (depth == maxDepth) {
+    if (depth > maxDepth) {
         predicate[idx] = 0;
         save_rng(pixelIdx, &localState, rngStates);
         return;

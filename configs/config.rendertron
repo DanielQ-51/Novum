@@ -4,10 +4,10 @@ width: 800
 height: 800
 
 Integrator: UNIDIRFAST
-Sample Count: 45
+Sample Count: 250
 Post Process: true
 
-Unidirectional Max Depth: 12
+Unidirectional Max Depth: 6
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false

@@ -147,6 +147,44 @@ __device__ __forceinline__ void getDataSkipEmission(
     normal = backface ? -normal : normal;
 }
 
+
+__device__ __forceinline__ void getDataWithoutInDirectionAndEmission(
+    const Triangle& tri,
+    ShadeContext shadeContext,
+    float2 barycentrics,
+    float3 origin,
+
+    int& materialID,
+    float2& uv,
+    float3& shadingPos,
+    float3& normal,
+    bool& backface
+) {
+    materialID = tri.materialID;
+    float u = barycentrics.x;
+    float v = barycentrics.y;
+
+    uv = __ldg(&shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) + 
+        __ldg(&shadeContext.vertices->uvs[tri.uvbInd]) * u + 
+        __ldg(&shadeContext.vertices->uvs[tri.uvcInd]) * v;
+
+    float3 apos = f3(__ldg(&shadeContext.vertices->positions[tri.aInd]));
+    float3 bpos = f3(__ldg(&shadeContext.vertices->positions[tri.bInd]));
+    float3 cpos = f3(__ldg(&shadeContext.vertices->positions[tri.cInd]));
+
+    shadingPos = (1.0f - u - v) * apos + u * bpos + v * cpos;
+
+    float3 a_n = f3(__ldg(&shadeContext.vertices->normals[tri.naInd]));
+    float3 b_n = f3(__ldg(&shadeContext.vertices->normals[tri.nbInd]));
+    float3 c_n = f3(__ldg(&shadeContext.vertices->normals[tri.ncInd]));
+
+    float3 inDirection = normalize(shadingPos - origin);
+    
+    normal = (1.0f - u - v) * a_n + u * b_n + v * c_n;
+    backface = dot(normal, inDirection) > 0.0f;
+    normal = backface ? -normal : normal;
+}
+
 inline void readObjSimple(
     std::string filename, 
     std::vector<float4>& points, 

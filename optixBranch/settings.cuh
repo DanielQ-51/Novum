@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef DEBUG_MODE
+#define DEBUG_MODE 1
+#endif
+
 #ifndef SAVE_SEQUENCE
 #define SAVE_SEQUENCE 1
 #endif
@@ -16,6 +20,26 @@
 #define TEMPORAL_SKIP_REVERSE_SHIFT 0
 #endif
 
+#ifndef CAMERA_MOVES
+#define CAMERA_MOVES 0
+#endif
+
 #ifndef LERP_MCAP
 #define LERP_MCAP 20.0f
+#endif
+
+#ifndef RECON_FOOTPRINT_C_CONSTANT
+#define RECON_FOOTPRINT_C_CONSTANT 0.02f
+#endif
+
+#ifndef DEBUG_TEST_PIXEL_X
+#define DEBUG_TEST_PIXEL_X 380
+#endif
+
+#ifndef DEBUG_TEST_PIXEL_Y
+#define DEBUG_TEST_PIXEL_Y (800 - 540)
+#endif
+
+#ifndef NUM_REUSE_TEXTURES
+#define NUM_REUSE_TEXTURES 3
 #endif

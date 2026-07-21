@@ -124,7 +124,7 @@ __global__ void displayWinningReservoirs(PipelineParams params) {
 
 #if DEBUG_VISUALIZE_TYPE == 1 
         uint32_t pathFlags = params.restir.reservoir.pathFlags[pixelIdx];
-        output = f4(debugVisualizeTechnique(extractType(pathFlags)));
+        output = f4(debugVisualizeTechnique(extractType(pathFlags), extractRcInd(pathFlags)));
 #endif
 
 #if ACCUMULATE_FRAMES == 1

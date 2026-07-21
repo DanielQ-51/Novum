@@ -182,7 +182,6 @@ struct LightSampler {
             float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
 
             int index = binarySearchCDF(topLevelCDF, numLights, mapped_rand);
-            primID = index;
             LightDescriptor light = lights[index];
 
             // PDF of choosing this specific mesh light given we chose the mesh category
@@ -193,8 +192,8 @@ struct LightSampler {
             float4 pos;
             float area;
             {
-                Triangle l = triLights[lightTriInd]; 
-
+                const Triangle& l = triLights[lightTriInd]; 
+                primID = l.triInd;
                 output = l.emission;
                         
                 float4 apos = __ldg(&verts->positions[l.aInd]);
@@ -223,6 +222,10 @@ struct LightSampler {
             outDir = normalize(pos - probePos);
             
             t_max = length(pos-probePos);
+
+            if (pdf <= 0.0f) {
+                printf("DEBUG: Light sampler returned zero PDF! PrimID: %u\n", primID);
+            } 
             return 0;
         }
     }

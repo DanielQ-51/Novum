@@ -22,7 +22,7 @@ struct SurfaceHit {
 __device__ __forceinline__ SurfaceHit traceClosestSER(
     const CommonParams& params,
     const Ray& r,
-    float tmax = 999999999.0f
+    float tmax = 1e30
 ) {
     uint32_t p0 = 0, p1 = 0;
     optixTraverse(

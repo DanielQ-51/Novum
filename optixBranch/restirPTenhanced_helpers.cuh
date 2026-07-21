@@ -5,18 +5,8 @@
 #include "objects.cuh"
 #include "util.cuh"
 #include "optixStructs.cuh"
-
-#ifndef RECON_FOOTPRINT_C_CONSTANT
-#define RECON_FOOTPRINT_C_CONSTANT 0.02f
-#endif
-
-#ifndef DEBUG_TEST_PIXEL_X
-#define DEBUG_TEST_PIXEL_X 326
-#endif
-
-#ifndef DEBUG_TEST_PIXEL_Y
-#define DEBUG_TEST_PIXEL_Y (800 - 247)
-#endif
+#include "settings.cuh"
+#include "restirPTenhanced_shiftHelpers.cuh"
 
 template<bool isReverseShift>
 __device__ __forceinline__ ShiftResult evaluateHybridShift(
@@ -37,7 +27,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     const RestirCommonParams& restir = allParams.restir; // gets compiled out, so not taking up registers
 
     uint32_t reorderHint = (rcVertexIndex == FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY) ? 0u : 0xFFFFFFFF;
-    optixReorder(reorderHint, 1);
+    optixReorder(reorderHint, 1); // ser so good
 
     RNGState localState = load_rng(seed); // seed path using other pixel's start seed
     Ray r = params.camera.generateCameraRay(localState, x, y);
@@ -46,7 +36,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             printf("frame %u using rng with state: %u for temporal reuse, replaying from %u, %u, with initial camera ray o(%f, %f, %f), d(%f, %f, %f)\n", params.frame_index, seed, x, y, r.origin.x, r.origin.y, r.origin.z, r.direction.x, r.direction.y, r.direction.z);
         }
     }
-    
+
     // handles all k=d bsdf cases except for environment hit with a non specular previous vertex
     // Note: a "full replay" is also done in NEE k=d paths, but its still handled in the other block since it shares the rc shadow ray logic
     if (rcVertexIndex == FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY) {
@@ -69,7 +59,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: primary ray miss for full replay\n", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
         }
 
         int materialID;
@@ -144,9 +137,22 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (pdf_bsdf < EPSILON && !K_is_D(type) && (pathLength != 2))
         {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: full replay scattering pdf zero for primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
         }
 
+        float lum = luminance(f4(throughput));
+        float p = clamp(lum, 0.05f, 1.0f);
+        float rr_roll = rand(&localState);
+        if (rr_roll > p) {
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f};
+        }
+        throughput /= p;
         
         throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
         lastCosine = fabsf(outgoing.z); 
@@ -165,7 +171,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: full replay secondary ray missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
             }
 
             int materialID;
@@ -248,7 +257,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
 
             if (!isValid) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f}; 
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: full replay failed reciprocality on dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f}; 
             }
 
             if (!currDelta) {
@@ -262,14 +274,24 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float lum = luminance(f4(throughput));
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
+            if (rr_roll > p) {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
+            }
             throughput /= p;
 
             if (pdf_bsdf < EPSILON && !K_is_D(type) && (pathLength != depth + 2))
             {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: full replay scattering pdf zero for secondary bounce\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
-            toWorld(outgoing, normal, outgoing);
+
             throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+            toWorld(outgoing, normal, outgoing);
             r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
             r.direction = outgoing;
 
@@ -284,7 +306,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (is_env(type)) {
             if (hitData.isHit) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: last full replay hit scene when it should hit env\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
             ShiftResult result;
 
@@ -300,20 +325,22 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 misWeight;
 
             result.isValid = true;
-            result.p_hat = targetFunction(result.contribution);
             result.jacobian = 1.0f;
             result.new_cached_jacobian = 1.0f;
             
             return result;
         } else {
             if (!hitData.isHit) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: last full replay hit env when it should hit scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
         }
 
         if (!is_bsdf(type)) {
             printf("Error: full replay for bsdf has wrongly packed type or wrongly chosen rcvertexindex flag\n");
-            return {false, f3(0), 0.0f, 0.0f, 0.0f};
+            return {false, f3(0), 0.0f, 0.0f};
         }
 
         int materialID;
@@ -363,14 +390,16 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             result.contribution = throughput * f3(lightEmission) * misWeight;
 
             result.isValid = true;
-            result.p_hat = targetFunction(result.contribution);
             result.jacobian = 1.0f;
             result.new_cached_jacobian = 1.0f;
 
             return result;
 
         } else {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f};
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: full replay ended on non emissive surface\n", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f};
         }
 
     } else { // handles all nee k=d cases, and the k=d environment case when the previous vertex is not specular
@@ -393,7 +422,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: recon missed scene on primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
         }
 
         int materialID;
@@ -438,50 +470,69 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         lastNormal = f3(normal);
 
         bool currDelta = params.shadeContext.materials[materialID].isSpecular;
-        if (!currDelta) {
-            // NEE cast takes 5 random numbers always. This wont get compiled out since it modifes the internal state
-            rand(&localState);
-            rand4(&localState);
 
-            rand(&localState); // to do the reservoir roll
+        uint32_t loopBound = (K_is_D(type)) ? pathLength : rcVertexIndex;
+
+        if (loopBound > 2) {
+            if (!currDelta) {
+                // NEE cast takes 5 random numbers always. This wont get compiled out since it modifes the internal state
+                rand(&localState);
+                rand4(&localState);
+
+                rand(&localState); // to do the reservoir roll
+            }
+
+            float4 outgoing;
+            float4 f_val_bsdf;
+            float pdf_bsdf;
+
+            sample_f_eval(
+                localState, 
+                params.shadeContext.materials, 
+                materialID, 
+                params.shadeContext.textures, 
+                incomingDirLocal,
+                1.5f, // change later when medium stack integrated
+                1.5f, // change later
+                backface,
+                outgoing,
+                f_val_bsdf,
+                pdf_bsdf,
+                uv,
+                TRANSPORTMODE_RADIANCE
+            );
+
+            if (pdf_bsdf < EPSILON)
+            {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon primary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
+            }
+
+            float lum = luminance(f4(throughput));
+            float p = clamp(lum, 0.05f, 1.0f);
+            float rr_roll = rand(&localState);
+            if (rr_roll > p) {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
+            }
+            throughput /= p;
+
+            if (!(K_is_D(type) && pathLength == 2 && is_nee(type))) { // We dont want to update scattering throughput for this case
+                throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
+            }
+            lastCosine = fabsf(outgoing.z); 
+            toWorld(outgoing, normal, outgoing);
+
+            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+            r.direction = outgoing;
+
+            prevDelta = currDelta;
+            lastPDF = pdf_bsdf;
         }
-
-        float4 outgoing;
-        float4 f_val_bsdf;
-        float pdf_bsdf;
-
-        sample_f_eval(
-            localState, 
-            params.shadeContext.materials, 
-            materialID, 
-            params.shadeContext.textures, 
-            incomingDirLocal,
-            1.5f, // change later when medium stack integrated
-            1.5f, // change later
-            backface,
-            outgoing,
-            f_val_bsdf,
-            pdf_bsdf,
-            uv,
-            TRANSPORTMODE_RADIANCE
-        );
-
-        if (pdf_bsdf < EPSILON)
-        {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
-        }
-
-        if (!K_is_D(type)) {
-            throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
-        }
-        lastCosine = fabsf(outgoing.z); 
-        toWorld(outgoing, normal, outgoing);
-
-        r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
-        r.direction = outgoing;
-
-        prevDelta = currDelta;
-        lastPDF = pdf_bsdf;
     }
         float4 lastPOS_GETRIDOFME = r.origin;
 
@@ -493,7 +544,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon secondary hit missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
             }
 
             int materialID;
@@ -531,7 +585,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             toLocal(r.direction, normal, incomingDirLocal);
 
             // needed for recon
-            if (depth + 1 == rcVertexIndex - 1) {
+            if (depth + 1 == loopBound - 1) { // if this is the last iteration
                 lastPos = f3(shadingPos);
                 lastMaterialID = materialID;
                 lastUV = uv;
@@ -576,7 +630,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
             //optixReorder(isValid ? 1 : 0, 1);
             if (!isValid) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f}; 
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon failed dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f}; 
             }
 
             if (!currDelta) {
@@ -587,21 +644,38 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rand(&localState); // for the reservoir roll
             }
 
+            if (depth + 1 == loopBound - 1) {
+                break;
+            }
+            
             float lum = luminance(f4(throughput));
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
+            if (rr_roll > p) {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
+            }
             throughput /= p;
+
+            if (depth + 1 == loopBound - 1) {
+                break;
+            }
 
             if (pdf_bsdf < EPSILON)
             {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon secondary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
+            
+            throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+
             toWorld(outgoing, normal, outgoing);
-            if (depth + 1 != rcVertexIndex - 1) {
-                throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
-                r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
-                r.direction = outgoing;
-            }
+            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+            r.direction = outgoing;
 
             prevDelta = currDelta;
             lastPDF = pdf_bsdf;
@@ -609,6 +683,130 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             lastPOS_GETRIDOFME = shadingPos;
         }
 
+        int rc_xk_materialID;
+        float2 rc_xk_uv;
+        float3 rc_xk_pos;
+        bool rc_xk_backface;
+        float3 rc_xk_normal;
+
+        if (rcPrimID != 0xFFFFFFFF) {
+            if (rcPrimID >= params.shadeContext.triNum) {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
+            }
+
+            const Triangle& tri = params.shadeContext.scene[rcPrimID];
+
+            getDataWithoutInDirectionAndEmission(
+                tri,
+                params.shadeContext,
+                rcBarycentrics, 
+                lastPos,
+
+                rc_xk_materialID,
+                rc_xk_uv,
+                rc_xk_pos,
+                rc_xk_normal,
+                rc_xk_backface
+            );
+        }
+
+        if (K_less_D_minus_1(type)) {
+            return perform_K_less_than_D_minus_1_reconnection(
+                params,
+                type,
+                x, y,
+                isReverseShift,
+
+                // x_k parameters (from the rcPrimID getData block)
+                rc_xk_materialID,           // rc_xk_materialID
+                rc_xk_uv,                   // rc_xk_uv
+                rc_xk_pos,                  // rc_xk_pos
+                rc_xk_backface,             // rc_xk_backface
+                rc_xk_normal,               // rc_xk_normal
+
+                // x_{k-1} / y_{k-1} parameters (cached from the prefix loop)
+                lastMaterialID,           // xkminus1_materialID
+                lastUV,                   // xkminus1_uv
+                lastPos,                  // xkminus1_pos
+                lastBackface,             // xkminus1_backface
+                lastNormal,               // xkminus1_normal
+                f4(lastInDirLocal), // xkminus1_inDirLocal
+
+                // Ray/Path state
+                throughput,               // throughput entering x_k-1
+                rcWi,                     // rcWi
+                rcRadiance,               // rcRadiance (contains suffix throughput)
+                jacobianDenom             // jacobian_denominator
+            );
+        } 
+        else if (K_is_D_minus_1(type)) {
+            return perform_K_is_D_minus_1_reconnection(
+                params,
+                type,
+                x, y,
+                isReverseShift,
+
+                // x_k parameters
+                rc_xk_materialID,           // rc_xk_materialID
+                rc_xk_uv,                   // rc_xk_uv
+                rc_xk_pos,                  // rc_xk_pos
+                rc_xk_backface,             // rc_xk_backface
+                rc_xk_normal,               // rc_xk_normal
+
+                // x_{k-1} / y_{k-1} parameters
+                lastMaterialID,           // xkminus1_materialID
+                lastUV,                   // xkminus1_uv
+                lastPos,                  // xkminus1_pos
+                lastBackface,             // xkminus1_backface
+                lastNormal,               // xkminus1_normal
+                f4(lastInDirLocal), // xkminus1_inDirLocal
+
+                // Ray/Path state
+                throughput,
+                rcWi,
+                cached_nee,               // pdf_sampledLight_nee_sa
+                rcRadiance,               // lightEmissionRaw
+                jacobianDenom
+            );
+        } 
+        else if (K_is_D(type)){ // K = D case
+            return perform_K_is_D_reconnection(
+                params,
+                type,
+                x, y,
+                isReverseShift,
+
+                // x_k parameters
+                rc_xk_materialID,           // rc_xk_materialID
+                rc_xk_uv,                   // rc_xk_uv
+                rc_xk_pos,                  // rc_xk_pos
+                rc_xk_backface,             // rc_xk_backface
+                rc_xk_normal,               // rc_xk_normal
+
+                // x_{k-1} / y_{k-1} parameters
+                lastMaterialID,           // xkminus1_materialID
+                lastUV,                   // xkminus1_uv
+                lastPos,                  // xkminus1_pos
+                lastBackface,             // xkminus1_backface
+                lastNormal,               // xkminus1_normal
+                f4(lastInDirLocal), // xkminus1_inDirLocal
+
+                // Ray/Path state
+                throughput,
+                rcWi,                     // xkminus1_to_xk_direction_normalized (for env hits)
+                cached_nee,               // pdf_sampledLight_nee
+                rcRadiance,               // lightEmissionRaw
+                jacobianDenom
+            );
+        } else {
+            printf("Alert: invalid path type with respect to k vs d\n");
+            return {false, f3(0), 0.0f, 0.0f};
+        }
+    }
+/*
         // Now, we should be at y_k-1. At this point, rng syncing with the prefix is not important
         int materialID;
         float2 uv;
@@ -618,8 +816,11 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float4 emission;
 
         if (rcPrimID != 0xFFFFFFFF) {
-            if (rcPrimID >= params.shadeContext.triNum || rcPrimID < 0) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+            if (rcPrimID >= params.shadeContext.triNum) {
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
 
             const Triangle& tri = params.shadeContext.scene[rcPrimID];
@@ -646,19 +847,19 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float visibility_dist;
 
         float4 outDir;
-        if (is_internal_rc_vertex(type)) {
+        if (is_internal_rc_vertex(type)) { // Checks if its either k<d-1 or k=d-1
             outDir = xk_pos - f4(lastPos);
             visibility_dist = length(outDir);
             outDir = normalize(outDir);
             visibility_dir = outDir;
         } else {
             if (is_env(type)) {
-                outDir = f4(rcWi); // from the last intersect to the light pos
+                outDir = f4(rcWi); 
                 visibility_dist = 1E30;
                 visibility_dir = outDir;
             } else {
                 visibility_dist = length(xk_pos - f4(lastPos));
-                outDir = f4(rcWi);
+                outDir = normalize(xk_pos - f4(lastPos));
                 visibility_dir = outDir;
             }
         }
@@ -674,6 +875,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 );
             }
         }
+
+
+
+
         bool occluded = traceVisibility(
             params, 
             Ray(f4(lastPos) + (visibility_dir * RAY_EPSILON), visibility_dir),
@@ -688,9 +893,13 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         result.p_hat = -1.0f;
 
         if (occluded) {
-            return {false, f3(0), 0.0f, 0.0f, 0.0f};
+            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                printf("SHIFT ABORT [%s]: recon failed reconnection visibility test\n", isReverseShift ? "REVERSE" : "FORWARD");
+            }
+            return {false, f3(0), 0.0f, 0.0f};
         } else if (is_internal_rc_vertex(type)) {
-            float connectionDistanceSQR = lengthSquared(xk_pos - f4(lastPos));
+
+            float connectionDistanceSQR = visibility_dist * visibility_dist;
             
             float4 outDirLocal;
             toLocal(outDir, f4(lastNormal), outDirLocal);
@@ -702,8 +911,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 params.shadeContext.materials, 
                 lastMaterialID, 
                 params.shadeContext.textures, 
-                f4(lastInDirLocal),
-                outDirLocal,
+                f4(lastInDirLocal), // direction to the y_k-1
+                outDirLocal, // direction to the rc vertex
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
                 f_val_1,
@@ -711,13 +920,13 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 lastUV
             );
 
-            float4 inDir = outDir;
-            toLocal(inDir, normal, inDir);
-            float cosine_2 = fabsf(inDir.z);
+            // the outgoing direction of the previous is the incoming direction for the current
+            float4 inDirLocal = toLocal(outDir, normal);
+            
+            // points from the rc vertex to the next bsdf sampled direction (ie, the light for k=d-1)
+            outDirLocal = toLocal(f4(rcWi), normal);
+            float cosine_2 = fabsf(outDirLocal.z);
 
-            outDir = f4(rcWi);
-            toLocal(outDir, normal, outDir);
-            float cosine_rcWi = outDir.z;
             float4 f_val_2;
             float pdf_2;
 
@@ -725,8 +934,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 params.shadeContext.materials, 
                 materialID, 
                 params.shadeContext.textures, 
-                inDir,
-                outDir,
+                inDirLocal,
+                outDirLocal,
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
                 f_val_2,
@@ -744,30 +953,48 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             new_cached_jacobian = p_new_suffix;
 
             if (p_new_suffix <= 0.0f || jacobianDenom <= 0.0f) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: internal recon zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
 
             float jacobian = p_new_suffix / jacobianDenom;
 
             if (pdf_1 <= 0.0f) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: internal recon pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
             if (pdf_2 <= 0.0f && !(K_is_D_minus_1(type) && is_nee(type))) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: internal recon pdf_2 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
+
+            float3 throughput_arriving_at_xk = throughput * (f3(f_val_1) * cosine_1 / pdf_1);
+
+            float lum_xk = luminance(f4(throughput_arriving_at_xk));
+            float p_xk = clamp(lum_xk, 0.05f, 1.0f);
+
+            float rr_scale_xk = 1.0f;
+            if (!(K_is_D_minus_1(type))) { // for deep internal rc vertices, we need the rr scaling at x_k, but not for k=d-1
+                rr_scale_xk = 1.0f / p_xk; // This is the true RR scale for x_k
+            }
+
             
             if (K_is_D_minus_1(type)) {
                 // Cached_nee is always in solid angle, if not k=d
                 float p_sampled_light = (is_nee(type)) ? cached_nee : pdf_2;
 
-                result.contribution = throughput 
-                    * (f3(f_val_1) * cosine_1 / pdf_1) 
-                    * (f3(f_val_2) * cosine_rcWi / p_sampled_light) 
+                result.contribution = throughput_arriving_at_xk * rr_scale_xk
+                    * (f3(f_val_2) * cosine_2 / p_sampled_light) 
                     * rcRadiance; // here rcRadiance is the raw emission
             } else { // its a deep internal vertex
-                result.contribution = throughput 
-                    * (f3(f_val_1) * cosine_1 / pdf_1) 
-                    * (f3(f_val_2) * cosine_rcWi / pdf_2) 
+                result.contribution = throughput_arriving_at_xk * rr_scale_xk
+                    * (f3(f_val_2) * cosine_2 / pdf_2) 
                     * rcRadiance; // here rc radiance is the actual incoming radiance calculated with suffix throughput etc.
             }
             
@@ -785,7 +1012,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             result.jacobian = jacobian;
             result.new_cached_jacobian = new_cached_jacobian;
             if (result.p_hat <= 0.0f) {
-                return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                    printf("SHIFT ABORT [%s]: internal recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                }
+                return {false, f3(0), 0.0f, 0.0f};
             }
         } else { // K=D
             if (is_env(type)) {
@@ -815,7 +1045,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
                 float p_sampled = (is_nee(type)) ? cached_nee : pdf_1;
                 if (p_sampled <= 0.0f || (!is_nee(type) && pdf_1 <= 0.0f)) {
-                    return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                        printf("SHIFT ABORT [%s]: k=d env recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    }
+                    return {false, f3(0), 0.0f, 0.0f};
                 }
 
                 result.contribution = pathMISWeight * (throughput * f3(f_val_1) * cosine_surface * rcRadiance / p_sampled);
@@ -824,7 +1057,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 if (is_bsdf(type)) { // Direction copy
                     // jacobianDenom should just be a single pdf for direction copy
                     if (jacobianDenom <= 0.0f || pdf_1 <= 0.0f) {
-                        return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                            printf("SHIFT ABORT [%s]: k=d env bsdf recon jacobian or pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                        }
+                        return {false, f3(0), 0.0f, 0.0f};
                     }
                     jacobian = pdf_1 / jacobianDenom;
                     new_cached_jacobian = pdf_1;
@@ -838,7 +1074,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 result.p_hat = targetFunction(result.contribution);
                 
                 if (result.p_hat <= 0.0f) {
-                    return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                        printf("SHIFT ABORT [%s]: k=d env recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    }
+                    return {false, f3(0), 0.0f, 0.0f};
                 }
             } else { // MUST be NEE case, since k=d area light bsdf is a full replay version
                 float connectionDistanceSQR = lengthSquared(xk_pos - f4(lastPos));
@@ -865,11 +1104,14 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 float cosine_light = fabsf(dot(normal, outDir));
 
                 // if sampled light is area (not env), then perform area to solid angle conversion
-                float converted_cached_nee = cached_nee * (connectionDistanceSQR) / fmaxf(cosine_light, EPSILON);
+                float converted_cached_nee = cached_nee * (connectionDistanceSQR) / fabsf(cosine_light);
 
                 float p_sampled = converted_cached_nee;
                 if (p_sampled <= 0.0f) {
-                    return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                        printf("SHIFT ABORT [%s]: k=d nee recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    }
+                    return {false, f3(0), 0.0f, 0.0f};
                 }
 
                 float pathMISWeight = powerHeuristicTwoStrategy(
@@ -882,7 +1124,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 result.p_hat = targetFunction(result.contribution);
                 
                 if (result.p_hat <= 0.0f) {
-                    return {false, f3(0), 0.0f, 0.0f, 0.0f};
+                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
+                        printf("SHIFT ABORT [%s]: k=d nee recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    }
+                    return {false, f3(0), 0.0f, 0.0f};
                 }
                 
                 result.jacobian = 1.0f;
@@ -892,6 +1137,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         return result;
     }
+    */
 }
 
 __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int2 currentCoord, half2 motionVec, int2& out_coords) {
@@ -949,20 +1195,62 @@ __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int
     return true;
 }
 
+__device__ __forceinline__ bool isSpatialNeighborValid(const PipelineParams& params, int2 currentCoord, int2 neighborCoord) {
+
+    uint32_t current_idx = currentCoord.x + currentCoord.y * params.common.w;
+    uint32_t neighbor_idx = neighborCoord.x + neighborCoord.y * params.common.w;
+
+    uint32_t current_id = params.restir.gbuffer.getMatID(current_idx);
+    uint32_t neighbor_id = params.restir.gbuffer.getMatID(neighbor_idx);
+
+    if (current_id != neighbor_id) {
+        return false;
+    }
+
+    // Normal Threshold Check
+    float3 currNorm = params.restir.gbuffer.getNormal(current_idx);
+    float3 neighNorm = params.restir.gbuffer.getNormal(neighbor_idx);
+
+    if (dot(currNorm, neighNorm) < 0.98f) {
+        return false; 
+    }
+    
+    // Current Pixel
+    RNGState localStateCurr = load_rng(current_idx, params.common.frame_index, 0, nullptr);
+    Ray rCurr = params.common.camera.generateCameraRay(localStateCurr, currentCoord.x, currentCoord.y);
+    float3 current_pos = f3(rCurr.at(params.restir.gbuffer.getDepth(current_idx)));
+
+    // Neighbor Pixel 
+    RNGState localStateNeigh = load_rng(neighbor_idx, params.common.frame_index, 0, nullptr);
+    Ray rNeigh = params.common.camera.generateCameraRay(localStateNeigh, neighborCoord.x, neighborCoord.y);
+    float3 neighbor_pos = f3(rNeigh.at(params.restir.gbuffer.getDepth(neighbor_idx)));
+
+    // Planarity and Distance Checks
+    float3 pos_diff = neighbor_pos - current_pos;
+    
+    // Check if the neighbor is roughly on the same plane as the current pixel
+    float plane_distance = abs(dot(pos_diff, currNorm));
+    float depth_tolerance = 0.01f + (length(current_pos - f3(params.common.camera.cameraOrigin)) * 0.01f);
+
+    if (plane_distance > depth_tolerance) {
+        return false;
+    }
+
+    // Check if the neighbor is physically too far away in 3D space
+    float true_distance = length(pos_diff);
+    if (true_distance > depth_tolerance * 5.0f) {
+        return false;
+    }
+
+    return true;
+}
+
 __device__ __forceinline__ uint32_t expandBits(uint32_t v) {
     v = (v * 0x00010001u) & 0xFF0000FFu;
     v = (v * 0x00000101u) & 0x0F00F00Fu;
     v = (v * 0x00000011u) & 0xC30C30C3u;
     v = (v * 0x00000005u) & 0x49249249u;
     return v;
-}
-
-__device__ __forceinline__ float targetFunction(float4 contribution) {
-    return luminance(fireflyClamp(contribution));
-}
-
-__device__ __forceinline__ float targetFunction(float3 contribution) {
-    return luminance(fireflyClamp(f4(contribution)));
 }
 
 __device__ int2 get_frame_offset(uint32_t frame_idx, uint32_t texture_id, int2 texture_size) {
@@ -981,13 +1269,15 @@ __device__ bool get_frame_transpose(uint32_t frame_idx, uint32_t texture_id) {
     return (h & 1) != 0;
 }
 
-__device__ short2 get_neighbor_delta(
+__device__ int2 get_paired_neighbor(
     int2 screen_pixel, 
     uint32_t texture_id, 
     uint32_t frame_idx, 
-    int2 texture_size, 
+    uint32_t texture_size_1d, 
+    int2 screen_dimension,
     const short2* __restrict__ pairing_buffer) 
 {
+    int2 texture_size = make_int2(texture_size_1d, texture_size_1d);
     int2 random_offset = get_frame_offset(frame_idx, texture_id, texture_size);
     bool flip_x        = get_frame_flip_x(frame_idx, texture_id);
     bool transpose     = get_frame_transpose(frame_idx, texture_id);
@@ -1011,24 +1301,35 @@ __device__ short2 get_neighbor_delta(
     if (tex_coord.x < 0) tex_coord.x += texture_size.x;
     if (tex_coord.y < 0) tex_coord.y += texture_size.y;
 
-    // 3. Flatten 2D coord to 1D index for the raw short2* buffer
+    // Flatten 2D coord to 1D index for the raw short2* buffer
     uint32_t flat_index = tex_coord.y * texture_size.x + tex_coord.x;
     
     // Read the raw delta and cast up to int2 for math
     short2 raw_short_delta = pairing_buffer[flat_index];
-    short2 final_delta = make_short2(raw_short_delta.x, raw_short_delta.y);
+    int2 final_delta = make_int2(raw_short_delta.x, raw_short_delta.y);
 
+    // Apply inverse transformations to the delta
     if (transpose) {
-        final_delta = make_short2(final_delta.y, final_delta.x);
+        final_delta = make_int2(final_delta.y, final_delta.x);
     }
     if (flip_x) {
         final_delta.x = -final_delta.x;
     }
 
-    return final_delta;
+    // Apply the delta to get the actual neighbor pixel coordinate
+    int2 paired_pixel = make_int2(screen_pixel.x + final_delta.x, screen_pixel.y + final_delta.y);
+
+    // Boundary check: If the delta pushes the pixel off-screen, return an invalid coordinate
+    if (paired_pixel.x < 0 || paired_pixel.x >= screen_dimension.x ||
+        paired_pixel.y < 0 || paired_pixel.y >= screen_dimension.y) 
+    {
+        return make_int2(-1, -1);
+    }
+
+    return paired_pixel;
 }
 
-__device__ __forceinline__ float3 debugVisualizeTechnique(uint32_t type) {
+__device__ __forceinline__ float3 debugVisualizeTechnique(uint32_t type, uint32_t rcInd) {
     float3 color = make_float3(0.0f, 0.0f, 0.0f);
 
     // 1. Reconnection Depth -> Primary Color Axis

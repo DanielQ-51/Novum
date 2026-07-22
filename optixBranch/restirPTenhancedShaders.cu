@@ -138,7 +138,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 #else
         params.accum_buffer[pixelIdx] = contribution;
 #endif
-        restir.gbuffer.setSkipShadeMotionVec(pixelIdx); // still run a reservoir, but for this frame, dont display the reservoir
+        restir.gbuffer.setSkipShadeFlag(pixelIdx); // still run a reservoir and reuse normally, but dont display the reservoir this frame
     }
 
     float4 incomingDirLocal;
@@ -675,7 +675,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             goto finalize_pixel;
         }
         throughput /= p; 
-        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth > pathRcVertexIndex) 
+        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1> pathRcVertexIndex) 
             suffixThroughput /= p;
         if (pdf_bsdf < EPSILON)
         {
@@ -683,7 +683,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         }
         
         throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
-        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth > pathRcVertexIndex) 
+        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1 > pathRcVertexIndex) 
             suffixThroughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
 
         toWorld(outgoing, normal, outgoing);
@@ -742,7 +742,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     uint32_t reorderHint = 0u;
 
     uint32_t mvBits = reinterpret_cast<const uint32_t&>(mv);
-    if (mvBits != 0xFFFFFFFF && mvBits != 0xFFFFFFFE) { // check whether it was marked as ignore
+    if (mvBits != 0xFFFFFFFF) { // 0xFFFFFFFF = no reprojectable surface (env miss). Skip-shade pixels keep a real MV and reuse normally.
         if (isHistoryValid(allParams, make_int2(x, y), mv, historyCoord)) { // check primary movtion vec
             reorderHint = 0xFFFFFFFF;
         } else {
@@ -901,7 +901,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         }
     }
     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y)
-        printf("forward shift resulted in a jacobian of %f\n forward shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f", fwdResult.jacobian, fwdResult.contribution.x, fwdResult.contribution.y, fwdResult.contribution.z, fwdResult.new_cached_jacobian);
+        printf("forward shift resulted in a jacobian of %f\n forward shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", fwdResult.jacobian, fwdResult.contribution.x, fwdResult.contribution.y, fwdResult.contribution.z, fwdResult.new_cached_jacobian);
 
     float bwd_phat = targetFunction(bwdResult.contribution);
     // B. Evaluate Current Path MIS (Evaluated at X_c)
@@ -914,7 +914,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     }
 
     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y && needs_bwd_shift) {
-        printf("backwards shift resulted in a jacobian of %f\n backwards shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f", bwdResult.jacobian, bwdResult.contribution.x, bwdResult.contribution.y, bwdResult.contribution.z, bwdResult.new_cached_jacobian);
+        printf("backwards shift resulted in a jacobian of %f\n backwards shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", bwdResult.jacobian, bwdResult.contribution.x, bwdResult.contribution.y, bwdResult.contribution.z, bwdResult.new_cached_jacobian);
 
     }
         
@@ -1014,8 +1014,10 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
     optixReorder(reorderHint, 1);
 #endif
 
-    if (reorderHint == 0u)
+    if (reorderHint == 0u) {
+        restir.shiftResultBuffer.setResult(pixelIdx, false, f3(), 0.0f, 0.0f);
         return;
+    }
 
     uint32_t neighborIdx = neighborCoord.x + neighborCoord.y * params.w;
 

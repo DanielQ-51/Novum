@@ -371,15 +371,23 @@ struct GBuffer {
     __device__ __forceinline__ void setInvalidMotionVec(
         uint32_t idx
     ) const {
-        uint32_t sentinelBits = 0xFFFFFFFF; 
+        uint32_t sentinelBits = 0xFFFFFFFF;
         __stcs(&motionVector[idx], reinterpret_cast<const half2&>(sentinelBits));
     }
 
-    __device__ __forceinline__ void setSkipShadeMotionVec(
-        uint32_t idx
-    ) const {
-        uint32_t sentinelBits = 0xFFFFFFFE; 
-        __stcs(&motionVector[idx], reinterpret_cast<const half2&>(sentinelBits));
+    // Marks that this pixel's reservoir should be excluded from display for this
+    // frame (e.g. directly viewing an area light), while still participating
+    // normally in reservoir math and reuse. Stored in the top bit of the RGB10A2
+    // albedo alpha field so the motion vector stays a real reprojection vector.
+    // Assumes setGeometry (which writes A2 = 0) has already run for this pixel.
+    __device__ __forceinline__ void setSkipShadeFlag(uint32_t idx) const {
+        uint32_t packed = albedos[idx];
+        packed |= (1u << 31);
+        __stcs(&albedos[idx], packed);
+    }
+
+    __device__ __forceinline__ bool getSkipShade(uint32_t idx) const {
+        return (__ldcs(&albedos[idx]) >> 31) & 1u;
     }
 };
 

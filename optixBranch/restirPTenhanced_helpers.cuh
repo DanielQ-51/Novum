@@ -1,3 +1,10 @@
+/**
+ * CURRENTLY THIS IS WRITTEN TO ACCOMODATE A SINGLE LOBE ENGINE.
+ * because calling f_eval_pdf sums the probabilities across all lobes,
+ * while you are supposed to just do the sampling pdf as if you freshly sampled it
+ */
+
+
 #pragma once
 #include <optix.h>
 #include <cuda_runtime.h>
@@ -30,7 +37,14 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     optixReorder(reorderHint, 1); // ser so good
 
     RNGState localState = load_rng(seed); // seed path using other pixel's start seed
-    Ray r = params.camera.generateCameraRay(localState, x, y);
+
+    Ray r;
+    if constexpr (!isReverseShift) {
+        r = params.camera.generateCameraRay(localState, x, y);
+    } else {
+        r = restir.lastFrameCamera.generateCameraRay(localState, x, y);
+    }
+    
     if constexpr (!isReverseShift) {
         if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
             printf("frame %u using rng with state: %u for temporal reuse, replaying from %u, %u, with initial camera ray o(%f, %f, %f), d(%f, %f, %f)\n", params.frame_index, seed, x, y, r.origin.x, r.origin.y, r.origin.z, r.direction.x, r.direction.y, r.direction.z);

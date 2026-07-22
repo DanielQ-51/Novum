@@ -116,7 +116,7 @@ __global__ void displayWinningReservoirs(PipelineParams params) {
     }
     
     half2 mv = params.restir.gbuffer.getMV(pixelIdx);
-    if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF && reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFE) {
+    if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF && !params.restir.gbuffer.getSkipShade(pixelIdx)) {
         float4 output = fireflyClamp(fromRGB9E5(__ldcs(&params.restir.reservoir.F[pixelIdx])) * __ldcs(&params.restir.reservoir.W[pixelIdx]));
         if ((isnan(output.x) || isnan(output.y) || isnan(output.z))) {
             printf("nan at pixel idx: %d\n", pixelIdx);

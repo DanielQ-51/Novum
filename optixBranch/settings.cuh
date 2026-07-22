@@ -33,11 +33,11 @@
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_X
-#define DEBUG_TEST_PIXEL_X 380
+#define DEBUG_TEST_PIXEL_X 365
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_Y
-#define DEBUG_TEST_PIXEL_Y (800 - 540)
+#define DEBUG_TEST_PIXEL_Y (800 - 535)
 #endif
 
 #ifndef NUM_REUSE_TEXTURES

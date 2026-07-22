@@ -33,6 +33,10 @@ __host__ void launch_restir (
     short2* reuseTexture1 = allocateReuseTexture(254, 16);
     short2* reuseTexture2 = allocateReuseTexture(230, 16);
     short2* reuseTexture3 = allocateReuseTexture(210, 16);
+
+    ShiftResultBuffer shiftResultBuffer;
+    
+    void* sr_bufferMemory = allocateShiftResultBuffer(shiftResultBuffer, commonParams.w * commonParams.h);
     
 
     PipelineParams allParams = {};
@@ -49,6 +53,7 @@ __host__ void launch_restir (
     restirParams.reuseTextureSizes[0] = 254;
     restirParams.reuseTextureSizes[1] = 230;
     restirParams.reuseTextureSizes[2] = 210;
+    restirParams.shiftResultBuffer = shiftResultBuffer;
 
     allParams.restir = restirParams;
 
@@ -193,6 +198,7 @@ __host__ void launch_restir (
         allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
         allParams.restir.reservoir = temp;
 
+        // These are temporary, ideally we do not have these. These are just safety checks for correctness checking
         cudaMemsetAsync(allParams.restir.reservoir.F, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.W, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.initRandomSeed, 0, commonParams.w * commonParams.h * sizeof(float), stream);
@@ -231,6 +237,7 @@ __host__ void launch_restir (
     cudaFree(reuseTexture1);
     cudaFree(reuseTexture2);
     cudaFree(reuseTexture3);
+    cudaFree(sr_bufferMemory);
 }
 
 

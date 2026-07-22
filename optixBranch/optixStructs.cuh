@@ -64,6 +64,7 @@ struct RestirCommonParams {
     short2* reuseTextures[NUM_REUSE_TEXTURES]; 
     uint32_t reuseTextureSizes[NUM_REUSE_TEXTURES]; 
     uint32_t currentSpatialReuseIndex; // The current index of the reuse textures
+    ShiftResultBuffer shiftResultBuffer;
 };
 
 struct CandidateGenParams {

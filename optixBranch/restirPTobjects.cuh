@@ -490,39 +490,38 @@ struct ShiftResult {
 };
 
 struct ShiftResultBuffer {
-    uint4* buffer;
+    uint4* __restrict__ buffer;
 
-    __device__ __forceinline__ void setResult(uint32_t idx, bool isValid, float phat, float jacobian, float new_cached_jacobian) {
+    __device__ __forceinline__ void setResult(uint32_t idx, bool isValid, float3 contribution, float jacobian, float new_cached_jacobian) const {
         uint4 data;
         data.x = isValid;
-        data.y = __float_as_uint(phat);
+        data.y = toRGB9E5(f4(contribution));
         data.z = __float_as_uint(jacobian);
         data.w = __float_as_uint(new_cached_jacobian);
         buffer[idx] = data;
     }
 
-    __device__ __forceinline__ void getResult(uint32_t idx, bool& isValid, float& phat, float& jacobian, float& new_cached_jacobian) {
+    __device__ __forceinline__ void getResult(uint32_t idx, bool& isValid, float3& contribution, float& jacobian, float& new_cached_jacobian) const {
         uint4 data = __ldg(&buffer[idx]);
         isValid = data.x;
-        phat = __uint_as_float(data.y);
+        contribution = f3(fromRGB9E5(data.y));
         jacobian = __uint_as_float(data.z);
         new_cached_jacobian = __uint_as_float(data.w);
     }
 };
 
-struct ReverseShiftResult {
-    float2* __restrict__ phat_jacobian;
+__host__ inline void* allocateShiftResultBuffer(ShiftResultBuffer& r, uint32_t numPixel) {
+    numPixel = (numPixel + 31) & ~31;
 
-    __device__ __forceinline__ void setShiftValues(uint32_t idx, float p_hat, float jacobian) {
-        phat_jacobian[idx] = f2(p_hat, jacobian);
-    }
+    void* raw;
+    cudaMalloc(&raw, numPixel * sizeof(uint4));
 
-    __device__ __forceinline__ void getShiftValues(uint32_t idx, float& p_hat, float& jacobian) {
-        float2 data = __ldg(&phat_jacobian[idx]);
-        p_hat = data.x;
-        jacobian = data.y;
-    }
-};
+    char* ptr = static_cast<char*>(raw);
+    r.buffer = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
+    
+    return raw;
+}
+
 __device__ __forceinline__ bool needNeePDF(TechniqueType type) {
     return (type & (SHIFT_K_IS_D | SHIFT_K_IS_D_MINUS_1));
 }

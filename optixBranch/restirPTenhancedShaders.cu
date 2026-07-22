@@ -741,7 +741,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     int2 historyCoord = make_int2(-1, -1);
     uint32_t reorderHint = 0u;
 
-    if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF) { // check whether it was marked as ignore
+    uint32_t mvBits = reinterpret_cast<const uint32_t&>(mv);
+    if (mvBits != 0xFFFFFFFF && mvBits != 0xFFFFFFFE) { // check whether it was marked as ignore
         if (isHistoryValid(allParams, make_int2(x, y), mv, historyCoord)) { // check primary movtion vec
             reorderHint = 0xFFFFFFFF;
         } else {
@@ -995,10 +996,6 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
     if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF) { // check whether it was marked as ignore
         if (isSpatialNeighborValid(allParams, make_int2(x, y), neighborCoord)) { // check primary movtion vec
             reorderHint = 0xFFFFFFFF;
-        } else {
-            if (isSpatialNeighborValid(allParams, make_int2(x, y), neighborCoord)) { // check dual motion vec
-                reorderHint = 0xFFFFFFFF;
-            }
         }
     }
     
@@ -1057,6 +1054,5 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
         fwdResult = {false, f3(0), 0.0f, 0.0f};
     }
 
-    
-
+    restir.shiftResultBuffer.setResult(pixelIdx, fwdResult.isValid, fwdResult.contribution, fwdResult.jacobian, fwdResult.new_cached_jacobian);
 }

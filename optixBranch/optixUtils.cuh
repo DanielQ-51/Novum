@@ -27,7 +27,7 @@ __device__ __forceinline__ SurfaceHit traceClosestSER(
     uint32_t p0 = 0, p1 = 0;
     optixTraverse(
         params.bvh_handle,
-        f3(r.origin), f3(r.direction),
+        r.origin, r.direction,
         EPSILON, tmax, 0.0f,
         OptixVisibilityMask(255),
         OPTIX_RAY_FLAG_DISABLE_ANYHIT,
@@ -73,7 +73,7 @@ __device__ __forceinline__ SurfaceHit traceClosestNoSER(
     uint32_t p0 = 0, p1 = 0;
     optixTraverse(
         params.bvh_handle,
-        f3(r.origin), f3(r.direction),
+        r.origin, r.direction,
         EPSILON, tmax, 0.0f,
         OptixVisibilityMask(255),
         OPTIX_RAY_FLAG_DISABLE_ANYHIT,
@@ -117,7 +117,7 @@ __device__ __forceinline__ bool traceVisibility(
 {
     optixTraverse(
         params.bvh_handle,
-        f3(r.origin), f3(r.direction),
+        r.origin, r.direction,
         EPSILON, targetDistance, 0.0f, 
         OptixVisibilityMask(255),
         OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT | OPTIX_RAY_FLAG_DISABLE_ANYHIT, 

@@ -52,9 +52,9 @@ using TechniqueType = uint32_t;
 __device__ __forceinline__ uint32_t packPathFlags(
     uint32_t M, uint32_t pathLength, uint32_t rcVertexInd, TechniqueType type
 ) {
-    return (M & 0xFF) | 
-           ((pathLength  & 0xFF) << 8) | 
-           ((rcVertexInd & 0xFF) << 16) | 
+    return (M & 0xFF) |
+           ((pathLength  & 0xFF) << 8) |
+           ((rcVertexInd & 0xFF) << 16) |
            ((static_cast<uint32_t>(type) & 0xFF) << 24);
 }
 
@@ -91,8 +91,8 @@ __device__ __forceinline__ uint32_t updateM(
 __device__ __forceinline__ uint4 packRcGeometry(
     uint32_t primID,
     float2 barycentrics,
-    float4 rcVertexWi,
-    float4 rcVertexRadiance
+    float3 rcVertexWi,
+    float3 rcVertexRadiance
 ) {
     uint4 data;
     data.x = primID;
@@ -102,27 +102,13 @@ __device__ __forceinline__ uint4 packRcGeometry(
     return data;
 }
 
-__device__ __forceinline__ uint4 packRcGeometry(
-    uint32_t primID,
-    float2 barycentrics,
-    float3 rcVertexWi,
-    float3 rcVertexRadiance
-) {
-    uint4 data;
-    data.x = primID;
-    data.y = packFloat2ToUnorm16(barycentrics);
-    data.z = packOctF3(rcVertexWi);
-    data.w = toRGB9E5(f4(rcVertexRadiance));
-    return data;
-}
-
 // Takes in a packed uint4, and just replaces the last channel with what the raidance should be.
-__device__ __forceinline__ uint4 updateRcVertexRadiance(const uint4& in, float4 radiance) {
+__device__ __forceinline__ uint4 updateRcVertexRadiance(const uint4& in, float3 radiance) {
     return make_uint4(in.x, in.y, in.z, toRGB9E5(radiance));
 }
 
 // Takes in a packed uint4, and just replaces the 3rd channel with what the wi should be.
-__device__ __forceinline__ uint4 updateRcVertexWi(const uint4& in, float4 wi) {
+__device__ __forceinline__ uint4 updateRcVertexWi(const uint4& in, float3 wi) {
     return make_uint4(in.x, in.y, packOct(wi), in.w);
 }
 
@@ -134,7 +120,7 @@ struct Reservoir {
     uint32_t* __restrict__ F;
 
     uint32_t* __restrict__ initRandomSeed;
-    
+
     /**
      * Bit  0 -  7: M
      * Bit  8 - 15: Path length
@@ -160,7 +146,7 @@ struct Reservoir {
     uint32_t* __restrict__ rcVertexRandomSeed;
 
     __device__ __forceinline__ float3 getF_globalLoad(uint32_t idx) const {
-        return f3(fromRGB9E5(__ldg(&(F[idx]))));
+        return fromRGB9E5(__ldg(&(F[idx])));
     }
 
     __device__ __forceinline__ float getW_globalLoad(uint32_t idx) const {
@@ -189,8 +175,8 @@ struct Reservoir {
         uint4 data = __ldg(&rcVertexGeometry[idx]);
         primID = data.x;
         bary = unpackUnorm16ToFloat2(data.y);
-        wi = unpackOctF3(data.z);
-        radiance = f3(fromRGB9E5(data.w));
+        wi = unpackOct(data.z);
+        radiance = fromRGB9E5(data.w);
     }
 
     __device__ __forceinline__ void getPathFlags(
@@ -264,7 +250,7 @@ struct Reservoir {
         float inNeePDF
     ) const {
         W[idx] = inW;
-        F[idx] = toRGB9E5(f4(inF));
+        F[idx] = toRGB9E5(inF);
         initRandomSeed[idx] = seed;
         pathFlags[idx] = packPathFlags(M, pathLength, rcVertexIndex, type);
         rcVertexGeometry[idx] = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcRadiance);
@@ -287,7 +273,7 @@ __host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
     r.rcVertexGeometry = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
     r.rcVertexCachedValues = reinterpret_cast<float2*>(ptr); ptr += numPixel * sizeof(float2);
     r.rcVertexRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
-    
+
     return raw;
 }
 
@@ -310,13 +296,13 @@ struct GBuffer {
     }
 
     __device__ __forceinline__ float3 getNormal(uint32_t idx) const {
-        return unpackOctF3(__ldcs(&normals[idx]));
+        return unpackOct(__ldcs(&normals[idx]));
     }
 
     __device__ __forceinline__ float getDepth(uint32_t idx) const {
         return __half2float(__ldcs(&distance_matID[idx].x));
     }
-    
+
     // prefer to keep values in cache for the dual mv generation stage
     __device__ __forceinline__ float getDepth_notstreaming(uint32_t idx) const {
         return __half2float(__ldg(&distance_matID[idx].x));
@@ -336,13 +322,13 @@ struct GBuffer {
     }
 
     __device__ __forceinline__ void setGeometry(
-        uint32_t idx, 
-        float3 normal, 
-        float dist, 
-        uint32_t matID, 
+        uint32_t idx,
+        float3 normal,
+        float dist,
+        uint32_t matID,
         float3 albedo
     ) const {
-        __stcs(&normals[idx], packOctF3(normal));
+        __stcs(&normals[idx], packOct(normal));
         __stcs(&distance_matID[idx], make_half2(__float2half(dist), __short_as_half(matID)));
         __stcs(&albedos[idx], packRGB10A2(albedo, false));
     }
@@ -403,7 +389,7 @@ __host__ inline void* allocateGBuffer(GBuffer& r, uint32_t numPixel) {
     r.albedos = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.motionVector = reinterpret_cast<half2*>(ptr); ptr += numPixel * sizeof(half2);
     r.dualMotionVector = reinterpret_cast<half2*>(ptr); ptr += numPixel * sizeof(half2);
-    
+
     return raw;
 }
 
@@ -414,8 +400,8 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     float W = r.W[pixelIdx];
     uint32_t initSeed = r.initRandomSeed[pixelIdx];
 
-    // Unpack F (Assuming fromRGB9E5 returns a float3 or float4)
-    float4 unF = fromRGB9E5(r.F[pixelIdx]);
+    // Unpack F
+    float3 unF = fromRGB9E5(r.F[pixelIdx]);
 
     // Unpack Path Flags
     uint32_t flags = r.pathFlags[pixelIdx];
@@ -427,9 +413,9 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     // Unpack RC Vertex Geometry
     uint4 geom = r.rcVertexGeometry[pixelIdx];
     uint32_t rcPrimID = geom.x;
-    float2 rcBary = unpackUnorm16ToFloat2(geom.y); 
-    float4 rcWi = unpackOct(geom.z);                 
-    float4 rcRadiance = fromRGB9E5(geom.w);
+    float2 rcBary = unpackUnorm16ToFloat2(geom.y);
+    float3 rcWi = unpackOct(geom.z);
+    float3 rcRadiance = fromRGB9E5(geom.w);
 
     // Unpack Cached Values
     float2 cached = r.rcVertexCachedValues[pixelIdx];
@@ -440,7 +426,7 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     // 2. UNPACK GBUFFER DATA
     // ==========================================
     // Unpack Normal
-    float3 normal = unpackOctF3(g.normals[pixelIdx]);
+    float3 normal = unpackOct(g.normals[pixelIdx]);
 
     float dist = g.getDepth(pixelIdx);
     int matID = g.getMatID(pixelIdx);
@@ -503,7 +489,7 @@ struct ShiftResultBuffer {
     __device__ __forceinline__ void setResult(uint32_t idx, bool isValid, float3 contribution, float jacobian, float new_cached_jacobian) const {
         uint4 data;
         data.x = isValid;
-        data.y = toRGB9E5(f4(contribution));
+        data.y = toRGB9E5(contribution);
         data.z = __float_as_uint(jacobian);
         data.w = __float_as_uint(new_cached_jacobian);
         buffer[idx] = data;
@@ -512,7 +498,7 @@ struct ShiftResultBuffer {
     __device__ __forceinline__ void getResult(uint32_t idx, bool& isValid, float3& contribution, float& jacobian, float& new_cached_jacobian) const {
         uint4 data = __ldg(&buffer[idx]);
         isValid = data.x;
-        contribution = f3(fromRGB9E5(data.y));
+        contribution = fromRGB9E5(data.y);
         jacobian = __uint_as_float(data.z);
         new_cached_jacobian = __uint_as_float(data.w);
     }
@@ -526,7 +512,7 @@ __host__ inline void* allocateShiftResultBuffer(ShiftResultBuffer& r, uint32_t n
 
     char* ptr = static_cast<char*>(raw);
     r.buffer = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
-    
+
     return raw;
 }
 

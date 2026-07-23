@@ -182,7 +182,7 @@ __host__ void launch_restir (
         
 #if DEBUG_VISUALIZE_TYPE == 1
         ss << "renders/restirDebug/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
-#else if DEBUG_VISUALIZE_TYPE == 0
+#elif DEBUG_VISUALIZE_TYPE == 0
         ss << "renders/restir/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
 #endif  
 

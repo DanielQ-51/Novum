@@ -472,8 +472,8 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     Material lambert1 = Material::Diffuse(f4(1.0f));
     Material lambert50 = Material::Diffuse(f4(0.5f,0.5f,0.5f));
 
-    float4 eta_steel = f4(0.14f, 0.16f, 0.13f, 1.0f);   // real part (R,G,B,alpha)
-    float4 k_steel   = f4(4.1f, 2.3f, 3.1f, 1.0f);     // imaginary part (absorption)
+    float4 eta_steel = f4(0.14f, 0.16f, 0.13f);   // real part (R,G,B,alpha)
+    float4 k_steel   = f4(4.1f, 2.3f, 3.1f);     // imaginary part (absorption)
 
 
     float4 eta_gold = f4(0.17f, 0.35f, 1.5f);  // real part of refractive index
@@ -518,7 +518,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
 
     Material hardware = Material::Metal(eta_steel, k_steel, 0.45f);
 
-    float4 cf_albedo = f4(0.03f, 0.03f, 0.03f, 0.0f);
+    float4 cf_albedo = f4(0.03f, 0.03f, 0.03f);
     Material handles = Material::Diffuse(cf_albedo);
 
     Material glove = Material::Leaf(6, startIndices[6], widths[6], heights[6], 1.5f, 0.4f, f4(), 0.00f);
@@ -572,7 +572,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
 
     for (MeshConfig c : config.meshes)
     {
-        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, lightDesc, f4(), 
+        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, lightDesc, f3(),
                 c.emissionMultiplier * c.emissionColor, c.materialID);
     }
 

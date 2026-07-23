@@ -14,16 +14,16 @@ extern "C" {
 
 extern "C" __global__ void __closesthit__gather() {
     float2 uvs = optixGetTriangleBarycentrics();
-    
+
     optixSetPayload_0(__float_as_uint(uvs.x));
     optixSetPayload_1(__float_as_uint(uvs.y));
 }
 
 extern "C" __global__ void __raygen__unidirectional() {
     const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
-    
+
     uint3 launch_index = optixGetLaunchIndex();
-    
+
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
@@ -32,8 +32,8 @@ extern "C" __global__ void __raygen__unidirectional() {
 
     Ray r = params.camera.generateCameraRay(localState, x, y);
 
-    float4 Li = f4(0.0f);
-    float4 throughput = f4(1.0f);
+    float3 Li = f3(0.0f);
+    float3 throughput = f3(1.0f);
     bool prevDelta = false;
     float lastPDF = 0.0f;
     for (int depth = 0; depth < params.max_depth; depth++)
@@ -41,7 +41,7 @@ extern "C" __global__ void __raygen__unidirectional() {
         SurfaceHit hitData = traceClosest(params, r);
         if (!hitData.isHit)
         {
-            float4 contribution = throughput * params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
+            float3 contribution = throughput * params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
             float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
                 lastPDF, // primary strategy
                 params.shadeContext.lightSampler.evaluateEnvPdf(r.direction) // alternate strategy
@@ -52,28 +52,28 @@ extern "C" __global__ void __raygen__unidirectional() {
 
         int materialID;
         float2 uv;
-        float4 shadingPos;
+        float3 shadingPos;
         bool backface;
-        float4 normal;
-        float4 emission;
+        float3 normal;
+        float3 emission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
         getData(
             tri,
             params.shadeContext,
-            hitData.barycentrics, 
+            hitData.barycentrics,
             r.direction,
 
             materialID,
             uv,
             shadingPos,
             normal,
-            backface, 
+            backface,
             emission
         );
 
-        float4 contribution = backface ? f4(0.0f) : emission * throughput;
+        float3 contribution = backface ? f3(0.0f) : emission * throughput;
 
-        float4 incomingDir;
+        float3 incomingDir;
         toLocal(r.direction, normal, incomingDir);
 
         if (luminance(contribution) > EPSILON) {
@@ -88,24 +88,24 @@ extern "C" __global__ void __raygen__unidirectional() {
         bool currDelta = params.shadeContext.materials[materialID].isSpecular;
 
         if (!currDelta) {
-            float4 lightNormal;
-            float4 emission;
-            float4 shadingPosToLightNormalized;
+            float3 lightNormal;
+            float3 emission;
+            float3 shadingPosToLightNormalized;
             float t_max;
             float pdf;
 
             bool sampledEnv = params.shadeContext.lightSampler.sample(
-                rand(&localState), rand4(&localState), 
-                shadingPos, 
-                params.shadeContext.vertices, 
+                rand(&localState), rand4(&localState),
+                shadingPos,
+                params.shadeContext.vertices,
                 emission,
-                shadingPosToLightNormalized, 
-                lightNormal, 
-                t_max, 
+                shadingPosToLightNormalized,
+                lightNormal,
+                t_max,
                 pdf
             );
 
-            float4 shadingPosToLightLocal;
+            float3 shadingPosToLightLocal;
             toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
 
             bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
@@ -114,9 +114,9 @@ extern "C" __global__ void __raygen__unidirectional() {
                 float bsdfPDF;
 
                 pdf_eval(
-                    params.shadeContext.materials, 
-                    materialID, 
-                    params.shadeContext.textures, 
+                    params.shadeContext.materials,
+                    materialID,
+                    params.shadeContext.textures,
                     incomingDir,
                     shadingPosToLightLocal,
                     1.5f, // change later when medium stack integrated
@@ -125,11 +125,11 @@ extern "C" __global__ void __raygen__unidirectional() {
                     uv
                 );
 
-                float4 f_val;
+                float3 f_val;
                 f_eval(
-                    params.shadeContext.materials, 
-                    materialID, 
-                    params.shadeContext.textures, 
+                    params.shadeContext.materials,
+                    materialID,
+                    params.shadeContext.textures,
                     incomingDir,
                     shadingPosToLightLocal,
                     1.5f, // change later when medium stack integrated
@@ -138,12 +138,12 @@ extern "C" __global__ void __raygen__unidirectional() {
                     uv
                 );
 
-                float4 contribution;
+                float3 contribution;
                 float misWeight;
 
                 if (sampledEnv) {
                     float cosSurface = dot(normal, shadingPosToLightNormalized);
-                    contribution = throughput * f_val * emission * cosSurface / pdf; 
+                    contribution = throughput * f_val * emission * cosSurface / pdf;
                     misWeight = powerHeuristicTwoStrategy(
                         pdf,
                         bsdfPDF
@@ -163,17 +163,17 @@ extern "C" __global__ void __raygen__unidirectional() {
                 }
 
                 bool occluded = traceVisibility(
-                    params, 
+                    params,
                     Ray((shadingPos + shadingPosToLightNormalized * RAY_EPSILON), shadingPosToLightNormalized),
                     t_max * (1.0f - EPSILON3)
                 );
 
                 if (!occluded) {
                     Li += contribution * misWeight;
-                }  
+                }
             }
         }
-        
+
         float lum = luminance(throughput);
         float p = clamp(lum, 0.05f, 1.0f);
 
@@ -182,18 +182,18 @@ extern "C" __global__ void __raygen__unidirectional() {
             save_rng(pixelIdx, &localState, nullptr);
             break;
         }
-        throughput /= p; 
+        throughput /= p;
 
-        
-        float4 outgoing;
-        float4 f_val;
+
+        float3 outgoing;
+        float3 f_val;
         float pdf;
 
         sample_f_eval(
-            localState, 
-            params.shadeContext.materials, 
-            materialID, 
-            params.shadeContext.textures, 
+            localState,
+            params.shadeContext.materials,
+            materialID,
+            params.shadeContext.textures,
             incomingDir,
             1.5f, // change later when medium stack integrated
             1.5f, // change later
@@ -210,7 +210,7 @@ extern "C" __global__ void __raygen__unidirectional() {
             save_rng(pixelIdx, &localState, nullptr);
             break;
         }
-        
+
         throughput *= f_val * fabsf(outgoing.z) / pdf;
         toWorld(outgoing, normal, outgoing);
 
@@ -222,5 +222,5 @@ extern "C" __global__ void __raygen__unidirectional() {
         lastPDF = pdf;
         save_rng(pixelIdx, &localState, nullptr);
     }
-    params.accum_buffer[pixelIdx] += Li;
+    params.accum_buffer[pixelIdx] += f4(Li);
 }

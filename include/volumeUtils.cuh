@@ -18,8 +18,8 @@ __device__ inline Ray toNovumRay(const nanovdb::Ray<float> r) {
     const auto start = r.start();
     const auto dir = r.dir();
     return Ray(
-        f4(start[0], start[1], start[2]), 
-        f4(dir[0], dir[1], dir[2])
+        f3(start[0], start[1], start[2]),
+        f3(dir[0], dir[1], dir[2])
     );
 }
 
@@ -30,10 +30,10 @@ __device__ inline nanovdb::Ray<float> toNanoVDB(Ray r) {
     );
 }
 
-__device__ inline nanovdb::Vec3f toNanoVDB(float4 x) {
+__device__ inline nanovdb::Vec3f toNanoVDB(float3 x) {
     return nanovdb::Vec3f(x.x, x.y, x.z);
 }
 
-__device__ inline float4 toNovum(nanovdb::Vec3f x) {
-    return f4(x[0], x[1], x[2]);
+__device__ inline float3 toNovum(nanovdb::Vec3f x) {
+    return f3(x[0], x[1], x[2]);
 }

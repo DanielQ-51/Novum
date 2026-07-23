@@ -39,7 +39,7 @@ __global__ void computeDualMV(
 
     for (int dy = -DUALMV_SEARCH_RADIUS; dy <= DUALMV_SEARCH_RADIUS; dy++) {
         for (int dx = -DUALMV_SEARCH_RADIUS; dx <= DUALMV_SEARCH_RADIUS; dx++) {
-            
+
             int nx = clamp(x + dx, 0, w - 1);
             int ny = clamp(y + dy, 0, h - 1);
             int neighbor_idx = ny * w + nx;
@@ -87,7 +87,7 @@ __global__ void computeDuplicationMapKernel(
             int ny = y + dy;
 
             if (nx < 0 || nx >= w || ny < 0 || ny >= h) {
-                continue; 
+                continue;
             }
 
             uint32_t neighbor_seed = lastFrameReservoir.getSeed_notstreaming(ny * w + nx);
@@ -95,7 +95,7 @@ __global__ void computeDuplicationMapKernel(
             if (neighbor_seed == currSeed) {
                 match_count++;
             }
-            
+
             valid_pixels++;
         }
     }
@@ -111,26 +111,26 @@ __global__ void displayWinningReservoirs(PipelineParams params) {
     int pixelIdx = y * params.common.w + x;
 
     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-        printf("frame %u at the end seed: %u\n", params.common.frame_index, params.restir.reservoir.initRandomSeed[pixelIdx]); 
+        printf("frame %u at the end seed: %u\n", params.common.frame_index, params.restir.reservoir.initRandomSeed[pixelIdx]);
         printPixelData(params.restir.reservoir, params.restir.gbuffer, pixelIdx, params.common.frame_index);
     }
-    
+
     half2 mv = params.restir.gbuffer.getMV(pixelIdx);
     if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF && !params.restir.gbuffer.getSkipShade(pixelIdx)) {
-        float4 output = fireflyClamp(fromRGB9E5(__ldcs(&params.restir.reservoir.F[pixelIdx])) * __ldcs(&params.restir.reservoir.W[pixelIdx]));
+        float3 output = fireflyClamp(fromRGB9E5(__ldcs(&params.restir.reservoir.F[pixelIdx])) * __ldcs(&params.restir.reservoir.W[pixelIdx]));
         if ((isnan(output.x) || isnan(output.y) || isnan(output.z))) {
             printf("nan at pixel idx: %d\n", pixelIdx);
         }
 
-#if DEBUG_VISUALIZE_TYPE == 1 
+#if DEBUG_VISUALIZE_TYPE == 1
         uint32_t pathFlags = params.restir.reservoir.pathFlags[pixelIdx];
-        output = f4(debugVisualizeTechnique(extractType(pathFlags), extractRcInd(pathFlags)));
+        output = debugVisualizeTechnique(extractType(pathFlags), extractRcInd(pathFlags));
 #endif
 
 #if ACCUMULATE_FRAMES == 1
-        params.common.accum_buffer[pixelIdx] += output;
+        params.common.accum_buffer[pixelIdx] += f4(output);
 #else
-        params.common.accum_buffer[pixelIdx] = output;
+        params.common.accum_buffer[pixelIdx] = f4(output);
 #endif
     }
 }
@@ -149,7 +149,7 @@ __global__ void shuffleLinks(uint32_t* bufferA, uint32_t* bufferB, uint32_t dime
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x >= dimension / 2|| y >= dimension / 2) return;
-    
+
     int startX = 2 * x;
     int startY = 2 * y;
 
@@ -175,9 +175,9 @@ __global__ void shuffleLinks(uint32_t* bufferA, uint32_t* bufferB, uint32_t dime
     RNGState localState = load_rng(pixelIdx, iteration, hash_uint32(dimension), nullptr);
 
     for (int i = 3; i > 0; i--) {
-        uint32_t j = (uint32_t)(rand(&localState) * (i + 1)); 
+        uint32_t j = (uint32_t)(rand(&localState) * (i + 1));
         j = min(j, (uint32_t)i);
-        
+
         uint32_t temp = ids[i];
         ids[i] = ids[j];
         ids[j] = temp;
@@ -224,7 +224,7 @@ __global__ void extractDeltasKernel(uint32_t* finalBuf, uint32_t* indexTableSlot
     uint32_t slot1 = indexTableSlot1[link_id];
 
     uint32_t partner_packed = (slot0 == my_packed_xy) ? slot1 : slot0;
-    
+
     int partner_x = partner_packed & 0xFFFF;
     int partner_y = partner_packed >> 16;
 
@@ -266,9 +266,9 @@ __global__ void resolveSpatialReuse(
     const float self_phat = targetFunction(self_F);
     const uint32_t self_seed = reservoirIn.getSeed_notstreaming(selfIdx);
 
-    uint32_t self_rcPrimID; 
-    float2 self_rcBary; 
-    float3 self_rcWi; 
+    uint32_t self_rcPrimID;
+    float2 self_rcBary;
+    float3 self_rcWi;
     float3 self_rcRadiance;
     reservoirIn.getRcVertexGeometry_globalLoad(selfIdx, self_rcPrimID, self_rcBary, self_rcWi, self_rcRadiance);
 
@@ -350,5 +350,5 @@ __global__ void resolveSpatialReuse(
         const uint32_t new_M    = min(self_M + (hasPartner ? nb_M : 0u), 255u);
     }
 
-    
+
 }

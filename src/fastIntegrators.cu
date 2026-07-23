@@ -9,8 +9,8 @@
 
 __device__ __constant__ bool SAMPLE_ENVIRONMENT = false;
 __device__ __constant__ float sceneRadius;
-__device__ __constant__ float4 sceneCenter;
-__device__ __constant__ float4 sceneMin;
+__device__ __constant__ float3 sceneCenter;
+__device__ __constant__ float3 sceneMin;
 
 __device__ __constant__ int w;
 __device__ __constant__ int h;
@@ -29,9 +29,9 @@ __device__ __constant__ int h;
 __device__ bool approxEq(float a, float b, float tol = 1e-3f) {
     return fabsf(a - b) <= tol;
 }
-__device__ bool approxEqF4(float4 a, float4 b, float tol = 1e-3f) {
-    return approxEq(a.x, b.x, tol) && 
-           approxEq(a.y, b.y, tol) && 
+__device__ bool approxEqF3(float3 a, float3 b, float tol = 1e-3f) {
+    return approxEq(a.x, b.x, tol) &&
+           approxEq(a.y, b.y, tol) &&
            approxEq(a.z, b.z, tol);
 }
 __global__ void testWriteKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq) {
@@ -41,13 +41,13 @@ __global__ void testWriteKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq) {
     printf("--- Generating Data ---\n");
 
     // RayQueue Data
-    float4 inOrigin = make_float4(1.5f, -2.5f, 3.14f, 1.0f);
-    float4 inDir = make_float4(0.57735f, 0.57735f, 0.57735f, 0.0f); 
+    float3 inOrigin = make_float3(1.5f, -2.5f, 3.14f);
+    float3 inDir = make_float3(0.57735f, 0.57735f, 0.57735f);
     bool inPrevDelta = true;
-    float4 inThroughput = make_float4(0.25f, 0.5f, 0.75f, 1.0f);
+    float3 inThroughput = make_float3(0.25f, 0.5f, 0.75f);
     int inPixelIdx = 1234567;
-    int inDepth = 14;         
-    uint32_t inStack = 0xABCD; 
+    int inDepth = 14;
+    uint32_t inStack = 0xABCD;
     float inLastPDF = 3.14159f;
 
     rq.setAll(0, inOrigin, inDir, inPrevDelta, inThroughput, inPixelIdx, inDepth, inStack, inLastPDF);
@@ -56,10 +56,10 @@ __global__ void testWriteKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq) {
     hb.setHit(0, 42.5f, 0.333f, 0.666f, 888999);
 
     // ShadowQueue Data
-    float4 inShadowOrigin = make_float4(10.0f, 20.0f, 30.0f, 1.0f);
-    float4 inShadowDir = make_float4(0.0f, 1.0f, 0.0f, 0.0f);
-    float4 inL = make_float4(10.0f, 5.0f, 2.5f, 1.0f);
-    
+    float3 inShadowOrigin = make_float3(10.0f, 20.0f, 30.0f);
+    float3 inShadowDir = make_float3(0.0f, 1.0f, 0.0f);
+    float3 inL = make_float3(10.0f, 5.0f, 2.5f);
+
     sq.setShadowRay(0, inShadowOrigin, inShadowDir, 100.0f, inL, 654321);
 }
 __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* passed, int* failed) {
@@ -67,12 +67,12 @@ __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* p
     if (idx != 0) return;
 
     // Expected Data (Hardcoded to match Kernel 1)
-    float4 inOrigin = make_float4(1.5f, -2.5f, 3.14f, 1.0f);
-    float4 inDir = make_float4(0.57735f, 0.57735f, 0.57735f, 0.0f); 
+    float3 inOrigin = make_float3(1.5f, -2.5f, 3.14f);
+    float3 inDir = make_float3(0.57735f, 0.57735f, 0.57735f);
     bool inPrevDelta = true;
-    float4 inThroughput = make_float4(0.25f, 0.5f, 0.75f, 1.0f);
-    
-    float4 outOrigin, outDir, outThroughput;
+    float3 inThroughput = make_float3(0.25f, 0.5f, 0.75f);
+
+    float3 outOrigin, outDir, outThroughput;
     bool outPrevDelta;
     int outPixelIdx, outDepth;
     uint32_t outStack;
@@ -82,10 +82,10 @@ __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* p
     printf("\n[Testing RayQueue]\n");
     rq.getAll(0, outOrigin, outDir, outPrevDelta, outThroughput, outPixelIdx, outDepth, outStack, outLastPDF);
 
-    if (!approxEqF4(inOrigin, outOrigin)) { printf("FAIL: RayQueue Origin.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
-    if (!approxEqF4(inDir, outDir, 0.01f)) { printf("FAIL: RayQueue Direction.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inOrigin, outOrigin)) { printf("FAIL: RayQueue Origin.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inDir, outDir, 0.01f)) { printf("FAIL: RayQueue Direction.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (inPrevDelta != outPrevDelta) { printf("FAIL: RayQueue PrevDelta.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
-    if (!approxEqF4(inThroughput, outThroughput, 0.05f)) { printf("FAIL: RayQueue Throughput.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inThroughput, outThroughput, 0.05f)) { printf("FAIL: RayQueue Throughput.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (1234567 != outPixelIdx) { printf("FAIL: RayQueue PixelIdx.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (14 != outDepth) { printf("FAIL: RayQueue Depth.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (0xABCD != outStack) { printf("FAIL: RayQueue Stack.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
@@ -110,24 +110,24 @@ __global__ void testReadKernel(RayQueue rq, HitBuffer hb, ShadowQueue sq, int* p
     float outMaxT;
     sq.getAnyHitData(0, outShadowRay, outMaxT);
 
-    float4 inShadowOrigin = make_float4(10.0f, 20.0f, 30.0f, 1.0f);
-    float4 inShadowDir = make_float4(0.0f, 1.0f, 0.0f, 0.0f);
-    float4 inL = make_float4(10.0f, 5.0f, 2.5f, 1.0f);
+    float3 inShadowOrigin = make_float3(10.0f, 20.0f, 30.0f);
+    float3 inShadowDir = make_float3(0.0f, 1.0f, 0.0f);
+    float3 inL = make_float3(10.0f, 5.0f, 2.5f);
 
-    if (!approxEqF4(inShadowOrigin, outShadowRay.origin)) { printf("FAIL: ShadowQueue Origin.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
-    if (!approxEqF4(inShadowDir, outShadowRay.direction, 0.01f)) { printf("FAIL: ShadowQueue Direction.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inShadowOrigin, outShadowRay.origin)) { printf("FAIL: ShadowQueue Origin.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inShadowDir, outShadowRay.direction, 0.01f)) { printf("FAIL: ShadowQueue Direction.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (100.0f != outMaxT) { printf("FAIL: ShadowQueue MaxT.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
 
-    float4 outL;
+    float3 outL;
     int outShadowPIdx;
     bool validData = sq.getAccumulateData(0, outL, outShadowPIdx);
 
     if (!validData) { printf("FAIL: ShadowQueue valid accumulate data flagged as false.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
-    if (!approxEqF4(inL, outL, 0.5f)) { printf("FAIL: ShadowQueue L (RGB9E5).\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
+    if (!approxEqF3(inL, outL, 0.5f)) { printf("FAIL: ShadowQueue L (RGB9E5).\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
     if (654321 != outShadowPIdx) { printf("FAIL: ShadowQueue PIdx.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
 
     // Write sentinel for Kernel 3 to check
-    sq.setAnyHitResultNoAlphaTest(0, false); 
+    sq.setAnyHitResultNoAlphaTest(0, false);
 }
 __global__ void testSentinelKernel(HitBuffer hb, ShadowQueue sq, int* passed, int* failed) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -135,11 +135,11 @@ __global__ void testSentinelKernel(HitBuffer hb, ShadowQueue sq, int* passed, in
 
     if (hb.isHit(0)) { printf("FAIL: HitBuffer setMiss() failed.\n"); atomicAdd(failed, 1); } else atomicAdd(passed, 1);
 
-    float4 outL;
+    float3 outL;
     int outShadowPIdx;
-    if (sq.getAccumulateData(0, outL, outShadowPIdx)) { 
-        printf("FAIL: ShadowQueue sentinel failed. Should return false.\n"); 
-        atomicAdd(failed, 1); 
+    if (sq.getAccumulateData(0, outL, outShadowPIdx)) {
+        printf("FAIL: ShadowQueue sentinel failed. Should return false.\n");
+        atomicAdd(failed, 1);
     } else atomicAdd(passed, 1);
 }
 void runDataStructureTests() {
@@ -199,10 +199,10 @@ void runDataStructureTests() {
 }
 
 __host__ void allocateBuffers(
-    RayQueue& q1, 
-    RayQueue& q2, 
-    HitBuffer& hb, 
-    ShadowQueue& sq, 
+    RayQueue& q1,
+    RayQueue& q2,
+    HitBuffer& hb,
+    ShadowQueue& sq,
     uint32_t*& pr,
     uint32_t*& si,
     float4*& out,
@@ -237,7 +237,7 @@ __host__ void allocateBuffers(
     // Hit Buffer
     cudaMalloc(&temp_ptr, f4Size);
     hb.data = (float4*)temp_ptr;
-    
+
     // Shadow Queue
     cudaMalloc(&temp_ptr, f4Size);
     sq.origin_plus_dist = (float4*)temp_ptr;
@@ -273,10 +273,10 @@ __host__ void allocateBuffers(
 }
 
 void freeBuffers(
-    RayQueue& q1, 
-    RayQueue& q2, 
-    HitBuffer& hb, 
-    ShadowQueue& sq, 
+    RayQueue& q1,
+    RayQueue& q2,
+    HitBuffer& hb,
+    ShadowQueue& sq,
     uint32_t* pr,
     uint32_t* si,
     uint32_t* skeys,
@@ -313,7 +313,7 @@ __global__ void generateInitialRays(
     Camera camera,
     RayQueue queue,
     int frameNum
-) 
+)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -329,7 +329,7 @@ __global__ void generateInitialRays(
         r.origin,       // inOrigin
         r.direction,    // inDir
         true,           // inPrevDelta (camera rays are treated as delta paths)
-        f4(1.0f),       // inThroughput
+        f3(1.0f),       // inThroughput
         rayID,          // inPixelIdx
         0,              // inDepth
         0u,             // inStack
@@ -350,22 +350,22 @@ __global__ void closestHit(
 
     if (idx >= activeRays) return;
 
-    float4 barycentric;
+    float3 barycentric;
     float t;
     int triID;
     BVHSceneIntersect_lightweight(
         rayQueue.getRay(idx),
         bvhContext,
         barycentric,
-        t, 
+        t,
         triID
     );
 
     hitBuffer.setHit(
-        idx, 
-        t, 
-        barycentric.x, 
-        barycentric.y, 
+        idx,
+        t,
+        barycentric.x,
+        barycentric.y,
         triID
     );
 }
@@ -378,7 +378,7 @@ __global__ void shade(
     const HitBuffer hits,
     RayQueue writeQueue,
     ShadowQueue shadowRays,
-    
+
     uint32_t* predicate,
     int activeRays,
 
@@ -386,7 +386,7 @@ __global__ void shade(
     int maxDepth,
 
     uint32_t* shadowRayIndex, // ?
-    
+
     float4* output,
 
     uint32_t* sortValuesOut
@@ -401,10 +401,10 @@ __global__ void shade(
     int readIndex = idx;
 #endif
 
-    float4 prevPos;
-    float4 incomingDir;
+    float3 prevPos;
+    float3 incomingDir;
     bool prevDelta;
-    float4 throughput;
+    float3 throughput;
     int pixelIdx;
     int depth;
     uint32_t mediumStack;
@@ -427,8 +427,8 @@ __global__ void shade(
     int materialID;
     float2 uv;
     bool backface;
-    float4 normal;
-    float4 shadingPos;
+    float3 normal;
+    float3 shadingPos;
 
     RNGState localState = load_rng(pixelIdx, frameNum, depth, rngStates);
     // handle current interactiion
@@ -440,9 +440,9 @@ __global__ void shade(
         if (t >= 1e30f) // indicates a miss
         {
             predicate[idx] = 0;
-            //float4 contribution = sampleSky(incomingDir) * throughput;
+            //float3 contribution = sampleSky(incomingDir) * throughput;
 
-            float4 contribution = shadeContext.lightSampler.envMap.sampleDir(incomingDir) * throughput;
+            float3 contribution = shadeContext.lightSampler.envMap.sampleDir(incomingDir) * throughput;
 
             float misWeight = (prevDelta || depth == 0) ? 1.0f : powerHeuristicTwoStrategy(
                 lastPDF, // primary strategy
@@ -458,25 +458,25 @@ __global__ void shade(
         const Triangle& tri = shadeContext.scene[triID];
         materialID = tri.materialID;
 
-        uv = __ldg(&shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) + 
-            __ldg(&shadeContext.vertices->uvs[tri.uvbInd]) * u + 
+        uv = __ldg(&shadeContext.vertices->uvs[tri.uvaInd]) * (1.0f - u - v) +
+            __ldg(&shadeContext.vertices->uvs[tri.uvbInd]) * u +
             __ldg(&shadeContext.vertices->uvs[tri.uvcInd]) * v;
 
-        float4 apos = __ldg(&shadeContext.vertices->positions[tri.aInd]);
-        float4 bpos = __ldg(&shadeContext.vertices->positions[tri.bInd]);
-        float4 cpos = __ldg(&shadeContext.vertices->positions[tri.cInd]);
+        float3 apos = f3(__ldg(&shadeContext.vertices->positions[tri.aInd]));
+        float3 bpos = f3(__ldg(&shadeContext.vertices->positions[tri.bInd]));
+        float3 cpos = f3(__ldg(&shadeContext.vertices->positions[tri.cInd]));
 
         shadingPos = (1.0f - u - v) * apos + u * bpos + v * cpos;
 
-        float4 a_n = __ldg(&shadeContext.vertices->normals[tri.naInd]);
-        float4 b_n = __ldg(&shadeContext.vertices->normals[tri.nbInd]);
-        float4 c_n = __ldg(&shadeContext.vertices->normals[tri.ncInd]);
-        
+        float3 a_n = f3(__ldg(&shadeContext.vertices->normals[tri.naInd]));
+        float3 b_n = f3(__ldg(&shadeContext.vertices->normals[tri.nbInd]));
+        float3 c_n = f3(__ldg(&shadeContext.vertices->normals[tri.ncInd]));
+
         normal = (1.0f - u - v) * a_n + u * b_n + v * c_n;
         backface = dot(normal, incomingDir) > 0.0f;
         normal = backface ? -normal : normal;
 
-        float4 contribution = backface ? f4(0.0f) : tri.emission * throughput;
+        float3 contribution = backface ? f3(0.0f) : f3(tri.emission) * throughput;
 
         toLocal(incomingDir, normal, incomingDir);
 
@@ -491,25 +491,25 @@ __global__ void shade(
     bool currDelta = shadeContext.materials[materialID].isSpecular;
     // NEE
     if (!currDelta) {
-        float4 lightNormal;
-        float4 emission;
-        float4 shadingPosToLightNormalized;
+        float3 lightNormal;
+        float3 emission;
+        float3 shadingPosToLightNormalized;
         float t_max;
         float pdf;
 
         bool sampledEnv = shadeContext.lightSampler.sample(
-            rand(&localState), rand4(&localState), 
-            shadingPos, 
-            shadeContext.vertices, 
+            rand(&localState), rand4(&localState),
+            shadingPos,
+            shadeContext.vertices,
             emission,
-            shadingPosToLightNormalized, 
-            lightNormal, 
-            t_max, 
+            shadingPosToLightNormalized,
+            lightNormal,
+            t_max,
             pdf
         );
 
 
-        float4 shadingPosToLightLocal;
+        float3 shadingPosToLightLocal;
         toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
 
         bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
@@ -520,9 +520,9 @@ __global__ void shade(
             float bsdfPDF;
 
             pdf_eval(
-                shadeContext.materials, 
-                materialID, 
-                shadeContext.textures, 
+                shadeContext.materials,
+                materialID,
+                shadeContext.textures,
                 incomingDir,
                 shadingPosToLightLocal,
                 1.5f, // change later when medium stack integrated
@@ -531,11 +531,11 @@ __global__ void shade(
                 uv
             );
 
-            float4 f_val;
+            float3 f_val;
             f_eval(
-                shadeContext.materials, 
-                materialID, 
-                shadeContext.textures, 
+                shadeContext.materials,
+                materialID,
+                shadeContext.textures,
                 incomingDir,
                 shadingPosToLightLocal,
                 1.5f, // change later when medium stack integrated
@@ -544,12 +544,12 @@ __global__ void shade(
                 uv
             );
 
-            float4 contribution;
+            float3 contribution;
             float misWeight;
 
             if (sampledEnv) {
                 float cosSurface = dot(normal, shadingPosToLightNormalized);
-                contribution = throughput * f_val * emission * cosSurface / pdf; 
+                contribution = throughput * f_val * emission * cosSurface / pdf;
                 misWeight = powerHeuristicTwoStrategy(
                     pdf,
                     bsdfPDF
@@ -569,11 +569,11 @@ __global__ void shade(
             }
 
             shadowRays.setShadowRay(
-                idx, 
-                shadingPos + shadingPosToLightNormalized * RAY_EPSILON, 
-                shadingPosToLightNormalized, 
-                t_max * (1.0f - EPSILON3), 
-                contribution * (misWeight), 
+                idx,
+                shadingPos + shadingPosToLightNormalized * RAY_EPSILON,
+                shadingPosToLightNormalized,
+                t_max * (1.0f - EPSILON3),
+                contribution * (misWeight),
                 pixelIdx
             );
         }
@@ -594,7 +594,7 @@ __global__ void shade(
             return;
         }
 
-        throughput /= p; 
+        throughput /= p;
     }
 
     if (depth > maxDepth) {
@@ -605,16 +605,16 @@ __global__ void shade(
 
     // Sample next Direction
     {
-        float4 outgoing;
-        float4 f_val;
+        float3 outgoing;
+        float3 f_val;
         float pdf;
-        
+
 
         sample_f_eval(
-            localState, 
-            shadeContext.materials, 
-            materialID, 
-            shadeContext.textures, 
+            localState,
+            shadeContext.materials,
+            materialID,
+            shadeContext.textures,
             incomingDir,
             1.5f, // change later when medium stack integrated
             1.5f, // change later
@@ -626,7 +626,7 @@ __global__ void shade(
             TRANSPORTMODE_RADIANCE
         );
 
-        
+
 
         if (pdf < EPSILON)
         {
@@ -634,7 +634,7 @@ __global__ void shade(
             save_rng(pixelIdx, &localState, rngStates);
             return;
         }
-        
+
         throughput *= f_val * fabsf(outgoing.z) / pdf;
         toWorld(outgoing, normal, outgoing);
 
@@ -652,7 +652,7 @@ __global__ void shade(
             pdf             // inLastPDF
         );
     }
-    
+
     predicate[idx] = 1;
     save_rng(pixelIdx, &localState, rngStates);
 }
@@ -671,7 +671,7 @@ __global__ void anyHit(
 
     // how much the throughput is scaled by going through the shadow ray.
     // 0 if occluded, 1 if not occluded
-    float4 throughputScale;
+    float3 throughputScale;
 
     shadowRays.getAnyHitData(idx, r, maxT);
     if (maxT == -1.0f) {
@@ -701,7 +701,7 @@ __global__ void shadeShadowRay(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
 
-    float4 contribution;
+    float3 contribution;
     int pixelIdx;
     if (shadowRays.getAccumulateData(idx, contribution, pixelIdx)) {
         accumulateOutput(output, contribution, pixelIdx);
@@ -717,14 +717,14 @@ __global__ void compactRayQueue_NOSORT(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
 
-    if (predicates[idx] == 1) 
+    if (predicates[idx] == 1)
     {
-        int denseIdx = scanIndices[idx]; 
+        int denseIdx = scanIndices[idx];
 
         float4 rayData = __ldg(&sparseQueue.origin_plus_dir[idx]);
 
         denseQueue.origin_plus_dir[denseIdx] = rayData;
-        denseQueue.payload[denseIdx] = __ldg(&sparseQueue.payload[idx]); 
+        denseQueue.payload[denseIdx] = __ldg(&sparseQueue.payload[idx]);
     }
 }
 
@@ -740,18 +740,18 @@ __global__ void compactRayQueue_SORT(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
 
-    if (predicates[idx] == 1) 
+    if (predicates[idx] == 1)
     {
-        int denseIdx = scanIndices[idx]; 
+        int denseIdx = scanIndices[idx];
 
         float4 rayData = __ldg(&sparseQueue.origin_plus_dir[idx]);
 
         denseQueue.origin_plus_dir[denseIdx] = rayData;
-        denseQueue.payload[denseIdx] = __ldg(&sparseQueue.payload[idx]); 
+        denseQueue.payload[denseIdx] = __ldg(&sparseQueue.payload[idx]);
 
-        float4 direction = getDirectionFromPacked(rayData);
+        float3 direction = getDirectionFromPacked(rayData);
         float invDiameter = 1.0f / (sceneRadius * 2.0f);
-        sortKeysIn[denseIdx] = generateMortonSortKey(rayData, direction, sceneMin, invDiameter);
+        sortKeysIn[denseIdx] = generateMortonSortKey(f3(rayData), direction, sceneMin, invDiameter);
         sortValuesIn[denseIdx] = denseIdx;
     }
 }
@@ -765,7 +765,7 @@ __global__ void calculateMaterialSortKeys(
     uint32_t* sortKeysIn,
     uint32_t* sortValuesIn,
     int activeRays
-) 
+)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= activeRays) return;
@@ -775,7 +775,7 @@ __global__ void calculateMaterialSortKeys(
     int materialID = (triID < 0) ? -1 : __ldg(&scene[triID].materialID);
 
     // as a hint as to which texture its using
-    int textureStartIndex = (materialID < 0) ? 
+    int textureStartIndex = (materialID < 0) ?
         0 : __ldg(&materials[materialID].textureIndex);
 
     uint32_t key = generateMaterialSortKey(materialID, textureStartIndex);
@@ -809,26 +809,26 @@ __global__ void debugPrintRayOrigin(RayQueue readQueue, int currSample, int dept
 
     // Filter to a single pixel to prevent millions of printf calls
     if (pixelIdx == targetPixelIdx) {
-        float4 origin = readQueue.getOrigin(idx);
-        printf("Sample: %4d | Depth: %2d | Pixel: %7d | Origin: (%8.4f, %8.4f, %8.4f)\n", 
+        float3 origin = readQueue.getOrigin(idx);
+        printf("Sample: %4d | Depth: %2d | Pixel: %7d | Origin: (%8.4f, %8.4f, %8.4f)\n",
                currSample, depth, pixelIdx, origin.x, origin.y, origin.z);
     }
 }
 
 __host__ void launch_wavefrontUnidirectional(
-    Camera camera, 
+    Camera camera,
     const SceneContext sceneContext,
     int numSample, int maxDepth,
-    int h_w, int h_h, 
-    float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, 
-    float4* __restrict__ colors, 
-    float4* __restrict__ overlay, 
+    int h_w, int h_h,
+    float3 h_sceneCenter, float h_sceneRadius, float3 h_sceneMin,
+    float4* __restrict__ colors,
+    float4* __restrict__ overlay,
     bool postProcess
 )
 {
     runDataStructureTests();
-    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float4));
-    cudaMemcpyToSymbol(sceneMin, &(h_sceneMin), sizeof(float4));
+    cudaMemcpyToSymbol(sceneCenter, &(h_sceneCenter), sizeof(float3));
+    cudaMemcpyToSymbol(sceneMin, &(h_sceneMin), sizeof(float3));
     cudaMemcpyToSymbol(sceneRadius, &(h_sceneRadius), sizeof(float));
     cudaMemcpyToSymbol(w, &(h_w), sizeof(int));
     cudaMemcpyToSymbol(h, &(h_h), sizeof(int));
@@ -858,10 +858,10 @@ __host__ void launch_wavefrontUnidirectional(
     cudaMalloc(&d_shadowRayIndex, sizeof(uint32_t));
 
     allocateBuffers(
-        temp_rayQueue1, 
-        temp_rayQueue2, 
+        temp_rayQueue1,
+        temp_rayQueue2,
         temp_hitBuffer,
-        temp_shadowQueue, 
+        temp_shadowQueue,
         d_predicate,
         d_scanIndices,
         d_finalOutput,
@@ -884,28 +884,28 @@ __host__ void launch_wavefrontUnidirectional(
     size_t temp_storage_bytes_exSum = 0;
 
     cub::DeviceScan::ExclusiveSum(
-        d_temp_storage_exclusiveSum, temp_storage_bytes_exSum, 
+        d_temp_storage_exclusiveSum, temp_storage_bytes_exSum,
         d_predicate, d_scanIndices, h_h * h_w
     );
 
     cudaMalloc(&d_temp_storage_exclusiveSum, temp_storage_bytes_exSum);
-    
+
     void* d_temp_storage_sort = nullptr;
     size_t temp_storage_bytes_sort = 0;
 
     cub::DeviceRadixSort::SortPairs(
-        d_temp_storage_sort, temp_storage_bytes_sort, 
+        d_temp_storage_sort, temp_storage_bytes_sort,
         d_sortKeysIn, d_sortKeysOut, d_sortValuesIn, d_sortValuesOut, h_h * h_w
     );
 
     cudaMalloc(&d_temp_storage_sort, temp_storage_bytes_sort);
-    
+
     size_t freeB, totalB;
     cudaMemGetInfo(&freeB, &totalB);
     printf("Free: %.2f MB of %.2f MB\n",
             freeB / (1024.0*1024),
             totalB / (1024.0*1024));
-    
+
     auto lastSaveTime = std::chrono::steady_clock::now();
     int saveIntervalSamples = 20000;
     Image image = Image(h_w, h_h);
@@ -915,13 +915,13 @@ __host__ void launch_wavefrontUnidirectional(
     std::cout << "Begin Render" << std::endl;
 
     // for initial camera raygen
-    dim3 blockSize(16, 16);  
+    dim3 blockSize(16, 16);
     dim3 gridSize((h_w+15)/16, (h_h+15)/16);
 
     // Start total timer
     auto renderStartTime = std::chrono::steady_clock::now();
     for (int currSample = 0; currSample < numSample; currSample++)
-    {   
+    {
         int activeRays = h_h * h_w;
 
         generateInitialRays<<<gridSize, blockSize>>> (
@@ -930,17 +930,17 @@ __host__ void launch_wavefrontUnidirectional(
             *d_readQueue,
             currSample
         );
-        
+
         for (int depth = 0; depth <= maxDepth; depth++)
         {
             int blocks = (activeRays + 255) / 256;
-            
+
 #if USE_MORTON_CODE_SORT == 1
 
 #if USE_MATERIAL_SORT == 1
             if (depth > 0)
 #else
-            if (depth > 3) 
+            if (depth > 3)
 #endif
             {
                 cub::DeviceRadixSort::SortPairs(
@@ -1007,7 +1007,7 @@ __host__ void launch_wavefrontUnidirectional(
             );
 
             cub::DeviceScan::ExclusiveSum(
-                d_temp_storage_exclusiveSum, temp_storage_bytes_exSum, 
+                d_temp_storage_exclusiveSum, temp_storage_bytes_exSum,
                 d_predicate, d_scanIndices, activeRays
             );
 
@@ -1021,12 +1021,12 @@ __host__ void launch_wavefrontUnidirectional(
 
             int newActiveRays = lastScanIndex + lastPredicate;
             if (newActiveRays == 0) {
-                break; 
+                break;
             }
 #if USE_MATERIAL_SORT == 1
             if (false)
 #else
-            if (depth < 3) 
+            if (depth < 3)
 #endif
             {
                 compactRayQueue_NOSORT<<<blocks, 256>>> (
@@ -1047,12 +1047,12 @@ __host__ void launch_wavefrontUnidirectional(
                     activeRays
                 );
             }
-            
+
 
             activeRays = newActiveRays;
         }
 
-        if ((currSample % saveIntervalSamples == 0 || currSample == numSample-1) && DO_PROGRESSIVERENDER) 
+        if ((currSample % saveIntervalSamples == 0 || currSample == numSample-1) && DO_PROGRESSIVERENDER)
         {
             cleanAndFormatImage<<<gridSize, blockSize>>>(
                 colors, overlay, d_finalOutput, h_w, h_h, currSample
@@ -1069,19 +1069,19 @@ __host__ void launch_wavefrontUnidirectional(
             std::string filename = "render.bmp";
             image.saveImageBMP(filename);
             image.saveImageCSV_MONO(0);
-            
+
 
             auto currentTime = std::chrono::steady_clock::now();
             std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
             double avgTimeMs = elapsed.count() / (currSample + 1);
-            
+
             printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", currSample + 1, numSample, avgTimeMs);
             fflush(stdout);
 
             cudaMemset(overlay, 0, h_w * h_h * sizeof(float4));
         }
     }
-    
+
     printf("\n");
     cudaFree(d_rngStates);
     cudaFree(d_shadowRayIndex);
@@ -1089,9 +1089,9 @@ __host__ void launch_wavefrontUnidirectional(
     cudaFree(d_temp_storage_sort);
 
     freeBuffers(
-        temp_rayQueue1, 
-        temp_rayQueue2, 
-        temp_hitBuffer, 
+        temp_rayQueue1,
+        temp_rayQueue2,
+        temp_hitBuffer,
         temp_shadowQueue,
         d_predicate,
         d_scanIndices,

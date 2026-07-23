@@ -21,14 +21,14 @@ struct Volume
     float anisotropy;
 
     __host__ Volume(
-        float4 min, 
-        float4 max, 
-        nanovdb::NanoGrid<float>* dp, 
-        nanovdb::NanoGrid<float>* tp, 
+        float4 min,
+        float4 max,
+        nanovdb::NanoGrid<float>* dp,
+        nanovdb::NanoGrid<float>* tp,
         float ds,
         float ani,
         float4 alb
-    ) : aabbMIN(min), aabbMAX(max), density_pointer(dp), temperature_pointer(tp), densityScale(ds), albedo(alb), anisotropy(ani) {} 
+    ) : aabbMIN(min), aabbMAX(max), density_pointer(dp), temperature_pointer(tp), densityScale(ds), albedo(alb), anisotropy(ani) {}
 };
 
 enum PrimitiveType {
@@ -146,8 +146,8 @@ struct VolumeNodeData {
     int depth;
     int leafSize;
     int originalVolumeID;
-    float4 aabbMIN;
-    float4 aabbMAX;
+    float3 aabbMIN;
+    float3 aabbMAX;
 };
 
 
@@ -174,18 +174,18 @@ struct Triangle
     int triInd; // used when drawing shadow rays and needing to ignore the target light
 
     __device__ inline float area(const Vertices* vertices) {
-        float4 apos = __ldg(&vertices->positions[aInd]);
-        return 0.5f * length(cross3(
-            __ldg(&vertices->positions[bInd]) - apos, 
-            __ldg(&vertices->positions[cInd]) - apos));
+        float3 apos = f3(__ldg(&vertices->positions[aInd]));
+        return 0.5f * length(cross(
+            f3(__ldg(&vertices->positions[bInd])) - apos,
+            f3(__ldg(&vertices->positions[cInd])) - apos));
     }
 
-    __device__ __forceinline__ float4 getNormal(const Vertices* vertices, float u, float v) const {
+    __device__ __forceinline__ float3 getNormal(const Vertices* vertices, float u, float v) const {
         float w = 1.0f - u - v;
-        
-        float4 nA = __ldg(&vertices->normals[naInd]);
-        float4 nB = __ldg(&vertices->normals[nbInd]);
-        float4 nC = __ldg(&vertices->normals[ncInd]);
+
+        float3 nA = f3(__ldg(&vertices->normals[naInd]));
+        float3 nB = f3(__ldg(&vertices->normals[nbInd]));
+        float3 nC = f3(__ldg(&vertices->normals[ncInd]));
 
         return normalize(nA * w + nB * u + nC * v);
     }
@@ -204,22 +204,20 @@ struct Triangle
 
 struct Ray
 {
-    float4 origin;
-    float4 direction;
+    float3 origin;
+    float3 direction;
 
     __host__ __device__ Ray() {}
 
-    __host__ __device__ Ray(float4 o, float4 d) : origin(o), direction(d) {}
-    __host__ __device__ Ray(float3 o, float3 d) : origin(f4(o)), direction(f4(d)) {}
+    __host__ __device__ Ray(float3 o, float3 d) : origin(o), direction(d) {}
 
-    __host__ __device__ float4 at(float t) const {return origin + t*direction;}
+    __host__ __device__ float3 at(float t) const {return origin + t*direction;}
 
 };
 
 struct Camera
 {
-    float4 cameraOrigin;
-    //float4 direction = f4(0.0f, 0.0f, -1.0f);
+    float3 cameraOrigin;
     int w;
     int h;
 
@@ -234,11 +232,11 @@ struct Camera
 
     float antiAliasJitterDist;
 
-    float4 forward;
-    float4 right;
-    float4 up;
+    float3 forward;
+    float3 right;
+    float3 up;
 
-    __host__ static Camera Pinhole(const float4& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aajitter = 0.0f)
+    __host__ static Camera Pinhole(const float3& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aajitter = 0.0f)
     {
         Camera c;
 
@@ -261,7 +259,7 @@ struct Camera
         return c;
     }
 
-    __host__ static Camera NotPinhole(const float4& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aperture, float focalDist, float aajitter = 2.0f)
+    __host__ static Camera NotPinhole(const float3& cameraOrigin, int w, int h, float xR, float yR, float zR, float FOV, float aperture, float focalDist, float aajitter = 2.0f)
     {
         Camera c;
 
@@ -304,12 +302,12 @@ struct Camera
         // This automatically handles X, Y, and Z rotation correctly.
         // Note: 'forward' corresponds to local (0,0,-1), so we move positive along 'forward'
         // to go deeper into the scene.
-        float4 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
+        float3 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
 
         // 3. Sample the Lens (Aperture)
         /*
-        float4 lensOffset = f4(0.0f, 0.0f, 0.0f, 0.0f);
-        
+        float3 lensOffset = f3(0.0f, 0.0f, 0.0f);
+
         int blades = 6;             // 6 = Hexagon, 5 = Pentagon, etc.
         float rotation = 0.0f;      // Rotate the bokeh shape (in radians)
         // ---------------------
@@ -346,9 +344,9 @@ struct Camera
 
         // Apply to camera basis vectors
         lensOffset = (right * lensU) + (up * lensV);
-        
 
-        lensOffset = aperture > 0.0f ? f4() : lensOffset;
+
+        lensOffset = aperture > 0.0f ? f3() : lensOffset;
         */
 
         // 4. Final Ray Construction
@@ -380,7 +378,7 @@ struct Camera
         float u = (2.0f * ((x + jitterX) / (float)w) - 1.0f) * aspect * fovScale;
         float v = (2.0f * ((y + jitterY) / (float)h) - 1.0f) * fovScale;
 
-        float4 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
+        float3 focalPoint = cameraOrigin + (right * (u * focalDist)) + (up * (v * focalDist)) + (forward * focalDist);
 
         r.origin = cameraOrigin;
         r.direction = normalize(focalPoint - r.origin);
@@ -390,45 +388,45 @@ struct Camera
 
     __host__ void preCompute()
     {
-        float4 localForward = f4(0.0f, 0.0f, -1.0f, 0.0f);
+        float3 localForward = f3(0.0f, 0.0f, -1.0f);
 
-        float4 worldForward = rotateX(localForward, xRot);
+        float3 worldForward = rotateX(localForward, xRot);
         worldForward = rotateY(worldForward, yRot);
         worldForward = rotateZ(worldForward, zRot);
 
         forward = normalize(worldForward);
 
-        float4 localRight = f4(1.0f, 0.0f, 0.0f, 0.0f);
+        float3 localRight = f3(1.0f, 0.0f, 0.0f);
         right = normalize(rotateZ(rotateY(rotateX(localRight, xRot), yRot), zRot));
 
-        float4 localUp = f4(0.0f, 1.0f, 0.0f, 0.0f);
+        float3 localUp = f3(0.0f, 1.0f, 0.0f);
         up = normalize(rotateZ(rotateY(rotateX(localUp, xRot), yRot), zRot));
-        
+
     }
 
-    __host__ __device__ __forceinline__ float4 getForwardVector() const
+    __host__ __device__ __forceinline__ float3 getForwardVector() const
     {
         return forward;
     }
 
-    __host__ __device__ __forceinline__ float4 getRightVector() const
+    __host__ __device__ __forceinline__ float3 getRightVector() const
     {
         return right;
     }
 
-    __host__ __device__ __forceinline__ float4 getUpVector() const
+    __host__ __device__ __forceinline__ float3 getUpVector() const
     {
         return up;
     }
 
     // dark magic
-    __device__ __forceinline__ bool worldToRaster(const float4& pointWorld, float2& pixelPos) const
+    __device__ __forceinline__ bool worldToRaster(const float3& pointWorld, float2& pixelPos) const
     {
-        float4 dir = pointWorld - cameraOrigin;
+        float3 dir = pointWorld - cameraOrigin;
 
-        float4 fwd = getForwardVector();
-        float4 right = getRightVector();
-        float4 up = getUpVector();
+        float3 fwd = getForwardVector();
+        float3 right = getRightVector();
+        float3 up = getUpVector();
 
         float distZ = dot(dir, fwd);
 
@@ -463,11 +461,11 @@ struct Camera
 
 };
 
-__device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float4 p1, float4 p2, float4 color, int thickness)
+__device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float3 p1, float3 p2, float3 color, int thickness)
 {
-    float nearClip = 0.002f; 
-    float4 camPos = camera.cameraOrigin;
-    float4 camFwd = camera.forward;
+    float nearClip = 0.002f;
+    float3 camPos = camera.cameraOrigin;
+    float3 camFwd = camera.forward;
 
     float d1 = dot(p1 - camPos, camFwd) - nearClip;
     float d2 = dot(p2 - camPos, camFwd) - nearClip;
@@ -593,15 +591,15 @@ inline __device__ __forceinline__ int pathBufferIdx(int w, int h, int x, int y, 
 }
 
 // rasterizes a path defined by the pathvertices. Used for debugging and visualization
-__device__ __forceinline__ void drawPath(float4* overlay, PathVertices* path, Camera camera, int x, int y, int w, 
-    int depth, int maxDepth, float4 color)
+__device__ __forceinline__ void drawPath(float4* overlay, PathVertices* path, Camera camera, int x, int y, int w,
+    int depth, int maxDepth, float3 color)
 {
     for (int i = 0; i < depth - 1; i++)
     {
-        //float ratio = (float)(i+1) / float(depth); 
+        //float ratio = (float)(i+1) / float(depth);
         int pathIDX1 = pathBufferIdx(w, x, y, i, maxDepth);
         int pathIDX2 = pathBufferIdx(w, x, y, i+1, maxDepth);
-        drawLine(overlay, camera, path->pt[pathIDX1], path->pt[pathIDX2], color, 3);
+        drawLine(overlay, camera, f3(path->pt[pathIDX1]), f3(path->pt[pathIDX2]), color, 3);
     }
 }
 
@@ -653,10 +651,9 @@ static __device__ __forceinline__ void debugPrintPath(
 
 struct Intersection
 {
-    float4 point;
-    float4 normal;
-    float4 color;
-    float4 emission;
+    float3 point;
+    float3 normal;
+    float3 emission;
 
     float2 uv;
     //Ray ray;
@@ -725,7 +722,7 @@ struct Material
     bool hasTransMap;
 
     int type;
-    
+
     float4 albedo;
     float roughness;
 
@@ -735,7 +732,7 @@ struct Material
 
     float metallic;
     float specular;
-    float transmission; 
+    float transmission;
 
     bool isSpecular;
     bool boundary; // for mediums tack calculations
@@ -929,7 +926,7 @@ struct Medium {
 struct MeshConfig {
     std::string path;
     float emissionMultiplier;
-    float4 emissionColor;
+    float3 emissionColor;
     int materialID;
 };
 
@@ -937,7 +934,7 @@ struct VolConfig {
     std::string path;
     float emissionMultiplier;
     float tempScale;
-    float4 albedo;
+    float3 albedo;
     float densityScale;
     float anisotropy;
 };
@@ -975,8 +972,8 @@ struct RenderConfig {
 
     // Camera
     bool pinholeCamera = false;
-    float4 camPos;
-    float4 camRot;
+    float3 camPos;
+    float3 camRot;
     float camFov = 0.0f;
     float camApeture = 0.0f;
     float camFocalDist = 0.0f;
@@ -1151,8 +1148,7 @@ struct VCMPathVertices
     float* pos_z;
 
     /*
-    These are decoded into float3's essentially, but because of the covnention used in this renderer, we will turn them
-    to float4's in the kernels.
+    These are decoded into float3's in the kernels.
     */
     uint32_t* packedNormal;
     uint32_t* packedWo;
@@ -1277,48 +1273,46 @@ __device__ __forceinline__ void setIsBackface(VCMPathVertices& x, int idx, bool 
     x.packedInfo[idx] = current;
 }
 
-__device__ __forceinline__ float4 getPos(const VCMPathVertices& verts, int idx) 
+__device__ __forceinline__ float3 getPos(const VCMPathVertices& verts, int idx)
 {
-    return f4(
-        __ldg(&verts.pos_x[idx]), 
-        __ldg(&verts.pos_y[idx]), 
-        __ldg(&verts.pos_z[idx]), 
-        0.0f);
+    return f3(
+        __ldg(&verts.pos_x[idx]),
+        __ldg(&verts.pos_y[idx]),
+        __ldg(&verts.pos_z[idx]));
 }
 
-__device__ __forceinline__ void setPos(VCMPathVertices& verts, int idx, float4 p) 
+__device__ __forceinline__ void setPos(VCMPathVertices& verts, int idx, float3 p)
 {
     verts.pos_x[idx] = p.x;
     verts.pos_y[idx] = p.y;
     verts.pos_z[idx] = p.z;
 }
 
-__device__ __forceinline__ float4 getNormal(const VCMPathVertices& x, int idx) {
+__device__ __forceinline__ float3 getNormal(const VCMPathVertices& x, int idx) {
     return unpackOct(__ldg(&x.packedNormal[idx]));
 }
 
-__device__ __forceinline__ void setNormal(VCMPathVertices& x, int idx, float4 n) {
+__device__ __forceinline__ void setNormal(VCMPathVertices& x, int idx, float3 n) {
     x.packedNormal[idx] = packOct(n);
 }
 
-__device__ __forceinline__ float4 getWo(const VCMPathVertices& x, int idx) {
+__device__ __forceinline__ float3 getWo(const VCMPathVertices& x, int idx) {
     return unpackOct(__ldg(&x.packedWo[idx]));
 }
 
-__device__ __forceinline__ void setWo(VCMPathVertices& x, int idx, float4 wo) {
+__device__ __forceinline__ void setWo(VCMPathVertices& x, int idx, float3 wo) {
     x.packedWo[idx] = packOct(wo);
 }
 
-__device__ __forceinline__ float4 getBeta(const VCMPathVertices& x, int idx) {
+__device__ __forceinline__ float3 getBeta(const VCMPathVertices& x, int idx) {
     //return fromRGB9E5(x.packedBeta[idx]);
-    return f4(
-        __half2float(__ldg(&x.beta_x[idx])), 
-        __half2float(__ldg(&x.beta_y[idx])), 
-        __half2float(__ldg(&x.beta_z[idx])), 
-        0.0f);
+    return f3(
+        __half2float(__ldg(&x.beta_x[idx])),
+        __half2float(__ldg(&x.beta_y[idx])),
+        __half2float(__ldg(&x.beta_z[idx])));
 }
 
-__device__ __forceinline__ void setBeta(VCMPathVertices& x, int idx, float4 b) {
+__device__ __forceinline__ void setBeta(VCMPathVertices& x, int idx, float3 b) {
     //x.packedBeta[idx] = toRGB9E5(b);
     x.beta_x[idx] = __float2half(b.x);
     x.beta_y[idx] = __float2half(b.y);
@@ -1366,58 +1360,54 @@ struct Photons
     float* d_vcm;
 };
 
-__device__ __forceinline__ float4 getPos(const Photons& ps, int idx) 
+__device__ __forceinline__ float3 getPos(const Photons& ps, int idx)
 {
-    float4 p = __ldg(&ps.pos_plus_vm[idx]);
-    p.w = 0.0f;
-    return p;
+    return f3(__ldg(&ps.pos_plus_vm[idx]));
 }
 
-__device__ __forceinline__ float4 getPackedPosVM(const Photons& ps, int idx) 
+__device__ __forceinline__ void getPosVM(const Photons& ps, int idx, float3& pos, float& vm)
 {
-    return __ldg(&ps.pos_plus_vm[idx]);
+    float4 packed = __ldg(&ps.pos_plus_vm[idx]);
+    pos = f3(packed);
+    vm = packed.w;
 }
 
-__device__ __forceinline__ void setPos(Photons& ps, int idx, float4 p) 
-{
-    ps.pos_plus_vm[idx].x = p.x;
-    ps.pos_plus_vm[idx].y = p.y;
-    ps.pos_plus_vm[idx].z = p.z;
-}
-
-__device__ __forceinline__ void setPackedPosVM(Photons& ps, int idx, float4 p, float vm) 
+__device__ __forceinline__ void setPos(Photons& ps, int idx, float3 p)
 {
     ps.pos_plus_vm[idx].x = p.x;
     ps.pos_plus_vm[idx].y = p.y;
     ps.pos_plus_vm[idx].z = p.z;
-    ps.pos_plus_vm[idx].w = vm;
 }
 
-__device__ __forceinline__ void getNormalInfo(const Photons& x, int idx, float4& normal, bool& backface) {
+__device__ __forceinline__ void setPackedPosVM(Photons& ps, int idx, float3 p, float vm)
+{
+    ps.pos_plus_vm[idx] = make_float4(p.x, p.y, p.z, vm);
+}
+
+__device__ __forceinline__ void getNormalInfo(const Photons& x, int idx, float3& normal, bool& backface) {
     normal = unpackOctFlags(__ldg(&x.packedNormal[idx]), &backface, nullptr);
 }
 
-__device__ __forceinline__ void setNormalInfo(Photons& x, int idx, float4 n, bool backface) {
+__device__ __forceinline__ void setNormalInfo(Photons& x, int idx, float3 n, bool backface) {
     x.packedNormal[idx] = packOctFlags(n, backface, false);
 }
 
-__device__ __forceinline__ float4 getWi(const Photons& x, int idx) {
+__device__ __forceinline__ float3 getWi(const Photons& x, int idx) {
     return unpackOct(__ldg(&x.packedWi[idx]));
 }
 
-__device__ __forceinline__ void setWi(Photons& x, int idx, float4 wi) {
+__device__ __forceinline__ void setWi(Photons& x, int idx, float3 wi) {
     x.packedWi[idx] = packOct(wi);
 }
 
-__device__ __forceinline__ float4 getBeta(const Photons& x, int idx) {
-    return f4(
-        __half2float(__ldg(&x.beta_x[idx])), 
-        __half2float(__ldg(&x.beta_y[idx])), 
-        __half2float(__ldg(&x.beta_z[idx])), 
-        0.0f);
+__device__ __forceinline__ float3 getBeta(const Photons& x, int idx) {
+    return f3(
+        __half2float(__ldg(&x.beta_x[idx])),
+        __half2float(__ldg(&x.beta_y[idx])),
+        __half2float(__ldg(&x.beta_z[idx])));
 }
 
-__device__ __forceinline__ void setBeta(Photons& x, int idx, float4 b) {
+__device__ __forceinline__ void setBeta(Photons& x, int idx, float3 b) {
     x.beta_x[idx] = __float2half(b.x);
     x.beta_y[idx] = __float2half(b.y);
     x.beta_z[idx] = __float2half(b.z);

@@ -44,7 +44,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     } else {
         r = restir.lastFrameCamera.generateCameraRay(localState, x, y);
     }
-    
+
     if constexpr (!isReverseShift) {
         if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
             printf("frame %u using rng with state: %u for temporal reuse, replaying from %u, %u, with initial camera ray o(%f, %f, %f), d(%f, %f, %f)\n", params.frame_index, seed, x, y, r.origin.x, r.origin.y, r.origin.z, r.direction.x, r.direction.y, r.direction.z);
@@ -81,16 +81,16 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         int materialID;
         float2 uv;
-        float4 shadingPos;
+        float3 shadingPos;
         bool backface;
-        float4 normal;
-        float4 ImplicitEmission;
+        float3 normal;
+        float3 ImplicitEmission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
         getData(
             tri,
             params.shadeContext,
-            hitData.barycentrics, 
+            hitData.barycentrics,
             r.direction,
 
             materialID,
@@ -106,19 +106,19 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
         }
 
-        primaryFootprint = 
-            (RECON_FOOTPRINT_C_CONSTANT / 100.0f) * 
+        primaryFootprint =
+            (RECON_FOOTPRINT_C_CONSTANT / 100.0f) *
             (hitData.t * hitData.t * 4.0f * PI) / (fabsf(dot(r.direction, normal)));
-        
-        float4 incomingDirLocal;
+
+        float3 incomingDirLocal;
         toLocal(r.direction, normal, incomingDirLocal);
 
-        lastPos = f3(shadingPos);
+        lastPos = shadingPos;
         lastMaterialID = materialID;
         lastUV = uv;
         lastBackface = backface;
-        lastInDirLocal = f3(incomingDirLocal);
-        lastNormal = f3(normal);
+        lastInDirLocal = incomingDirLocal;
+        lastNormal = normal;
 
         bool currDelta = params.shadeContext.materials[materialID].isSpecular;
         if (!currDelta) {
@@ -129,15 +129,15 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             rand(&localState); // to do the reservoir roll
         }
 
-        float4 outgoing;
-        float4 f_val_bsdf;
+        float3 outgoing;
+        float3 f_val_bsdf;
         float pdf_bsdf;
 
         sample_f_eval(
-            localState, 
-            params.shadeContext.materials, 
-            materialID, 
-            params.shadeContext.textures, 
+            localState,
+            params.shadeContext.materials,
+            materialID,
+            params.shadeContext.textures,
             incomingDirLocal,
             1.5f, // change later when medium stack integrated
             1.5f, // change later
@@ -157,7 +157,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
         }
 
-        float lum = luminance(f4(throughput));
+        float lum = luminance(throughput);
         float p = clamp(lum, 0.05f, 1.0f);
         float rr_roll = rand(&localState);
         if (rr_roll > p) {
@@ -167,9 +167,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             return {false, f3(0), 0.0f, 0.0f};
         }
         throughput /= p;
-        
-        throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
-        lastCosine = fabsf(outgoing.z); 
+
+        throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
+        lastCosine = fabsf(outgoing.z);
         toWorld(outgoing, normal, outgoing);
 
         r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
@@ -178,7 +178,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         prevDelta = currDelta;
         lastPDF = pdf_bsdf;
     }
-        float4 lastPOS_GETRIDOFME = r.origin;
+        float3 lastPOS_GETRIDOFME = r.origin;
 
         // depth + 1 is the "index" of the curr vertex, so this stops at y_k-1
         for (int depth = 1; depth + 1 < pathLength; depth++) {
@@ -193,57 +193,57 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             int materialID;
             float2 uv;
-            float4 shadingPos;
+            float3 shadingPos;
             bool backface;
-            float4 normal;
-            float4 lightEmission;
+            float3 normal;
+            float3 lightEmission;
             const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
             getData(
                 tri,
                 params.shadeContext,
-                hitData.barycentrics, 
+                hitData.barycentrics,
                 r.direction,
 
                 materialID,
                 uv,
                 shadingPos,
                 normal,
-                backface, 
+                backface,
                 lightEmission
             );
-            
+
             if constexpr (!isReverseShift) {
                 if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos, 
-                        f4(0.0f, 1.0f, 1.0f), 3
+                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                        f3(0.0f, 1.0f, 1.0f), 3
                     );
                     printf("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
                 }
             }
 
-            float4 incomingDirLocal;
+            float3 incomingDirLocal;
             toLocal(r.direction, normal, incomingDirLocal);
 
             // needed for recon
             if (depth + 1 == rcVertexIndex - 1) {
-                lastPos = f3(shadingPos);
+                lastPos = shadingPos;
                 lastMaterialID = materialID;
                 lastUV = uv;
                 lastBackface = backface;
-                lastInDirLocal = f3(incomingDirLocal);
-                lastNormal = f3(normal);
+                lastInDirLocal = incomingDirLocal;
+                lastNormal = normal;
             }
 
-            float4 outgoing;
-            float4 f_val_bsdf;
+            float3 outgoing;
+            float3 f_val_bsdf;
             float pdf_bsdf;
 
             sample_f_eval(
-                localState, 
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                localState,
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 incomingDirLocal,
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
@@ -255,7 +255,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 TRANSPORTMODE_RADIANCE
             );
 
-            lightEmission = backface ? f4(0.0f) : lightEmission;
+            lightEmission = backface ? f3(0.0f) : lightEmission;
             if (luminance(lightEmission) > 0.0f) {
                 rand(&localState); // for the reservoir roll
             }
@@ -264,7 +264,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             float forwardFootprint = currDelta ? 0.0f : ((hitData.t * hitData.t) / (lastPDF * fabsf(incomingDirLocal.z))); // last pdf times geometry term arriving to curr
             float inverseFootprint = prevDelta ? 0.0f : ((hitData.t * hitData.t) / (pdf_bsdf * lastCosine)); // complicated stuff; see inverse footprint in paper
-            
+
             bool isValid = true;
             if (fminf(forwardFootprint, inverseFootprint) >= primaryFootprint) {
                 isValid = false;
@@ -274,7 +274,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
                     printf("SHIFT ABORT [%s]: full replay failed reciprocality on dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
-                return {false, f3(0), 0.0f, 0.0f}; 
+                return {false, f3(0), 0.0f, 0.0f};
             }
 
             if (!currDelta) {
@@ -285,7 +285,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rand(&localState); // for the reservoir roll
             }
 
-            float lum = luminance(f4(throughput));
+            float lum = luminance(throughput);
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
@@ -304,7 +304,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 return {false, f3(0), 0.0f, 0.0f};
             }
 
-            throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+            throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
             toWorld(outgoing, normal, outgoing);
             r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
             r.direction = outgoing;
@@ -333,15 +333,15 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 pdf_sampleLight // alternate strategy
             );
 
-            result.contribution = 
-                throughput * 
-                f3(params.shadeContext.lightSampler.envMap.sampleDir(r.direction)) * 
+            result.contribution =
+                throughput *
+                params.shadeContext.lightSampler.envMap.sampleDir(r.direction) *
                 misWeight;
 
             result.isValid = true;
             result.jacobian = 1.0f;
             result.new_cached_jacobian = 1.0f;
-            
+
             return result;
         } else {
             if (!hitData.isHit) {
@@ -359,39 +359,39 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         int materialID;
         float2 uv;
-        float4 shadingPos;
+        float3 shadingPos;
         bool backface;
-        float4 normal;
-        float4 lightEmission;
+        float3 normal;
+        float3 lightEmission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
         getData(
             tri,
             params.shadeContext,
-            hitData.barycentrics, 
+            hitData.barycentrics,
             r.direction,
 
             materialID,
             uv,
             shadingPos,
             normal,
-            backface, 
+            backface,
             lightEmission
         );
 
-        float4 incomingDirLocal;
+        float3 incomingDirLocal;
         toLocal(r.direction, normal, incomingDirLocal);
 
         if constexpr (!isReverseShift) {
             if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos, 
-                    f4(0.0f, 1.0f, 1.0f), 3
+                drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                    f3(0.0f, 1.0f, 1.0f), 3
                 );
                 printf("replaying shading pos depth %u: %f, %f, %f\n", pathLength-1, shadingPos.x, shadingPos.y, shadingPos.z);
             }
         }
 
-        lightEmission = backface ? f4(0.0f) : lightEmission;
+        lightEmission = backface ? f3(0.0f) : lightEmission;
         if (luminance(lightEmission) > 0.0f) {
             float sampleLightPDF = params.shadeContext.lightSampler.evaluateMeshPdf(tri);
             float misWeight = (prevDelta) ? 1.0f : powerHeuristicTwoStrategy(
@@ -400,8 +400,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             );
 
             ShiftResult result;
-            
-            result.contribution = throughput * f3(lightEmission) * misWeight;
+
+            result.contribution = throughput * lightEmission * misWeight;
 
             result.isValid = true;
             result.jacobian = 1.0f;
@@ -444,16 +444,16 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         int materialID;
         float2 uv;
-        float4 shadingPos;
+        float3 shadingPos;
         bool backface;
-        float4 normal;
-        float4 ImplicitEmission;
+        float3 normal;
+        float3 ImplicitEmission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
         getData(
             tri,
             params.shadeContext,
-            hitData.barycentrics, 
+            hitData.barycentrics,
             r.direction,
 
             materialID,
@@ -469,19 +469,19 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
         }
 
-        primaryFootprint = 
-            (RECON_FOOTPRINT_C_CONSTANT / 100.0f) * 
+        primaryFootprint =
+            (RECON_FOOTPRINT_C_CONSTANT / 100.0f) *
             (hitData.t * hitData.t * 4.0f * PI) / (fabsf(dot(r.direction, normal)));
-        
-        float4 incomingDirLocal;
+
+        float3 incomingDirLocal;
         toLocal(r.direction, normal, incomingDirLocal);
 
-        lastPos = f3(shadingPos);
+        lastPos = shadingPos;
         lastMaterialID = materialID;
         lastUV = uv;
         lastBackface = backface;
-        lastInDirLocal = f3(incomingDirLocal);
-        lastNormal = f3(normal);
+        lastInDirLocal = incomingDirLocal;
+        lastNormal = normal;
 
         bool currDelta = params.shadeContext.materials[materialID].isSpecular;
 
@@ -496,15 +496,15 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rand(&localState); // to do the reservoir roll
             }
 
-            float4 outgoing;
-            float4 f_val_bsdf;
+            float3 outgoing;
+            float3 f_val_bsdf;
             float pdf_bsdf;
 
             sample_f_eval(
-                localState, 
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                localState,
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 incomingDirLocal,
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
@@ -524,7 +524,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
             }
 
-            float lum = luminance(f4(throughput));
+            float lum = luminance(throughput);
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
@@ -536,9 +536,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             throughput /= p;
 
             if (!(K_is_D(type) && pathLength == 2 && is_nee(type))) { // We dont want to update scattering throughput for this case
-                throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
+                throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
             }
-            lastCosine = fabsf(outgoing.z); 
+            lastCosine = fabsf(outgoing.z);
             toWorld(outgoing, normal, outgoing);
 
             r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
@@ -548,7 +548,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             lastPDF = pdf_bsdf;
         }
     }
-        float4 lastPOS_GETRIDOFME = r.origin;
+        float3 lastPOS_GETRIDOFME = r.origin;
 
         uint32_t loopBound = (K_is_D(type)) ?
             pathLength:
@@ -566,57 +566,57 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             int materialID;
             float2 uv;
-            float4 shadingPos;
+            float3 shadingPos;
             bool backface;
-            float4 normal;
-            float4 lightEmission;
+            float3 normal;
+            float3 lightEmission;
             const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
             getData(
                 tri,
                 params.shadeContext,
-                hitData.barycentrics, 
+                hitData.barycentrics,
                 r.direction,
 
                 materialID,
                 uv,
                 shadingPos,
                 normal,
-                backface, 
+                backface,
                 lightEmission
             );
             if constexpr (!isReverseShift) {
-                
+
                 if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos, 
-                        f4(0.0f, 1.0f, 1.0f), 3
+                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                        f3(0.0f, 1.0f, 1.0f), 3
                     );
                     printf("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
                 }
             }
 
-            float4 incomingDirLocal;
+            float3 incomingDirLocal;
             toLocal(r.direction, normal, incomingDirLocal);
 
             // needed for recon
             if (depth + 1 == loopBound - 1) { // if this is the last iteration
-                lastPos = f3(shadingPos);
+                lastPos = shadingPos;
                 lastMaterialID = materialID;
                 lastUV = uv;
                 lastBackface = backface;
-                lastInDirLocal = f3(incomingDirLocal);
-                lastNormal = f3(normal);
+                lastInDirLocal = incomingDirLocal;
+                lastNormal = normal;
             }
 
-            float4 outgoing;
-            float4 f_val_bsdf;
+            float3 outgoing;
+            float3 f_val_bsdf;
             float pdf_bsdf;
 
             sample_f_eval(
-                localState, 
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                localState,
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 incomingDirLocal,
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
@@ -628,7 +628,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 TRANSPORTMODE_RADIANCE
             );
 
-            lightEmission = backface ? f4(0.0f) : lightEmission;
+            lightEmission = backface ? f3(0.0f) : lightEmission;
             if (luminance(lightEmission) > 0.0f) {
                 rand(&localState); // for the reservoir roll
             }
@@ -637,7 +637,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             float forwardFootprint = currDelta ? 0.0f : ((hitData.t * hitData.t) / (lastPDF * fabsf(incomingDirLocal.z))); // last pdf times geometry term arriving to curr
             float inverseFootprint = prevDelta ? 0.0f : ((hitData.t * hitData.t) / (pdf_bsdf * lastCosine)); // complicated stuff; see inverse footprint in paper
-            
+
             bool isValid = true;
             if (fminf(forwardFootprint, inverseFootprint) >= primaryFootprint) {
                 isValid = false;
@@ -647,7 +647,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
                     printf("SHIFT ABORT [%s]: recon failed dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
-                return {false, f3(0), 0.0f, 0.0f}; 
+                return {false, f3(0), 0.0f, 0.0f};
             }
 
             if (!currDelta) {
@@ -662,7 +662,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 break;
             }
 
-            float lum = luminance(f4(throughput));
+            float lum = luminance(throughput);
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
@@ -684,8 +684,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
-            
-            throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+
+            throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
 
             toWorld(outgoing, normal, outgoing);
             r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
@@ -716,7 +716,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             getDataWithoutInDirectionAndEmission(
                 tri,
                 params.shadeContext,
-                rcBarycentrics, 
+                rcBarycentrics,
                 lastPos,
 
                 rc_xk_materialID,
@@ -747,7 +747,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 lastPos,                  // xkminus1_pos
                 lastBackface,             // xkminus1_backface
                 lastNormal,               // xkminus1_normal
-                f4(lastInDirLocal), // xkminus1_inDirLocal
+                lastInDirLocal, // xkminus1_inDirLocal
 
                 // Ray/Path state
                 throughput,               // throughput entering x_k-1
@@ -755,7 +755,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rcRadiance,               // rcRadiance (contains suffix throughput)
                 jacobianDenom             // jacobian_denominator
             );
-        } 
+        }
         else if (K_is_D_minus_1(type)) {
             return perform_K_is_D_minus_1_reconnection(
                 params,
@@ -776,7 +776,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 lastPos,                  // xkminus1_pos
                 lastBackface,             // xkminus1_backface
                 lastNormal,               // xkminus1_normal
-                f4(lastInDirLocal), // xkminus1_inDirLocal
+                lastInDirLocal, // xkminus1_inDirLocal
 
                 // Ray/Path state
                 throughput,
@@ -785,7 +785,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rcRadiance,               // lightEmissionRaw
                 jacobianDenom
             );
-        } 
+        }
         else if (K_is_D(type)){ // K = D case
             return perform_K_is_D_reconnection(
                 params,
@@ -806,7 +806,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 lastPos,                  // xkminus1_pos
                 lastBackface,             // xkminus1_backface
                 lastNormal,               // xkminus1_normal
-                f4(lastInDirLocal), // xkminus1_inDirLocal
+                lastInDirLocal, // xkminus1_inDirLocal
 
                 // Ray/Path state
                 throughput,
@@ -824,10 +824,10 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         // Now, we should be at y_k-1. At this point, rng syncing with the prefix is not important
         int materialID;
         float2 uv;
-        float4 xk_pos;
+        float3 xk_pos;
         bool backface;
-        float4 normal;
-        float4 emission;
+        float3 normal;
+        float3 emission;
 
         if (rcPrimID != 0xFFFFFFFF) {
             if (rcPrimID >= params.shadeContext.triNum) {
@@ -842,14 +842,14 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             getDataWithoutInDirection(
                 tri,
                 params.shadeContext,
-                rcBarycentrics, 
+                rcBarycentrics,
                 lastPos,
 
                 materialID,
                 uv,
                 xk_pos,
                 normal,
-                backface, 
+                backface,
                 emission
             );
         }
@@ -857,23 +857,23 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float3 new_payload_F = f3(0.0f);
         float new_cached_jacobian = 0.0f;
 
-        float4 visibility_dir;
+        float3 visibility_dir;
         float visibility_dist;
 
-        float4 outDir;
+        float3 outDir;
         if (is_internal_rc_vertex(type)) { // Checks if its either k<d-1 or k=d-1
-            outDir = xk_pos - f4(lastPos);
+            outDir = xk_pos - lastPos;
             visibility_dist = length(outDir);
             outDir = normalize(outDir);
             visibility_dir = outDir;
         } else {
             if (is_env(type)) {
-                outDir = f4(rcWi); 
+                outDir = rcWi;
                 visibility_dist = 1E30;
                 visibility_dir = outDir;
             } else {
-                visibility_dist = length(xk_pos - f4(lastPos));
-                outDir = normalize(xk_pos - f4(lastPos));
+                visibility_dist = length(xk_pos - lastPos);
+                outDir = normalize(xk_pos - lastPos);
                 visibility_dir = outDir;
             }
         }
@@ -884,8 +884,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if constexpr (!isReverseShift) {
             if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                drawLine(params.overlay_buffer, params.camera, f4(lastPos), f4(lastPos) + (visibility_dir * visibility_dist), 
-                    f4(0.7f, 0.0f, 1.0f), 3
+                drawLine(params.overlay_buffer, params.camera, lastPos, lastPos + (visibility_dir * visibility_dist),
+                    f3(0.7f, 0.0f, 1.0f), 3
                 );
             }
         }
@@ -894,8 +894,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
 
         bool occluded = traceVisibility(
-            params, 
-            Ray(f4(lastPos) + (visibility_dir * RAY_EPSILON), visibility_dir),
+            params,
+            Ray(lastPos + (visibility_dir * RAY_EPSILON), visibility_dir),
             visibility_dist * (1.0f - EPSILON3)
         );
 
@@ -914,18 +914,18 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         } else if (is_internal_rc_vertex(type)) {
 
             float connectionDistanceSQR = visibility_dist * visibility_dist;
-            
-            float4 outDirLocal;
-            toLocal(outDir, f4(lastNormal), outDirLocal);
+
+            float3 outDirLocal;
+            toLocal(outDir, lastNormal, outDirLocal);
             float cosine_1 = fabsf(outDirLocal.z);
-            float4 f_val_1;
+            float3 f_val_1;
             float pdf_1;
 
             f_pdf_eval(
-                params.shadeContext.materials, 
-                lastMaterialID, 
-                params.shadeContext.textures, 
-                f4(lastInDirLocal), // direction to the y_k-1
+                params.shadeContext.materials,
+                lastMaterialID,
+                params.shadeContext.textures,
+                lastInDirLocal, // direction to the y_k-1
                 outDirLocal, // direction to the rc vertex
                 1.5f, // change later when medium stack integrated
                 1.5f, // change later
@@ -935,19 +935,19 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             );
 
             // the outgoing direction of the previous is the incoming direction for the current
-            float4 inDirLocal = toLocal(outDir, normal);
-            
+            float3 inDirLocal = toLocal(outDir, normal);
+
             // points from the rc vertex to the next bsdf sampled direction (ie, the light for k=d-1)
-            outDirLocal = toLocal(f4(rcWi), normal);
+            outDirLocal = toLocal(rcWi, normal);
             float cosine_2 = fabsf(outDirLocal.z);
 
-            float4 f_val_2;
+            float3 f_val_2;
             float pdf_2;
 
             f_pdf_eval(
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 inDirLocal,
                 outDirLocal,
                 1.5f, // change later when medium stack integrated
@@ -956,7 +956,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 pdf_2,
                 uv
             );
-            
+
             float G = cosine_2 / (connectionDistanceSQR);
 
             float p_new_suffix = pdf_1 * G;
@@ -988,9 +988,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 return {false, f3(0), 0.0f, 0.0f};
             }
 
-            float3 throughput_arriving_at_xk = throughput * (f3(f_val_1) * cosine_1 / pdf_1);
+            float3 throughput_arriving_at_xk = throughput * (f_val_1 * cosine_1 / pdf_1);
 
-            float lum_xk = luminance(f4(throughput_arriving_at_xk));
+            float lum_xk = luminance(throughput_arriving_at_xk);
             float p_xk = clamp(lum_xk, 0.05f, 1.0f);
 
             float rr_scale_xk = 1.0f;
@@ -998,20 +998,20 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rr_scale_xk = 1.0f / p_xk; // This is the true RR scale for x_k
             }
 
-            
+
             if (K_is_D_minus_1(type)) {
                 // Cached_nee is always in solid angle, if not k=d
                 float p_sampled_light = (is_nee(type)) ? cached_nee : pdf_2;
 
                 result.contribution = throughput_arriving_at_xk * rr_scale_xk
-                    * (f3(f_val_2) * cosine_2 / p_sampled_light) 
+                    * (f_val_2 * cosine_2 / p_sampled_light)
                     * rcRadiance; // here rcRadiance is the raw emission
             } else { // its a deep internal vertex
                 result.contribution = throughput_arriving_at_xk * rr_scale_xk
-                    * (f3(f_val_2) * cosine_2 / pdf_2) 
+                    * (f_val_2 * cosine_2 / pdf_2)
                     * rcRadiance; // here rc radiance is the actual incoming radiance calculated with suffix throughput etc.
             }
-            
+
 
             if (K_is_D_minus_1(type)) {
                 float misWeight = powerHeuristicTwoStrategy(
@@ -1033,17 +1033,17 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
         } else { // K=D
             if (is_env(type)) {
-                float4 outDirLocal;
-                toLocal(outDir, f4(lastNormal), outDirLocal);
+                float3 outDirLocal;
+                toLocal(outDir, lastNormal, outDirLocal);
                 float cosine_surface = fabsf(outDirLocal.z);
-                float4 f_val_1;
+                float3 f_val_1;
                 float pdf_1;
 
                 f_pdf_eval(
-                    params.shadeContext.materials, 
-                    lastMaterialID, 
-                    params.shadeContext.textures, 
-                    f4(lastInDirLocal),
+                    params.shadeContext.materials,
+                    lastMaterialID,
+                    params.shadeContext.textures,
+                    lastInDirLocal,
                     outDirLocal,
                     1.5f, // change later when medium stack integrated
                     1.5f, // change later
@@ -1065,7 +1065,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                     return {false, f3(0), 0.0f, 0.0f};
                 }
 
-                result.contribution = pathMISWeight * (throughput * f3(f_val_1) * cosine_surface * rcRadiance / p_sampled);
+                result.contribution = pathMISWeight * (throughput * f_val_1 * cosine_surface * rcRadiance / p_sampled);
 
                 float jacobian;
                 if (is_bsdf(type)) { // Direction copy
@@ -1084,9 +1084,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 }
                 result.jacobian = jacobian;
                 result.new_cached_jacobian = new_cached_jacobian;
-                
+
                 result.p_hat = targetFunction(result.contribution);
-                
+
                 if (result.p_hat <= 0.0f) {
                     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
                         printf("SHIFT ABORT [%s]: k=d env recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
@@ -1094,19 +1094,19 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                     return {false, f3(0), 0.0f, 0.0f};
                 }
             } else { // MUST be NEE case, since k=d area light bsdf is a full replay version
-                float connectionDistanceSQR = lengthSquared(xk_pos - f4(lastPos));
+                float connectionDistanceSQR = lengthSquared(xk_pos - lastPos);
 
-                float4 outDirLocal;
-                toLocal(outDir, f4(lastNormal), outDirLocal);
+                float3 outDirLocal;
+                toLocal(outDir, lastNormal, outDirLocal);
                 float cosine_surface = fabsf(outDirLocal.z);
-                float4 f_val_1;
+                float3 f_val_1;
                 float pdf_1;
 
                 f_pdf_eval(
-                    params.shadeContext.materials, 
-                    lastMaterialID, 
-                    params.shadeContext.textures, 
-                    f4(lastInDirLocal),
+                    params.shadeContext.materials,
+                    lastMaterialID,
+                    params.shadeContext.textures,
+                    lastInDirLocal,
                     outDirLocal,
                     1.5f, // change later when medium stack integrated
                     1.5f, // change later
@@ -1133,17 +1133,17 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                     pdf_1
                 );
 
-                result.contribution = pathMISWeight * (throughput * f3(f_val_1) * cosine_surface * rcRadiance / p_sampled);
-                
+                result.contribution = pathMISWeight * (throughput * f_val_1 * cosine_surface * rcRadiance / p_sampled);
+
                 result.p_hat = targetFunction(result.contribution);
-                
+
                 if (result.p_hat <= 0.0f) {
                     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
                         printf("SHIFT ABORT [%s]: k=d nee recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                     }
                     return {false, f3(0), 0.0f, 0.0f};
                 }
-                
+
                 result.jacobian = 1.0f;
                 result.new_cached_jacobian = 1.0f;
             }
@@ -1156,12 +1156,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
 __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int2 currentCoord, half2 motionVec, int2& out_coords) {
     out_coords = make_int2(-1, -1);
-    int2 history_coord = make_int2(currentCoord.x - (int)roundf(__half2float(motionVec.x)), 
+    int2 history_coord = make_int2(currentCoord.x - (int)roundf(__half2float(motionVec.x)),
                             currentCoord.y - (int)roundf(__half2float(motionVec.y)));
     uint32_t current_idx = currentCoord.x + currentCoord.y * params.common.w;
     uint32_t history_idx = history_coord.x + history_coord.y * params.common.w;
 
-    if (history_coord.x < 0 || history_coord.x >= params.common.w || 
+    if (history_coord.x < 0 || history_coord.x >= params.common.w ||
         history_coord.y < 0 || history_coord.y >= params.common.h) {
         return false;
     }
@@ -1177,25 +1177,25 @@ __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int
     float3 pastNorm = params.restir.prevGbuffer.getNormal(history_idx);
 
     if (dot(currNorm, pastNorm) < 0.98f) {
-        return false; 
+        return false;
     }
 
     // the pixel jitter is easily recreated since it is always spawned from the first two random numbers after the seed
     RNGState localState = load_rng(current_idx, params.common.frame_index, 0, nullptr);
     Ray r = params.common.camera.generateCameraRay(localState, currentCoord.x, currentCoord.y);
 
-    float3 current_pos = f3(r.at(params.restir.gbuffer.getDepth(current_idx)));
+    float3 current_pos = r.at(params.restir.gbuffer.getDepth(current_idx));
 
     localState = load_rng(history_idx, params.common.frame_index - 1, 0, nullptr);
     r = params.restir.lastFrameCamera.generateCameraRay(localState, history_coord.x, history_coord.y);
 
-    float3 history_pos = f3(r.at(params.restir.prevGbuffer.getDepth(history_idx)));
+    float3 history_pos = r.at(params.restir.prevGbuffer.getDepth(history_idx));
 
     float3 pos_diff = history_pos - current_pos;
 
     float plane_distance = abs(dot(pos_diff, currNorm));
 
-    float depth_tolerance = 0.01f + (length(current_pos - f3(params.common.camera.cameraOrigin)) * 0.01f);
+    float depth_tolerance = 0.01f + (length(current_pos - params.common.camera.cameraOrigin) * 0.01f);
 
     if (plane_distance > depth_tolerance) {
         return false;
@@ -1227,25 +1227,25 @@ __device__ __forceinline__ bool isSpatialNeighborValid(const PipelineParams& par
     float3 neighNorm = params.restir.gbuffer.getNormal(neighbor_idx);
 
     if (dot(currNorm, neighNorm) < 0.98f) {
-        return false; 
+        return false;
     }
-    
+
     // Current Pixel
     RNGState localStateCurr = load_rng(current_idx, params.common.frame_index, 0, nullptr);
     Ray rCurr = params.common.camera.generateCameraRay(localStateCurr, currentCoord.x, currentCoord.y);
-    float3 current_pos = f3(rCurr.at(params.restir.gbuffer.getDepth(current_idx)));
+    float3 current_pos = rCurr.at(params.restir.gbuffer.getDepth(current_idx));
 
-    // Neighbor Pixel 
+    // Neighbor Pixel
     RNGState localStateNeigh = load_rng(neighbor_idx, params.common.frame_index, 0, nullptr);
     Ray rNeigh = params.common.camera.generateCameraRay(localStateNeigh, neighborCoord.x, neighborCoord.y);
-    float3 neighbor_pos = f3(rNeigh.at(params.restir.gbuffer.getDepth(neighbor_idx)));
+    float3 neighbor_pos = rNeigh.at(params.restir.gbuffer.getDepth(neighbor_idx));
 
     // Planarity and Distance Checks
     float3 pos_diff = neighbor_pos - current_pos;
-    
+
     // Check if the neighbor is roughly on the same plane as the current pixel
     float plane_distance = abs(dot(pos_diff, currNorm));
-    float depth_tolerance = 0.01f + (length(current_pos - f3(params.common.camera.cameraOrigin)) * 0.01f);
+    float depth_tolerance = 0.01f + (length(current_pos - params.common.camera.cameraOrigin) * 0.01f);
 
     if (plane_distance > depth_tolerance) {
         return false;
@@ -1285,12 +1285,12 @@ __device__ bool get_frame_transpose(uint32_t frame_idx, uint32_t texture_id) {
 }
 
 __device__ int2 get_paired_neighbor(
-    int2 screen_pixel, 
-    uint32_t texture_id, 
-    uint32_t frame_idx, 
-    uint32_t texture_size_1d, 
+    int2 screen_pixel,
+    uint32_t texture_id,
+    uint32_t frame_idx,
+    uint32_t texture_size_1d,
     int2 screen_dimension,
-    const short2* __restrict__ pairing_buffer) 
+    const short2* __restrict__ pairing_buffer)
 {
     int2 texture_size = make_int2(texture_size_1d, texture_size_1d);
     int2 random_offset = get_frame_offset(frame_idx, texture_id, texture_size);
@@ -1298,27 +1298,27 @@ __device__ int2 get_paired_neighbor(
     bool transpose     = get_frame_transpose(frame_idx, texture_id);
 
     int2 tex_coord = screen_pixel;
-    
+
     if (transpose) {
         tex_coord = make_int2(tex_coord.y, tex_coord.x);
     }
-    
+
     // Apply flip across X
     if (flip_x) {
         tex_coord.x = texture_size.x - 1 - tex_coord.x;
     }
-    
+
     // Apply offset and wrap around the boundaries
     tex_coord.x = (tex_coord.x + random_offset.x) % texture_size.x;
     tex_coord.y = (tex_coord.y + random_offset.y) % texture_size.y;
-    
+
     // Ensure positive modulo wrapping
     if (tex_coord.x < 0) tex_coord.x += texture_size.x;
     if (tex_coord.y < 0) tex_coord.y += texture_size.y;
 
     // Flatten 2D coord to 1D index for the raw short2* buffer
     uint32_t flat_index = tex_coord.y * texture_size.x + tex_coord.x;
-    
+
     // Read the raw delta and cast up to int2 for math
     short2 raw_short_delta = pairing_buffer[flat_index];
     int2 final_delta = make_int2(raw_short_delta.x, raw_short_delta.y);
@@ -1336,7 +1336,7 @@ __device__ int2 get_paired_neighbor(
 
     // Boundary check: If the delta pushes the pixel off-screen, return an invalid coordinate
     if (paired_pixel.x < 0 || paired_pixel.x >= screen_dimension.x ||
-        paired_pixel.y < 0 || paired_pixel.y >= screen_dimension.y) 
+        paired_pixel.y < 0 || paired_pixel.y >= screen_dimension.y)
     {
         return make_int2(-1, -1);
     }
@@ -1350,10 +1350,10 @@ __device__ __forceinline__ float3 debugVisualizeTechnique(uint32_t type, uint32_
     // 1. Reconnection Depth -> Primary Color Axis
     if (type & SHIFT_K_IS_D) {
         color = make_float3(1.0f, 0.0f, 0.0f); // Base: Red
-    } 
+    }
     else if (type & SHIFT_K_IS_D_MINUS_1) {
         color = make_float3(0.0f, 1.0f, 0.0f); // Base: Green
-    } 
+    }
     else if (type & SHIFT_K_LESS_D_MINUS_1) {
         color = make_float3(0.0f, 0.0f, 1.0f); // Base: Blue
     }
@@ -1397,7 +1397,7 @@ __device__ __forceinline__ float3 debugVisualizeTechniqueAndLength(uint32_t type
     }
 
     // 4. Path Length -> Brightness / Value
-    // Assuming minimum path length is 2. 
+    // Assuming minimum path length is 2.
     // Length 2 = 100% brightness. Each extra bounce darkens it by 15%.
     float brightness = fmaxf(1.0f - (float)(pathLength - 2) * 0.15f, 0.15f);
 

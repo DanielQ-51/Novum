@@ -26,9 +26,9 @@ extern "C" {
 extern "C" __global__ void __raygen__restirCandidateGeneration() {
     const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
     const RestirCommonParams& restir = allParams.restir; // gets compiled out, so not taking up registers
-    
+
     uint3 launch_index = optixGetLaunchIndex();
-    
+
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
@@ -46,7 +46,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     bool prevDelta;
     float lastCosine;
 
-    float4 lastPOS_GETRIDOFME; // for displaying the debug paths
+    float3 lastPOS_GETRIDOFME; // for displaying the debug paths
 
     float w_sum = 0.0f;
     uint32_t F = 0;
@@ -67,12 +67,12 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     SurfaceHit hitData = traceClosest(params, r);
     if (!hitData.isHit)
     {
-        float4 contribution = params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
-        
+        float3 contribution = params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
+
 #if ACCUMULATE_FRAMES == 1
-        params.accum_buffer[pixelIdx] += contribution;
+        params.accum_buffer[pixelIdx] += f4(contribution);
 #else
-        params.accum_buffer[pixelIdx] = contribution;
+        params.accum_buffer[pixelIdx] = f4(contribution);
 #endif
         restir.reservoir.pathFlags[pixelIdx] = 0;
         restir.gbuffer.setInvalidMotionVec(pixelIdx);
@@ -82,16 +82,16 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
     int materialID;
     float2 uv;
-    float4 shadingPos;
+    float3 shadingPos;
     bool backface;
-    float4 normal;
-    float4 ImplicitEmission;
+    float3 normal;
+    float3 ImplicitEmission;
     const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
     getData(
         tri,
         params.shadeContext,
-        hitData.barycentrics, 
+        hitData.barycentrics,
         r.direction,
 
         materialID,
@@ -109,14 +109,14 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     float3 albedo;
 
     getAlbedo(
-        params.shadeContext.materials, 
-        materialID, 
-        params.shadeContext.textures, 
-        uv, 
+        params.shadeContext.materials,
+        materialID,
+        params.shadeContext.textures,
+        uv,
         albedo
     );
 
-    restir.gbuffer.setGeometry(pixelIdx, f3(normal), hitData.t, materialID, albedo);
+    restir.gbuffer.setGeometry(pixelIdx, normal, hitData.t, materialID, albedo);
 
     float2 currPixelPos = make_float2((float)x + __half2float(jitter.x), (float)y + __half2float(jitter.y));
     float2 lastPixelPos;
@@ -126,22 +126,22 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         restir.gbuffer.setMotionVec(pixelIdx, currPixelPos - lastPixelPos); // validity is double checked in temporal phase
     }
 
-    primaryFootprint = 
-        (RECON_FOOTPRINT_C_CONSTANT / 100.0f) * 
+    primaryFootprint =
+        (RECON_FOOTPRINT_C_CONSTANT / 100.0f) *
         (hitData.t * hitData.t * 4.0f * PI) / (fabsf(dot(r.direction, normal)));
 
-    float4 contribution = backface ? f4(0.0f) : ImplicitEmission;
+    float3 contribution = backface ? f3(0.0f) : ImplicitEmission;
 
     if (luminance(contribution) > EPSILON) {
 #if ACCUMULATE_FRAMES == 1
-        params.accum_buffer[pixelIdx] += contribution;
+        params.accum_buffer[pixelIdx] += f4(contribution);
 #else
-        params.accum_buffer[pixelIdx] = contribution;
+        params.accum_buffer[pixelIdx] = f4(contribution);
 #endif
         restir.gbuffer.setSkipShadeFlag(pixelIdx); // still run a reservoir and reuse normally, but dont display the reservoir this frame
     }
 
-    float4 incomingDirLocal;
+    float3 incomingDirLocal;
     toLocal(r.direction, normal, incomingDirLocal);
 
     bool currDelta = params.shadeContext.materials[materialID].isSpecular;
@@ -149,29 +149,29 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     // Handle DI, special case
     if (!currDelta) {
         // This block ALWAYS consumes 5 + 1 = 6 rng calls
-        float4 lightNormal;
-        float4 emission;
-        float4 shadingPosToLightNormalized;
+        float3 lightNormal;
+        float3 emission;
+        float3 shadingPosToLightNormalized;
         float t_max;
         float pdf_nee;
 
         uint32_t neePrimID; // 0xFFFFFFFF for env, otherwise the triangle primID
         float2 neeBarycentrics;
-        
+
         bool sampledEnv = params.shadeContext.lightSampler.sample_ReSTIR_rc_data(
-            rand(&localState), rand4(&localState), 
-            shadingPos, 
-            params.shadeContext.vertices, 
+            rand(&localState), rand4(&localState),
+            shadingPos,
+            params.shadeContext.vertices,
             emission,
-            shadingPosToLightNormalized, 
-            lightNormal, 
-            t_max, 
+            shadingPosToLightNormalized,
+            lightNormal,
+            t_max,
             pdf_nee,
             neePrimID,
             neeBarycentrics
         );
-        
-        float4 shadingPosToLightLocal;
+
+        float3 shadingPosToLightLocal;
         toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
 
         bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
@@ -180,9 +180,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             float bsdfPDF;
 
             pdf_eval(
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 incomingDirLocal,
                 shadingPosToLightLocal,
                 1.5f, // change later when medium stack integrated
@@ -191,11 +191,11 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 uv
             );
 
-            float4 f_val_nee;
+            float3 f_val_nee;
             f_eval(
-                params.shadeContext.materials, 
-                materialID, 
-                params.shadeContext.textures, 
+                params.shadeContext.materials,
+                materialID,
+                params.shadeContext.textures,
                 incomingDirLocal,
                 shadingPosToLightLocal,
                 1.5f, // change later when medium stack integrated
@@ -203,20 +203,20 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 f_val_nee,
                 uv
             );
-            
-            float4 contribution;
+
+            float3 contribution;
             float misWeight;
 
             float cosLight = dot(-shadingPosToLightNormalized, lightNormal);
             float cosSurface = dot(normal, shadingPosToLightNormalized);
             if (sampledEnv) {
-                contribution = f_val_nee * emission * cosSurface / pdf_nee; 
+                contribution = f_val_nee * emission * cosSurface / pdf_nee;
                 misWeight = powerHeuristicTwoStrategy(
                     pdf_nee,
                     bsdfPDF
                 );
             } else {
-                contribution = 
+                contribution =
                     f_val_nee * emission * cosLight * // NEE contribution
                     cosSurface / (pdf_nee * t_max * t_max); // "pdf" here is the raw flux over total flux area pdf
 
@@ -225,30 +225,30 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     bsdfPDF // alt strat
                 );
             }
-            
+
             bool occluded = traceVisibility(
-                params, 
+                params,
                 Ray((shadingPos + shadingPosToLightNormalized * RAY_EPSILON), shadingPosToLightNormalized),
                 t_max * (1.0f - EPSILON2)
             );
-            
+
             if (!occluded) {
-                
+
                 float w_i = targetFunction(contribution * misWeight);
 
                 w_sum += w_i;
-                
+
                 float roll = rand(&localState);
                 if (w_sum > 0.0f && roll < w_i / w_sum) {
-                    
+
                     F = toRGB9E5(contribution * misWeight);
                     pathFlags = packPathFlags(
-                        1,          // M = 1 
+                        1,          // M = 1
                         2,          // Path Length
                         2,          // Rc vertex index (forces the light to be the rc vertex, k=d)
                         sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D : PATH_TYPE_NEE_AREA_K_EQ_D
                     );
-                    
+
                     actualRcVertexGeometry = packRcGeometry(
                         neePrimID,  // Also flags whether or not it is an environment or area light via sentinel value
                         neeBarycentrics,
@@ -266,18 +266,18 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
         } else {
             rand(&localState);
-        } 
+        }
     }
-    
-    float4 outgoing;
-    float4 f_val_bsdf;
+
+    float3 outgoing;
+    float3 f_val_bsdf;
     float pdf_bsdf;
 
     sample_f_eval(
-        localState, 
-        params.shadeContext.materials, 
-        materialID, 
-        params.shadeContext.textures, 
+        localState,
+        params.shadeContext.materials,
+        materialID,
+        params.shadeContext.textures,
         incomingDirLocal,
         1.5f, // change later when medium stack integrated
         1.5f, // change later
@@ -294,16 +294,16 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         goto finalize_pixel;
     }
 
-    float lum = luminance(f4(throughput));
+    float lum = luminance(throughput);
     float p = clamp(lum, 0.05f, 1.0f);
     float rr_roll = rand(&localState);
     if (rr_roll > p) {
         goto finalize_pixel;
     }
     throughput /= p;
-    
-    throughput *= f3(f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf);
-    lastCosine = fabsf(outgoing.z); 
+
+    throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
+    lastCosine = fabsf(outgoing.z);
     toWorld(outgoing, normal, outgoing);
 
     r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
@@ -317,20 +317,20 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     {
         SurfaceHit hitData = traceClosest(params, r);
         if (!hitData.isHit) // ENVIRONMENT
-        {   
+        {
             float pdf_sampleLight = params.shadeContext.lightSampler.evaluateEnvPdf(r.direction);
-            float4 envEmission = params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
+            float3 envEmission = params.shadeContext.lightSampler.envMap.sampleDir(r.direction);
             float misWeight = (prevDelta) ? 1.0f : powerHeuristicTwoStrategy(
                 lastPDF, // primary strategy
                 pdf_sampleLight // alternate strategy
             );
 
-            float w_i = targetFunction(f4(throughput) * envEmission * misWeight);
-            w_sum += w_i; 
+            float w_i = targetFunction(throughput * envEmission * misWeight);
+            w_sum += w_i;
 
             float roll = rand(&localState);
             if (w_sum > 0.0f && roll < w_i / w_sum) {
-                F = toRGB9E5(f4(throughput) * envEmission * misWeight);
+                F = toRGB9E5(throughput * envEmission * misWeight);
 
                 uint32_t pathType;
                 uint32_t rcInd;
@@ -345,7 +345,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     actualCachedJacobian = prevDelta ? 1.0f : lastPDF; // direction copy for that case (if not direction copy, this variable isnt neccesary)
                     neepdf = pdf_sampleLight;
                     pathType = PATH_TYPE_BSDF_ENV_K_EQ_D;
-                    rcInd = prevDelta ? 
+                    rcInd = prevDelta ?
                         FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY : // direction copy is impossible if the prev vertex was full specular
                         FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_DIRECTION_COPY; // direction copy for environment map lowers variance
                 } else if (pathRcVertexIndex == depth) {
@@ -360,7 +360,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     rcInd = pathRcVertexIndex;
                 } else {
                     // k < d - 1
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, f4(suffixThroughput) * envEmission * misWeight);
+                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * envEmission * misWeight);
                     actualCachedJacobian = pathCachedJacobian;
                     neepdf = -1.0f;
                     pathType = PATH_TYPE_BSDF_ENV_K_LESS_D_MINUS_1;
@@ -368,10 +368,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 }
 
                 pathFlags = packPathFlags(
-                    1,          // M = 1 
+                    1,          // M = 1
                     depth + 1,          // Path Length
                     rcInd,
-                    pathType    
+                    pathType
                 );
             }
 
@@ -380,53 +380,53 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
         int materialID;
         float2 uv;
-        float4 shadingPos;
+        float3 shadingPos;
         bool backface;
-        float4 normal;
-        float4 emission;
+        float3 normal;
+        float3 emission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
         getData(
             tri,
             params.shadeContext,
-            hitData.barycentrics, 
+            hitData.barycentrics,
             r.direction,
 
             materialID,
             uv,
             shadingPos,
             normal,
-            backface, 
+            backface,
             emission
         );
 
-            
+
         if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
             printf("candidate gen shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
         }
 
 
-        
+
         if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos, 
-                (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) ? 
-                f4(1.0f, 0.0f, 0.0f) :
-                f4(0.0f, 1.0f, 0.0f), 3
+            drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) ?
+                f3(1.0f, 0.0f, 0.0f) :
+                f3(0.0f, 1.0f, 0.0f), 3
             );
         }
-        
 
-        float4 incomingDirLocal;
+
+        float3 incomingDirLocal;
         toLocal(r.direction, normal, incomingDirLocal);
 
-        float4 outgoing;
-        float4 f_val_bsdf;
+        float3 outgoing;
+        float3 f_val_bsdf;
         float pdf_bsdf;
 
         sample_f_eval(
-            localState, 
-            params.shadeContext.materials, 
-            materialID, 
-            params.shadeContext.textures, 
+            localState,
+            params.shadeContext.materials,
+            materialID,
+            params.shadeContext.textures,
             incomingDirLocal,
             1.5f, // change later when medium stack integrated
             1.5f, // change later
@@ -441,7 +441,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         //---------------------------------------------------------------------------------------------------------------------------------------------------
         // Check dual footprint for rc connectability
         //---------------------------------------------------------------------------------------------------------------------------------------------------
-        
+
         bool currDelta = params.shadeContext.materials[materialID].isSpecular;
 
         if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) { // to catch undefined pdfs
@@ -451,14 +451,14 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             if (fminf(forwardFootprint, inverseFootprint) >= primaryFootprint) {
                 pathRcVertexIndex = depth + 1;
 
-                float4 out_world;
+                float3 out_world;
                 toWorld(outgoing, normal, out_world);
 
                 pathRcVertexGeometry = packRcGeometry(
                     hitData.primId,
                     hitData.barycentrics,
                     out_world,
-                    f4() // cannot yet be determined, this will be fillbut ed in when a candidate is streamed in
+                    f3() // cannot yet be determined, this will be fillbut ed in when a candidate is streamed in
                 );
 
                 // p_(x_k-1 -> x_k) * G(x_k-1 -> x_k) * P(x_k -> x_k+1)
@@ -468,7 +468,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             }
         }
 
-        float4 lightEmission = backface ? f4(0.0f) : emission;
+        float3 lightEmission = backface ? f3(0.0f) : emission;
 
         if (luminance(lightEmission) > EPSILON) {
             float sampleLightPDF = params.shadeContext.lightSampler.evaluateMeshPdf(tri);
@@ -477,22 +477,22 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 (hitData.t * hitData.t * sampleLightPDF / (fabsf(incomingDirLocal.z))) // alternate strategy
             );
 
-            float w_i = targetFunction(f4(throughput) * lightEmission * misWeight);
-            w_sum += w_i; 
+            float w_i = targetFunction(throughput * lightEmission * misWeight);
+            w_sum += w_i;
 
             float roll = rand(&localState);
             if (w_sum > 0.0f && roll < w_i / w_sum) {
-                F = toRGB9E5(f4(throughput) * lightEmission * misWeight);
+                F = toRGB9E5(throughput * lightEmission * misWeight);
 
                 uint32_t pathType;
                 uint32_t rcInd;
                 if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) {
                     // k = d
                     actualRcVertexGeometry = packRcGeometry(
-                        hitData.primId, 
-                        hitData.barycentrics,  
-                        f4(0.0f),   
-                        f4(suffixThroughput) * lightEmission 
+                        hitData.primId,
+                        hitData.barycentrics,
+                        f3(0.0f),
+                        suffixThroughput * lightEmission
                     );
                     //actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
                     actualCachedJacobian = 1.0f; // we rely on a full replay for this
@@ -508,7 +508,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     rcInd = pathRcVertexIndex;
                 } else {
                     // k < d - 1
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, f4(suffixThroughput) * lightEmission * misWeight);
+                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * lightEmission * misWeight);
                     actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_AREA_K_LESS_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
@@ -516,7 +516,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 }
 
                 pathFlags = packPathFlags(
-                    1,          // M = 1 
+                    1,          // M = 1
                     depth + 1,          // Path Length
                     rcInd,
                     pathType    // This was chosen via NEE
@@ -524,11 +524,11 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             }
         }
 
-        
+
         if (!currDelta) {
-            float4 lightNormal;
-            float4 emission;
-            float4 shadingPosToLightNormalized;
+            float3 lightNormal;
+            float3 emission;
+            float3 shadingPosToLightNormalized;
             float t_max;
             float pdf_nee;
 
@@ -536,19 +536,19 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             float2 neeBarycentrics;
 
             bool sampledEnv = params.shadeContext.lightSampler.sample_ReSTIR_rc_data(
-                rand(&localState), rand4(&localState), 
-                shadingPos, 
-                params.shadeContext.vertices, 
+                rand(&localState), rand4(&localState),
+                shadingPos,
+                params.shadeContext.vertices,
                 emission,
-                shadingPosToLightNormalized, 
-                lightNormal, 
-                t_max, 
+                shadingPosToLightNormalized,
+                lightNormal,
+                t_max,
                 pdf_nee,
                 neePrimID,
                 neeBarycentrics
             );
 
-            float4 shadingPosToLightLocal;
+            float3 shadingPosToLightLocal;
             toLocal(shadingPosToLightNormalized, normal, shadingPosToLightLocal);
 
             bool surfaceBackface = dot(normal, shadingPosToLightNormalized) < 0.0f;
@@ -557,9 +557,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 float bsdfPDF;
 
                 pdf_eval(
-                    params.shadeContext.materials, 
-                    materialID, 
-                    params.shadeContext.textures, 
+                    params.shadeContext.materials,
+                    materialID,
+                    params.shadeContext.textures,
                     incomingDirLocal,
                     shadingPosToLightLocal,
                     1.5f, // change later when medium stack integrated
@@ -568,11 +568,11 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     uv
                 );
 
-                float4 f_val_nee;
+                float3 f_val_nee;
                 f_eval(
-                    params.shadeContext.materials, 
-                    materialID, 
-                    params.shadeContext.textures, 
+                    params.shadeContext.materials,
+                    materialID,
+                    params.shadeContext.textures,
                     incomingDirLocal,
                     shadingPosToLightLocal,
                     1.5f, // change later when medium stack integrated
@@ -581,14 +581,14 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     uv
                 );
 
-                float4 contributionSansThroughput;
+                float3 contributionSansThroughput;
                 float misWeight;
 
                 float cosLight;
                 float cosSurface;
                 if (sampledEnv) {
                     cosSurface = dot(normal, shadingPosToLightNormalized);
-                    contributionSansThroughput = f_val_nee * emission * cosSurface / pdf_nee; 
+                    contributionSansThroughput = f_val_nee * emission * cosSurface / pdf_nee;
                     misWeight = powerHeuristicTwoStrategy(
                         pdf_nee,
                         bsdfPDF
@@ -597,7 +597,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     cosLight = dot(-shadingPosToLightNormalized, lightNormal);
                     cosSurface = dot(normal, shadingPosToLightNormalized);
 
-                    contributionSansThroughput = 
+                    contributionSansThroughput =
                         f_val_nee * emission * cosLight * // NEE contribution
                         cosSurface / (pdf_nee * t_max * t_max); // "pdf" here is the raw flux over total flux area pdf
 
@@ -608,26 +608,26 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 }
 
                 bool occluded = traceVisibility(
-                    params, 
+                    params,
                     Ray((shadingPos + shadingPosToLightNormalized * RAY_EPSILON), shadingPosToLightNormalized),
                     t_max * (1.0f - EPSILON2)
                 );
 
                 if (!occluded) {
-                    float w_i = targetFunction(f4(throughput) * contributionSansThroughput * misWeight);
-                    w_sum += w_i; 
+                    float w_i = targetFunction(throughput * contributionSansThroughput * misWeight);
+                    w_sum += w_i;
 
                     float roll = rand(&localState);
                     if (w_sum > 0.0f && roll < w_i / w_sum) {
-                        F = toRGB9E5(f4(throughput) * contributionSansThroughput * misWeight);
-                        
+                        F = toRGB9E5(throughput * contributionSansThroughput * misWeight);
+
                         uint32_t pathType;
                         if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) {
                             // k = d
                             actualRcVertexGeometry = packRcGeometry(
-                                neePrimID,  
-                                neeBarycentrics,   
-                                shadingPosToLightNormalized,   
+                                neePrimID,
+                                neeBarycentrics,
+                                shadingPosToLightNormalized,
                                 emission // emission ONLY
                             );
                             actualCachedJacobian = 1.0f;
@@ -635,23 +635,23 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D : PATH_TYPE_NEE_AREA_K_EQ_D;
                         } else if (pathRcVertexIndex == depth + 1) {
                             // k = d - 1
-                            //float4 rcRadiance = sampledEnv ? (emission / pdf_nee) : (emission * cosLight / (pdf_nee * t_max * t_max));
-                            float4 rcRadiance = emission;
-                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, f4(suffixThroughput) * rcRadiance);
+                            //float3 rcRadiance = sampledEnv ? (emission / pdf_nee) : (emission * cosLight / (pdf_nee * t_max * t_max));
+                            float3 rcRadiance = emission;
+                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * rcRadiance);
                             actualRcVertexGeometry = updateRcVertexWi(actualRcVertexGeometry, shadingPosToLightNormalized);
                             actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
                             neepdf = sampledEnv ? (pdf_nee) : ((t_max * t_max * pdf_nee) / cosLight);
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D_MINUS_1 : PATH_TYPE_NEE_AREA_K_EQ_D_MINUS_1;
                         } else {
                             // k < d - 1
-                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, f4(suffixThroughput) * contributionSansThroughput * misWeight);
+                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * contributionSansThroughput * misWeight);
                             actualCachedJacobian = pathCachedJacobian;
                             neepdf = -1.0f;
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_LESS_D_MINUS_1 : PATH_TYPE_NEE_AREA_K_LESS_D_MINUS_1;
                         }
 
                         pathFlags = packPathFlags(
-                            1,          // M = 1 
+                            1,          // M = 1
                             depth + 2,          // Path Length
                             (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) ? // Rc vertex index (sentinel means it hasnt been found yet)
                                 (depth + 2) : // not yet found, so set this sampled one as rc vertex; k=d special case
@@ -666,25 +666,25 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 rand(&localState);
             }
         }
-        
-        float lum = luminance(f4(throughput));
+
+        float lum = luminance(throughput);
         float p = clamp(lum, 0.05f, 1.0f);
 
         if (rand(&localState) > p)   // survive with probability p
         {
             goto finalize_pixel;
         }
-        throughput /= p; 
-        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1> pathRcVertexIndex) 
+        throughput /= p;
+        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1> pathRcVertexIndex)
             suffixThroughput /= p;
         if (pdf_bsdf < EPSILON)
         {
             goto finalize_pixel;
         }
-        
-        throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+
+        throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
         if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1 > pathRcVertexIndex)
-            suffixThroughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
+            suffixThroughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
 
         toWorld(outgoing, normal, outgoing);
 
@@ -704,7 +704,7 @@ finalize_pixel:
         restir.reservoir.pathFlags[pixelIdx] = packPathFlags(1, 0, 0, 0);
         return;
     }
-    
+
     float p_hat = targetFunction(fromRGB9E5(F));
     float W = (p_hat > EPSILON) ? (w_sum / p_hat) : 0.0f;
 
@@ -723,10 +723,10 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
     const RestirCommonParams& restir = allParams.restir; // gets compiled out, so not taking up registers
 
-    
+
 
     uint3 launch_index = optixGetLaunchIndex();
-    
+
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
@@ -752,7 +752,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             }
         }
     }
-    
+
     // Optionally go one step beyond stream compaction, and sort by morton code
 #if TEMPORAL_SER_SORT_MORTON_CODE == 1
     uint32_t cx = x >> 5;
@@ -764,7 +764,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     }
 
     optixReorder(reorderHint, 8);
-#else 
+#else
     optixReorder(reorderHint, 1);
 #endif
 
@@ -789,7 +789,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Proceed to perform shift
     //---------------------------------------------------------------------------------------------------------------------------------------------------
-    
+
     uint32_t hist_rcPrimID;
     float2 hist_rcBarycentrics;
     float3 hist_rcWi;
@@ -799,15 +799,15 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
 
     float hist_cachedJacobianDenom = restir.lastFrameReservoir.getCachedJacobian_globalLoad(historyIdx);
     float hist_cachedNeePdf = -1.0f;
-    
+
     if (needNeePDF(hist_type)) {
         hist_cachedNeePdf = restir.lastFrameReservoir.getCachedNEE_globalLoad(historyIdx);
     }
-    
+
     uint32_t hist_seed = restir.lastFrameReservoir.getSeed_notstreaming(historyIdx);
-    
+
     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-        printf("frame %u at the start of temporal seed: %u\n", params.frame_index, hist_seed); 
+        printf("frame %u at the start of temporal seed: %u\n", params.frame_index, hist_seed);
     }
 
     // ==============================================================================
@@ -818,7 +818,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     uint32_t curr_pathLength = (curr_pathFlags >> 8) & 0xFF;
     uint32_t curr_rcVertexIndex = (curr_pathFlags >> 16) & 0xFF;
     TechniqueType curr_type = static_cast<TechniqueType>((curr_pathFlags >> 24) & 0xFF);
-    
+
     float3 curr_F = restir.reservoir.getF_globalLoad(pixelIdx);
     float curr_W = restir.reservoir.getW_globalLoad(pixelIdx);
     float curr_p_hat = targetFunction(curr_F);
@@ -846,9 +846,9 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     // 2. THE FORWARD SHIFT (History Path -> Current Pixel)
     // ==============================================================================
     ShiftResult fwdResult;
-    if (hist_M_int > 0 && hist_cachedJacobianDenom != -1.0f) { 
+    if (hist_M_int > 0 && hist_cachedJacobianDenom != -1.0f) {
         fwdResult = evaluateHybridShift<false>(
-            allParams, 
+            allParams,
             x, y,
             hist_seed, hist_pathLength, hist_rcVertexIndex, hist_type,
             hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance,
@@ -863,7 +863,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     // 3. THE BACKWARD SHIFT (Current Path -> History Pixel)
     // ==============================================================================
     ShiftResult bwdResult; // TODO, replace this (and evaluate hybrid shift) with a reverseresult and evaluatereverseshift, to save registers
-    bool needs_bwd_shift = (curr_M > 0) && 
+    bool needs_bwd_shift = (curr_M > 0) &&
                            (curr_cachedJacobianDenom != -1.0f);
 
     if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y && !needs_bwd_shift) {
@@ -918,7 +918,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         printf("backwards shift resulted in a jacobian of %f\n backwards shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", bwdResult.jacobian, bwdResult.contribution.x, bwdResult.contribution.y, bwdResult.contribution.z, bwdResult.new_cached_jacobian);
 
     }
-        
+
 
     float w_curr_weighted = mis_weight_curr * curr_W * curr_p_hat;
 
@@ -937,22 +937,22 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     if (history_won) {
         float W_final = (fwd_phat > 0.0f) ? (w_sum / fwd_phat) : 0.0f;
         if (isnan(W_final) || isinf(W_final)) W_final = 0.0f;
-        
+
         restir.reservoir.saveReservoirAll(
-            pixelIdx,            
-            W_final,             
-            fwdResult.contribution, 
-            hist_seed,                
-            new_M,               
-            hist_pathLength,          
-            hist_rcVertexIndex,       
-            hist_type,                
-            hist_rcPrimID,            
-            hist_rcBarycentrics,      
-            hist_rcWi,                
-            hist_rcRadiance,          
-            fwdResult.new_cached_jacobian, 
-            hist_cachedNeePdf         
+            pixelIdx,
+            W_final,
+            fwdResult.contribution,
+            hist_seed,
+            new_M,
+            hist_pathLength,
+            hist_rcVertexIndex,
+            hist_type,
+            hist_rcPrimID,
+            hist_rcBarycentrics,
+            hist_rcWi,
+            hist_rcRadiance,
+            fwdResult.new_cached_jacobian,
+            hist_cachedNeePdf
         );
     } else {
         float W_final = (curr_p_hat > 0.0f) ? (w_sum / curr_p_hat) : 0.0f;
@@ -970,22 +970,22 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
 }
 
 /**
- * 
+ *
  */
 extern "C" __global__ void __raygen__restirSpatialReuse() {
     const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
     const RestirCommonParams& restir = allParams.restir; // gets compiled out, so not taking up registers
 
     uint3 launch_index = optixGetLaunchIndex();
-    
+
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
 
     int2 neighborCoord = get_paired_neighbor(
         make_int2(x, y),
-        restir.currentSpatialReuseIndex, 
-        params.frame_index, 
+        restir.currentSpatialReuseIndex,
+        params.frame_index,
         restir.reuseTextureSizes[restir.currentSpatialReuseIndex],
         make_int2(params.w, params.h),
         restir.reuseTextures[restir.currentSpatialReuseIndex]
@@ -999,7 +999,7 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
             reorderHint = 0xFFFFFFFF;
         }
     }
-    
+
     // Optionally go one step beyond stream compaction, and sort by morton code
 #if TEMPORAL_SER_SORT_MORTON_CODE == 1
     uint32_t cx = neighborCoord.x >> 5;
@@ -1011,7 +1011,7 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
     }
 
     optixReorder(reorderHint, 8);
-#else 
+#else
     optixReorder(reorderHint, 1);
 #endif
 
@@ -1037,17 +1037,17 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
 
     float neighbor_cachedJacobianDenom = restir.reservoir.getCachedJacobian_globalLoad(neighborIdx);
     float neighbor_cachedNeePdf = -1.0f;
-    
+
     if (needNeePDF(neighbor_type)) {
         neighbor_cachedNeePdf = restir.reservoir.getCachedNEE_globalLoad(neighborIdx);
     }
-    
+
     uint32_t neighbor_seed = restir.reservoir.getSeed_notstreaming(neighborIdx);
 
     ShiftResult fwdResult;
-    if (neighbor_M > 0 && neighbor_cachedJacobianDenom != -1.0f) { 
+    if (neighbor_M > 0 && neighbor_cachedJacobianDenom != -1.0f) {
         fwdResult = evaluateHybridShift<false>(
-            allParams, 
+            allParams,
             x, y,
             neighbor_seed, neighbor_pathLength, neighbor_rcVertexIndex, neighbor_type,
             neighbor_rcPrimID, neighbor_rcBarycentrics, neighbor_rcWi, neighbor_rcRadiance,

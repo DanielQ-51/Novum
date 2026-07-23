@@ -21,13 +21,13 @@ struct RayQueue
     // z: Medium Stack
     // w: Last Scattering PDF (float safely bitcast to uint)
     uint4* __restrict__ payload;
-    
+
     __device__ __forceinline__ void getAll(
-        int idx, 
-        float4& outOrigin, 
-        float4& outDir, 
+        int idx,
+        float3& outOrigin,
+        float3& outDir,
         bool& outPrevDelta,
-        float4& outThroughput,
+        float3& outThroughput,
         int& outPixelIdx,
         int& outDepth,
         uint32_t& outStack,
@@ -35,30 +35,30 @@ struct RayQueue
     ) const {
         // 1. One 128-bit load for Geometry
         float4 o_d = __ldcs(&origin_plus_dir[idx]);
-        outOrigin = make_float4(o_d.x, o_d.y, o_d.z, 1.0f);
-        
+        outOrigin = f3(o_d);
+
         // Extract the raw bits from the float .w channel, then unpack
         uint32_t rawDir = __float_as_uint(o_d.w);
         outDir = unpackOctFlags(rawDir, &outPrevDelta, nullptr);
 
         // 2. One 128-bit load for Payload
         uint4 data = __ldcs(&payload[idx]);
-        
+
         outThroughput = fromRGB9E5(data.x);
         outPixelIdx   = data.y & 0x03FFFFFF;
         outDepth      = data.y >> 26;
         outStack      = data.z;
-        
+
         // Extract the raw bits from the uint .w channel, interpret as float
         outLastPDF    = __uint_as_float(data.w);
     }
 
     __device__ __forceinline__ void setAll(
-        int idx, 
-        float4 inOrigin, 
-        float4 inDir, 
+        int idx,
+        float3 inOrigin,
+        float3 inDir,
         bool inPrevDelta,
-        float4 inThroughput,
+        float3 inThroughput,
         int inPixelIdx,
         int inDepth,
         uint32_t inStack,
@@ -70,7 +70,7 @@ struct RayQueue
         o_d.y = inOrigin.y;
         o_d.z = inOrigin.z;
         o_d.w = __uint_as_float(packOctFlags(inDir, inPrevDelta, false));
-        
+
         //origin_plus_dir[idx] = o_d;
         __stcs(&origin_plus_dir[idx], o_d);
 
@@ -80,35 +80,33 @@ struct RayQueue
         data.y = (inPixelIdx & 0x03FFFFFF) | ((inDepth & 0x3F) << 26);
         data.z = inStack;
         data.w = __float_as_uint(inLastPDF);
-        
+
         //payload[idx] = data;
         __stcs(&payload[idx], data);
     }
 
     __device__ __forceinline__ Ray getRay(int idx) const {
         float4 o_d = __ldcs(&origin_plus_dir[idx]);
-        float4 dir = unpackOctFlags(__float_as_uint(o_d.w), nullptr, nullptr);
-        
-        // Ensure the w component of the origin is safe for matrix math if needed
-        return Ray(make_float4(o_d.x, o_d.y, o_d.z, 1.0f), dir);
+        float3 dir = unpackOctFlags(__float_as_uint(o_d.w), nullptr, nullptr);
+
+        return Ray(f3(o_d), dir);
     }
 
-    __device__ __forceinline__ float4 getOrigin(int idx) const {
-        float4 o_d = __ldcs(&origin_plus_dir[idx]);
-        return make_float4(o_d.x, o_d.y, o_d.z, 1.0f);
+    __device__ __forceinline__ float3 getOrigin(int idx) const {
+        return f3(__ldcs(&origin_plus_dir[idx]));
     }
 
-    __device__ __forceinline__ float4 getDirection(int idx) const {
+    __device__ __forceinline__ float3 getDirection(int idx) const {
         float4 o_d = __ldcs(&origin_plus_dir[idx]);
         return unpackOctFlags(__float_as_uint(o_d.w), nullptr, nullptr);
     }
 
-    __device__ __forceinline__ void getDirectionFlags(int idx, float4& dir, bool& delta) const {
+    __device__ __forceinline__ void getDirectionFlags(int idx, float3& dir, bool& delta) const {
         float4 o_d = __ldcs(&origin_plus_dir[idx]);
         dir = unpackOctFlags(__float_as_uint(o_d.w), &delta, nullptr);
     }
 
-    __device__ __forceinline__ float4 getThroughput(int idx) const {
+    __device__ __forceinline__ float3 getThroughput(int idx) const {
         return fromRGB9E5(__ldcs(&payload[idx]).x);
     }
 
@@ -127,7 +125,7 @@ struct RayQueue
     }
 };
 
-static __device__ __forceinline__ float4 getDirectionFromPacked(float4 packedRay) {
+static __device__ __forceinline__ float3 getDirectionFromPacked(float4 packedRay) {
     return unpackOctFlags(__float_as_uint(packedRay.w), nullptr, nullptr);
 }
 
@@ -157,21 +155,21 @@ struct HitBuffer {
     }
 
     __device__ __forceinline__ float getT(int idx) const { return __ldcs(&data[idx].x); }
-    __device__ __forceinline__ float2 getUV(int idx) const { 
+    __device__ __forceinline__ float2 getUV(int idx) const {
         float4 h = __ldcs(&data[idx]);
-        return make_float2(h.y, h.z); 
+        return make_float2(h.y, h.z);
     }
-    __device__ __forceinline__ int getID(int idx) const { 
-        return __float_as_int(__ldcs(&data[idx].w)); 
+    __device__ __forceinline__ int getID(int idx) const {
+        return __float_as_int(__ldcs(&data[idx].w));
     }
-    
+
     __device__ __forceinline__ bool isHit(int idx) const {
         return getT(idx) < 1e30f;
     }
 
     __device__ __forceinline__ void getAllInfo(int idx, float& t, float& u, float& v, int& triID) const {
         float4 h = __ldcs(&data[idx]);
-        
+
         t = h.x;
         u = h.y;
         v = h.z;
@@ -181,11 +179,11 @@ struct HitBuffer {
 
 struct ShadowQueue {
     // used for shadow ray anyhit
-    float4* __restrict__ origin_plus_dist; 
-    uint32_t* __restrict__ direction;   
+    float4* __restrict__ origin_plus_dist;
+    uint32_t* __restrict__ direction;
 
     // shading payload
-    uint2* __restrict__ payload;           
+    uint2* __restrict__ payload;
 
 
     // does NOT indicate a miss; indicates that this shadow ray doesnt exist
@@ -197,24 +195,24 @@ struct ShadowQueue {
     }
 
     __device__ __forceinline__ void setShadowRay(
-        int idx, float4 o, float4 dir, float maxT, float4 L, int pIdx
+        int idx, float3 o, float3 dir, float maxT, float3 L, int pIdx
     ) {
         //origin_plus_dist[idx] = make_float4(o.x, o.y, o.z, maxT);
         __stcs(&origin_plus_dist[idx], make_float4(o.x, o.y, o.z, maxT));
         //direction[idx] = packOct(dir);
         __stcs(&direction[idx], packOct(dir));
-        
+
         //payload[idx] = make_uint2(toRGB9E5(L), pIdx);
         __stcs(&payload[idx], make_uint2(toRGB9E5(L), pIdx));
 
     }
 
     __device__ __forceinline__ void setAnyHitResultAlphaTest(
-        int idx, float4 throughputScale, bool unoccluded
+        int idx, float3 throughputScale, bool unoccluded
     ) {
         if (unoccluded) {
             //origin_plus_dist[idx] = throughputScale;
-            __stcs(&origin_plus_dist[idx], throughputScale);
+            __stcs(&origin_plus_dist[idx], f4(throughputScale));
         } else {
             //direction[idx] = 0xFFFFFFFF;
             __stcs(&direction[idx], 0xFFFFFFFF);
@@ -234,25 +232,25 @@ struct ShadowQueue {
         int idx, Ray& r, float& maxT
     ) const {
         float4 o_d = __ldcs(&origin_plus_dist[idx]);
-        r.origin = o_d;
+        r.origin = f3(o_d);
         maxT = o_d.w;
-        
+
         r.direction = unpackOct(__ldcs(&direction[idx]));
     }
 
     __device__ __forceinline__ bool getAccumulateData(
-        int idx, float4& L, int& index
+        int idx, float3& L, int& index
     ) const {
         // Fetch ONLY the 4-byte direction to check the sentinel flag
         uint32_t dir_flag = __ldcs(&direction[idx]);
-        
+
         // 0xFFFFFFFF is our sentinel for a "Blocked" ray
         if (dir_flag == 0xFFFFFFFF) return false;
 
         uint2 data = __ldcs(&payload[idx]);
         L = fromRGB9E5(data.x);
         index = data.y;
-        
+
         return true;
     }
 };
@@ -281,10 +279,10 @@ __device__ __forceinline__ uint32_t getMorton12_3D(uint32_t x, uint32_t y, uint3
     return (expandBits3D(x) << 2) | (expandBits3D(y) << 1) | expandBits3D(z);
 }
 
-__device__ __forceinline__ uint32_t generateMortonSortKey(float4 origin, float4 dir, float4 sceneMin, float invDiameter) {
+__device__ __forceinline__ uint32_t generateMortonSortKey(float3 origin, float3 dir, float3 sceneMin, float invDiameter) {
     float l1norm = fabsf(dir.x) + fabsf(dir.y) + fabsf(dir.z);
     float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
-    
+
     float2 res;
     res.x = dir.x * invL1;
     res.y = dir.y * invL1;

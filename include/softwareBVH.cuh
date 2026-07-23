@@ -56,8 +56,8 @@ void computeInfoForBVH(Vertices& vertices, vector<Triangle>& mesh, vector<Volume
         
         float4 minPos = vol.aabbMIN;
         float4 maxPos = vol.aabbMAX;
-        float4 centroid = f4((minPos.x + maxPos.x) * 0.5f, 
-                             (minPos.y + maxPos.y) * 0.5f, 
+        float4 centroid = f4((minPos.x + maxPos.x) * 0.5f,
+                             (minPos.y + maxPos.y) * 0.5f,
                              (minPos.z + maxPos.z) * 0.5f);
 
         centroids.push_back(centroid);

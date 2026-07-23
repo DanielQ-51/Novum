@@ -46,20 +46,20 @@ struct EnvMapView {
     float totalPower; 
     float rotationOffset; // [0, 1] mapped to 0-360 degrees
 
-    __device__ inline float4 sampleUV(float u, float v) const {
+    __device__ inline float3 sampleUV(float u, float v) const {
         // Inverse rotation for direct UV lookup
         u = fmodf(u - rotationOffset + 1.0f, 1.0f);
-        return tex2D<float4>(texObj, u, v);
+        return f3(tex2D<float4>(texObj, u, v));
     }
 
-    __device__ inline float4 sampleDir(float4 dir) const {
+    __device__ inline float3 sampleDir(float3 dir) const {
         float2 uv = dirToUV(dir);
         // Inverse rotation when looking up a scene direction (like a background hit)
         uv.x = fmodf(uv.x - rotationOffset + 1.0f, 1.0f);
-        return tex2D<float4>(texObj, uv.x, uv.y);
+        return f3(tex2D<float4>(texObj, uv.x, uv.y));
     }
 
-    __device__ inline bool sample(float4 rands, float4& outDir, float4& outEmission, float& outPdf) const {
+    __device__ inline bool sample(float4 rands, float3& outDir, float3& outEmission, float& outPdf) const {
         if (totalPower <= 0.0f || width == 0 || height == 0) return false;
 
         int numPixels = width * height;
@@ -80,14 +80,14 @@ struct EnvMapView {
         float phi = (u + rotationOffset) * 2.0f * PI;
 
         float sinTheta = sinf(theta);
-        outDir = f4(
+        outDir = f3(
             sinTheta * cosf(phi),
             cosf(theta),
             sinTheta * sinf(phi)
         );
 
         // Fetch emission from the UNROTATED coordinate so it correctly matches the alias table PDF
-        outEmission = tex2D<float4>(texObj, u, v);
+        outEmission = f3(tex2D<float4>(texObj, u, v));
 
         float lum = luminance(outEmission);
 

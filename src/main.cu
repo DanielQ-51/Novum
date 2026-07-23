@@ -252,8 +252,8 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     Material lambert1 = Material::Diffuse(f4(1.0f));
     Material lambert50 = Material::Diffuse(f4(0.5f,0.5f,0.5f));
 
-    float4 eta_steel = f4(0.14f, 0.16f, 0.13f, 1.0f);   // real part (R,G,B,alpha)
-    float4 k_steel   = f4(4.1f, 2.3f, 3.1f, 1.0f);     // imaginary part (absorption)
+    float4 eta_steel = f4(0.14f, 0.16f, 0.13f);   // real part (R,G,B,alpha)
+    float4 k_steel   = f4(4.1f, 2.3f, 3.1f);     // imaginary part (absorption)
 
 
     float4 eta_gold = f4(0.17f, 0.35f, 1.5f);  // real part of refractive index
@@ -298,7 +298,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     Material hardware = Material::Metal(eta_steel, k_steel, 0.45f);
 
-    float4 cf_albedo = f4(0.03f, 0.03f, 0.03f, 0.0f);
+    float4 cf_albedo = f4(0.03f, 0.03f, 0.03f);
     Material handles = Material::Diffuse(cf_albedo);
 
     Material glove = Material::Leaf(6, startIndices[6], widths[6], heights[6], 1.5f, 0.4f, f4(), 0.00f);
@@ -352,14 +352,14 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     for (MeshConfig c : config.meshes)
     {
-        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, lightDesc, f4(), 
+        readObjSimple(ASSET_PATH(c.path), points, normals, colors, uvs, mesh, lightsvec, lightDesc, f3(),
                 c.emissionMultiplier * c.emissionColor, c.materialID);
     }
 
     if (animatedObjPath != "invalid" && config.name == "watersim")
     {
-        readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, lightDesc, f4(), 
-                f4(), 10, f4(0.0f, -0.9f, 0.0f));
+        readObjSimple(animatedObjPath, points, normals, colors, uvs, mesh, lightsvec, lightDesc, f3(),
+                f3(), 10, f3(0.0f, -0.9f, 0.0f));
     }
 
     Vertices* verts;
@@ -389,10 +389,8 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     vector<Volume> volumes;
 
-    for (const VolConfig& c : config.volumes) { 
-        char buffer[1024];
-        std::string pathTemplate = ASSET_PATH("assets/vdb/nvdb/industrial/smoke_%04d.nvdb");
-        snprintf(buffer, sizeof(buffer), pathTemplate.c_str(), renderNumber);
+    for (const VolConfig& c : config.volumes) {
+        std::string volumePath = ASSET_PATH(c.path);
 
         float4 aabbMIN = f4(0.0f);
         float4 aabbMAX = f4(0.0f);
@@ -400,8 +398,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         void* d_temp_gridBuffer = nullptr;
 
         try {
-            //auto density_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "density");
-            auto density_handle = nanovdb::io::readGrid(buffer, "density");
+            auto density_handle = nanovdb::io::readGrid(volumePath, "density");
             const nanovdb::NanoGrid<float>* density_hostGrid = density_handle.grid<float>();
             size_t gridSizeInBytes = density_handle.size();
 
@@ -417,12 +414,12 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             aabbMAX = f4(max[0], max[1], max[2]);
             
         } catch (const std::exception& e) {
-            std::cout << "Could not read density grid from file: " << ASSET_PATH(c.path) << "\nReason: " << e.what() << std::endl;
+            std::cout << "Could not read density grid from file: " << volumePath << "\nReason: " << e.what() << std::endl;
             continue;
         }
         
         try {
-            auto temp_handle = nanovdb::io::readGrid(ASSET_PATH(c.path), "temperature");
+            auto temp_handle = nanovdb::io::readGrid(volumePath, "temperature");
             const nanovdb::NanoGrid<float>* temp_hostGrid = temp_handle.grid<float>();
             size_t gridSizeInBytes = temp_handle.size();
 
@@ -430,7 +427,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             cudaMemcpy(d_temp_gridBuffer, temp_hostGrid, gridSizeInBytes, cudaMemcpyHostToDevice);
             
         } catch (const std::exception& e) {
-            std::cout << "Could not read temperature grid from file: " << ASSET_PATH(c.path) << "\nReason: " << e.what() << std::endl;
+            std::cout << "Could not read temperature grid from file: " << volumePath << "\nReason: " << e.what() << std::endl;
         }
 
         volumes.push_back(
@@ -441,7 +438,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
                 reinterpret_cast<nanovdb::NanoGrid<float>*>(d_temp_gridBuffer),
                 c.densityScale,
                 c.anisotropy,
-                c.albedo
+                f4(c.albedo)
             )
         );
 
@@ -495,9 +492,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     }
 
     BVHnode root = bvhvec[0];
-    float4 sceneCenter = (root.aabbMAX + root.aabbMIN) * 0.5f;
-    float sceneRadius = length(root.aabbMAX - sceneCenter) + 0.01f;
-    float4 sceneMin = root.aabbMIN;
+    float3 sceneCenter = f3((root.aabbMAX + root.aabbMIN) * 0.5f);
+    float sceneRadius = length(f3(root.aabbMAX) - sceneCenter) + 0.01f;
+    float3 sceneMin = f3(root.aabbMIN);
 
     cout << "BVH built. Scene radius is " << sceneRadius << "." << endl;
     cout << "Largest leaf is size: " << failcount << "." << " Backup was called "<< backupCt << " times." << endl;
@@ -1106,9 +1103,9 @@ void printNvdbMetadata(const std::string& filePath) {
 int main ()
 {
     printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/industrial/smoke_0000.nvdb"));
-    string configName = ASSET_PATH("configs/config.rendertron");
+    string configName = ASSET_PATH("configs/volumeTest.rendertron");
 
-    //initRender(configName, 0); 
+    initRender(configName, 0); 
     //return;
     for (int i = 0; i < 250; ++i) {
         char buf[128];

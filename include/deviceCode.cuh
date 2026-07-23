@@ -59,7 +59,7 @@ __host__ void launch_bidirectional(
     int triNum, 
     const Triangle* __restrict__ lights, 
     int lightNum, int numSample, int w, int h, 
-    float4 h_sceneCenter, float h_sceneRadius, 
+    float3 h_sceneCenter, float h_sceneRadius, 
     float4* __restrict__ colors, float4* __restrict__ overlay, 
     bool postProcess
 );
@@ -82,7 +82,7 @@ __host__ void launch_VCM(
     const Triangle* __restrict__ lights, 
     int lightNum, int numSample, 
     int w, int h, 
-    float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, 
+    float3 h_sceneCenter, float h_sceneRadius, float3 h_sceneMin, 
     float4* __restrict__ colors, 
     float4* __restrict__ overlay, 
     bool postProcess, 
@@ -107,7 +107,7 @@ __host__ void launch_SPPM(
     const Triangle* __restrict__ lights, 
     int lightNum, int numSample, 
     int w, int h, 
-    float4 h_sceneCenter, float h_sceneRadius, float4 h_sceneMin, 
+    float3 h_sceneCenter, float h_sceneRadius, float3 h_sceneMin, 
     float4* __restrict__ colors, 
     float4* __restrict__ overlay, 
     bool postProcess, 

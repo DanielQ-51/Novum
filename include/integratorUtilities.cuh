@@ -9,52 +9,52 @@
 const __device__ bool ALPHA_TEST = false;
 
 __device__ inline bool triangleIntersect(
-    const Vertices* __restrict__ verts, 
-    const Triangle* __restrict__ tri, 
-    const Ray& r, 
-    float4& barycentric, 
+    const Vertices* __restrict__ verts,
+    const Triangle* __restrict__ tri,
+    const Ray& r,
+    float3& barycentric,
     float& tval
 )
 {
-    float4 tria = __ldg(&verts->positions[tri->aInd]);
-    float4 trib = __ldg(&verts->positions[tri->bInd]);
-    float4 tric = __ldg(&verts->positions[tri->cInd]);
-    float4 e1 = trib - tria;
-    float4 e2 = tric - tria;
+    float3 tria = f3(__ldg(&verts->positions[tri->aInd]));
+    float3 trib = f3(__ldg(&verts->positions[tri->bInd]));
+    float3 tric = f3(__ldg(&verts->positions[tri->cInd]));
+    float3 e1 = trib - tria;
+    float3 e2 = tric - tria;
 
-    float4 h = cross3(r.direction, e2);
+    float3 h = cross(r.direction, e2);
     float a = dot(h, e1);
 
-    if (fabsf(a) < EPSILON) 
+    if (fabsf(a) < EPSILON)
         return false;
-    
+
     float f = 1.0/a;
 
-    float4 s = r.origin-tria;
+    float3 s = r.origin-tria;
     float u = f * dot(s, h);
-    float4 q = cross3(s, e1);
+    float3 q = cross(s, e1);
     float v = f * dot(r.direction, q);
     float t = f * dot(e2, q);
 
 
     if (((u >= 0) && (v >= 0) && (u + v <= 1)) && t > 0.0f)
     {
-        barycentric = f4(u, v, 1.0f-u-v);
+        barycentric = f3(u, v, 1.0f-u-v);
         tval = t;
         return true;
     }
     else
     {
-        barycentric = f4();
+        barycentric = f3();
         return false;
     }
 }
 
 __device__ inline bool aabbIntersect(
-    const Ray& r, 
-    float4 minCorner, 
-    float4 maxCorner, 
-    float& tmin, 
+    const Ray& r,
+    float3 minCorner,
+    float3 maxCorner,
+    float& tmin,
     float& tmax
 )
 {
@@ -62,11 +62,10 @@ __device__ inline bool aabbIntersect(
     tmax = 1e30f;  // initialize to +infinity
 
     // Compute inverse ray direction once
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
     // X axis
@@ -96,7 +95,7 @@ __device__ inline bool aabbIntersect(
     return (tmax >= tmin) && (tmax > 0.0f);
 }
 
-__device__ inline bool aabbIntersect(const Ray& r, float4 minCorner, float4 maxCorner, float4 invDir, float& tmin, float& tmax)
+__device__ inline bool aabbIntersect(const Ray& r, float3 minCorner, float3 maxCorner, float3 invDir, float& tmin, float& tmax)
 {
     tmin = -1e30f;
     tmax = 1e30f;
@@ -136,7 +135,7 @@ __device__ inline bool aabbIntersect(const Ray& r, float4 minCorner, float4 maxC
 __device__ inline void BVHSceneIntersect_volume(
     const Ray& r, 
     const BVHContext bvhContext,
-    float4& bary,
+    float3& bary,
     float& min_t, // distance to nearest surface
     float& min_vol_t, // distance to nearest volume aabb
     int& volume_ID, // ID of the intersected volume, -1 for when closest hit is a surface
@@ -147,17 +146,16 @@ __device__ inline void BVHSceneIntersect_volume(
     min_vol_t = 1e30f;
     surface_primID = -1;
     volume_ID = -1;
-    bary = f4(-1.0f);
+    bary = f3(-1.0f);
 
     int nodeStack[32];
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
     while (stackTop > 0)
@@ -175,7 +173,7 @@ __device__ inline void BVHSceneIntersect_volume(
                 if (idx.x == TYPE_VOLUME) {
                     const Volume& vol = bvhContext.volumes[idx.y];
                     float tminV, tmaxV;
-                    bool hitVol = aabbIntersect(r, vol.aabbMIN, vol.aabbMAX, invDir, tminV, tmaxV);
+                    bool hitVol = aabbIntersect(r, f3(vol.aabbMIN), f3(vol.aabbMAX), invDir, tminV, tmaxV);
 
                     if (hitVol && tmaxV > 0.0f)
                     {
@@ -192,7 +190,7 @@ __device__ inline void BVHSceneIntersect_volume(
                     
                 } else if (idx.x == TYPE_TRIANGLE) {
                     const Triangle* tri = &bvhContext.scene[idx.y];
-                    float4 barycentric;
+                    float3 barycentric;
                     float t;
                     bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
 
@@ -215,13 +213,13 @@ __device__ inline void BVHSceneIntersect_volume(
 
                 // Test left child if it exists
                 if (node.left >= 0) {
-                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, f3(bvhContext.BVH[node.left].aabbMIN), f3(bvhContext.BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
                     if (tminL > min_t) hitLeft = false; // Cull!
                 }
 
                 // Test right child if it exists
                 if (node.right >= 0) {
-                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, f3(bvhContext.BVH[node.right].aabbMIN), f3(bvhContext.BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
                     if (tminR > min_t) hitRight = false; // Cull!
                 }
 
@@ -281,11 +279,10 @@ __device__ inline bool BVHShadow_volume(
     int stackTop = 0;
     nodeStack[stackTop++] = 0;
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
     while (stackTop > 0)
@@ -301,7 +298,7 @@ __device__ inline bool BVHShadow_volume(
                 
                 if (idx.x == TYPE_TRIANGLE) {
                     const Triangle* tri = &bvhContext.scene[idx.y];
-                    float4 barycentric;
+                    float3 barycentric;
                     float t;
                     bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
 
@@ -314,7 +311,7 @@ __device__ inline bool BVHShadow_volume(
                 else if (idx.x == TYPE_VOLUME) {
                     const Volume& vol = bvhContext.volumes[idx.y];
                     float tminV, tmaxV;
-                    bool hitVol = aabbIntersect(r, vol.aabbMIN, vol.aabbMAX, invDir, tminV, tmaxV);
+                    bool hitVol = aabbIntersect(r, f3(vol.aabbMIN), f3(vol.aabbMAX), invDir, tminV, tmaxV);
 
                     // Extract intersection segment, clamped to ray bounds [0, max_t]
                     if (hitVol && tminV < max_t && tmaxV > 0.0f)
@@ -338,13 +335,13 @@ __device__ inline bool BVHShadow_volume(
 
                 // Test left child. CULL using max_t instead of min_t
                 if (node.left >= 0) {
-                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, f3(bvhContext.BVH[node.left].aabbMIN), f3(bvhContext.BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
                     if (tminL > max_t) hitLeft = false; 
                 }
 
                 // Test right child. CULL using max_t instead of min_t
                 if (node.right >= 0) {
-                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, f3(bvhContext.BVH[node.right].aabbMIN), f3(bvhContext.BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
                     if (tminR > max_t) hitRight = false; 
                 }
 
@@ -384,17 +381,16 @@ __device__ inline void BVHSceneIntersect(
     intersect.valid = false;
     float min_t = 1e30f;
     int bestTriInd = -1;
-    float4 bestBarycentric = f4(-1.0f);
+    float3 bestBarycentric = f3(-1.0f);
 
     int nodeStack[32];
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
     while (stackTop > 0)
@@ -413,7 +409,7 @@ __device__ inline void BVHSceneIntersect(
                 {
                     if (idx.y == skipTri) continue;
                     const Triangle* tri = &scene[idx.y];
-                    float4 barycentric;
+                    float3 barycentric;
                     float t;
                     bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
 
@@ -437,13 +433,13 @@ __device__ inline void BVHSceneIntersect(
 
                 // Test left child if it exists
                 if (node.left >= 0) {
-                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, f3(BVH[node.left].aabbMIN), f3(BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
                     if (tminL > min_t) hitLeft = false; // Cull!
                 }
 
                 // Test right child if it exists
                 if (node.right >= 0) {
-                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, f3(BVH[node.right].aabbMIN), f3(BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
                     if (tminR > min_t) hitRight = false; // Cull!
                 }
 
@@ -477,13 +473,10 @@ __device__ inline void BVHSceneIntersect(
     {
         const Triangle* tri = &scene[bestTriInd];
         intersect.point = r.at(min_t);
-        //intersect.color = __ldg(&verts->colors[tri->aInd]) * bestBarycentric.z + 
-        //                    __ldg(&verts->colors[tri->bInd]) * bestBarycentric.x + 
-        //                    __ldg(&verts->colors[tri->cInd]) * bestBarycentric.y;
         intersect.normal = normalize(
-                            __ldg(&verts->normals[tri->naInd]) * bestBarycentric.z + 
-                            __ldg(&verts->normals[tri->nbInd]) * bestBarycentric.x + 
-                            __ldg(&verts->normals[tri->ncInd]) * bestBarycentric.y);
+                            f3(__ldg(&verts->normals[tri->naInd])) * bestBarycentric.z +
+                            f3(__ldg(&verts->normals[tri->nbInd])) * bestBarycentric.x +
+                            f3(__ldg(&verts->normals[tri->ncInd])) * bestBarycentric.y);
 
         intersect.uv = __ldg(&verts->uvs[tri->uvaInd]) * bestBarycentric.z + 
             __ldg(&verts->uvs[tri->uvbInd]) * bestBarycentric.x + 
@@ -499,7 +492,7 @@ __device__ inline void BVHSceneIntersect(
         }
             
         intersect.materialID = tri->materialID;
-        intersect.emission = tri->emission;
+        intersect.emission = f3(tri->emission);
         intersect.valid = true;
         intersect.triIDX = bestTriInd;
 
@@ -510,24 +503,23 @@ __device__ inline void BVHSceneIntersect(
 __device__ inline void BVHSceneIntersect_lightweight(
     const Ray& r, 
     const BVHContext bvhContext,
-    float4& bary,
+    float3& bary,
     float& min_t,
     int& triID
 )
 {
     min_t = 1e30f;
     triID = -1;
-    bary = f4(-1.0f);
+    bary = f3(-1.0f);
 
     int nodeStack[32];
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
     while (stackTop > 0)
@@ -543,7 +535,7 @@ __device__ inline void BVHSceneIntersect_lightweight(
             {
                 int2 idx = __ldg(&bvhContext.BVHindices[i]);
                 const Triangle* tri = &bvhContext.scene[idx.y];
-                float4 barycentric;
+                float3 barycentric;
                 float t;
                 bool hitTri = triangleIntersect(bvhContext.vertices, tri, r, barycentric, t);
 
@@ -565,11 +557,11 @@ __device__ inline void BVHSceneIntersect_lightweight(
 
                 // Test left child if it exists
                 if (node.left >= 0)
-                    hitLeft = aabbIntersect(r, bvhContext.BVH[node.left].aabbMIN, bvhContext.BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, f3(bvhContext.BVH[node.left].aabbMIN), f3(bvhContext.BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
 
                 // Test right child if it exists
                 if (node.right >= 0)
-                    hitRight = aabbIntersect(r, bvhContext.BVH[node.right].aabbMIN, bvhContext.BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, f3(bvhContext.BVH[node.right].aabbMIN), f3(bvhContext.BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
 
                 // If both children were hit, push the farther one first
                 if (hitLeft && hitRight)
@@ -604,8 +596,8 @@ __device__ inline void BVHShadowRay(
     const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ verts, 
     const Triangle* __restrict__ scene, 
-    const Material* __restrict__ materials, 
-    float4& throughputScale, 
+    const Material* __restrict__ materials,
+    float3& throughputScale,
     float max_t, 
     int skip_tri = -1
 )
@@ -614,14 +606,13 @@ __device__ inline void BVHShadowRay(
     int stackTop = 0;
     nodeStack[stackTop++] = 0; // Push the root node (index 0)
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
-    throughputScale = f4(1.0f);
+    throughputScale = f3(1.0f);
     while (stackTop > 0)
     {
         // Pop the next node to check
@@ -635,7 +626,7 @@ __device__ inline void BVHShadowRay(
             {
                 int2 idx = __ldg(&BVHindices[i]);
                 const Triangle* tri = &scene[idx.y];
-                float4 barycentric;
+                float3 barycentric;
                 float t;
                 bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
 
@@ -645,9 +636,9 @@ __device__ inline void BVHShadowRay(
                 if (hitTri && (t < max_t))
                 {
                     // 1. THE FAST PATH: If we aren't alpha testing, ANY hit is a hard shadow.
-                    if (!ALPHA_TEST) 
+                    if (!ALPHA_TEST)
                     {
-                        throughputScale = f4(0.0f);
+                        throughputScale = f3(0.0f);
                         return; 
                     }
 
@@ -657,28 +648,28 @@ __device__ inline void BVHShadowRay(
                     if (materials[matID].type == MAT_LEAF)
                     {
                         // We hit a leaf. Don't stop. Just darken the ray.
-                        float4 transColor = materials[matID].albedo;
+                        float3 transColor = f3(materials[matID].albedo);
                         float transmission = materials[matID].transmission;
                         
-                        float4 n = verts->normals[tri->naInd] * barycentric.z + 
-                                verts->normals[tri->nbInd] * barycentric.x + 
-                                verts->normals[tri->ncInd] * barycentric.y;
+                        float3 n = f3(verts->normals[tri->naInd]) * barycentric.z +
+                                f3(verts->normals[tri->nbInd]) * barycentric.x +
+                                f3(verts->normals[tri->ncInd]) * barycentric.y;
                         
                         float cosTheta = fabsf(dot(r.direction, normalize(n)));
                         float F = schlick_fresnel(cosTheta, 1.0f, materials[matID].ior);
                         
                         throughputScale *= transColor * transmission * (1.0f - F);
 
-                        if (fmaxf(throughputScale.x, fmaxf(throughputScale.y, throughputScale.z)) < 0.01f) 
+                        if (fmaxf(throughputScale.x, fmaxf(throughputScale.y, throughputScale.z)) < 0.01f)
                         {
-                            throughputScale = f4(0.0f);
+                            throughputScale = f3(0.0f);
                             return;
                         }
                     }
                     else 
                     {
                         // It's a solid object, block the shadow.
-                        throughputScale = f4(0.0f);
+                        throughputScale = f3(0.0f);
                         return;
                     }
                 }
@@ -693,11 +684,11 @@ __device__ inline void BVHShadowRay(
 
                 // Test left child if it exists
                 if (node.left >= 0)
-                    hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                    hitLeft = aabbIntersect(r, f3(BVH[node.left].aabbMIN), f3(BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
 
                 // Test right child if it exists
                 if (node.right >= 0)
-                    hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                    hitRight = aabbIntersect(r, f3(BVH[node.right].aabbMIN), f3(BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
 
                 // If both children were hit, push the farther one first
                 if (hitLeft && hitRight)
@@ -731,8 +722,8 @@ __device__ inline void BVHShadowRay_NoAlpha(
     const BVHnode* __restrict__ BVH, 
     const int2* __restrict__ BVHindices, 
     const Vertices* __restrict__ verts, 
-    const Triangle* __restrict__ scene, 
-    float4& throughputScale,
+    const Triangle* __restrict__ scene,
+    float3& throughputScale,
     float max_t
 )
 {
@@ -740,14 +731,13 @@ __device__ inline void BVHShadowRay_NoAlpha(
     int stackTop = 0;
     nodeStack[stackTop++] = 0;
 
-    float4 invDir = make_float4(
+    float3 invDir = make_float3(
         1.0f / r.direction.x,
         1.0f / r.direction.y,
-        1.0f / r.direction.z,
-        0.0f
+        1.0f / r.direction.z
     );
 
-    throughputScale = make_float4(1.0f, 1.0f, 1.0f, 1.0f);
+    throughputScale = f3(1.0f);
 
     while (stackTop > 0)
     {
@@ -761,13 +751,13 @@ __device__ inline void BVHShadowRay_NoAlpha(
                 int2 idx = __ldg(&BVHindices[i]);
                 const Triangle* tri = &scene[idx.y];
                 
-                float4 barycentric;
+                float3 barycentric;
                 float t;
                 bool hitTri = triangleIntersect(verts, tri, r, barycentric, t);
 
                 if (hitTri && (t < max_t))
                 {
-                    throughputScale = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+                    throughputScale = f3(0.0f);
                     return; 
                 }
             }
@@ -778,10 +768,10 @@ __device__ inline void BVHShadowRay_NoAlpha(
             bool hitLeft = false, hitRight = false;
 
             if (node.left >= 0)
-                hitLeft = aabbIntersect(r, BVH[node.left].aabbMIN, BVH[node.left].aabbMAX, invDir, tminL, tmaxL);
+                hitLeft = aabbIntersect(r, f3(BVH[node.left].aabbMIN), f3(BVH[node.left].aabbMAX), invDir, tminL, tmaxL);
 
             if (node.right >= 0)
-                hitRight = aabbIntersect(r, BVH[node.right].aabbMIN, BVH[node.right].aabbMAX, invDir, tminR, tmaxR);
+                hitRight = aabbIntersect(r, f3(BVH[node.right].aabbMIN), f3(BVH[node.right].aabbMAX), invDir, tminR, tmaxR);
 
 
             if (hitLeft && hitRight)
@@ -818,19 +808,16 @@ __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle
     for (int i = 0; i < triNum; i++)
     {
         Triangle* tri = &scene[i];
-        float4 barycentric;
+        float3 barycentric;
         float t;
         bool hitTri = triangleIntersect(verts, tri, r, barycentric, t); // returns true if it hits the tri
         if (hitTri && (t < min_t))
         {
             min_t = t; // Update the closest-hit distance
             intersect.point = r.at(t);
-            //intersect.color = verts->colors[tri->aInd] * barycentric.z + 
-            //                    verts->colors[tri->bInd] * barycentric.x + 
-            //                    verts->colors[tri->cInd] * barycentric.y;
-            intersect.normal = normalize(verts->normals[tri->naInd] * barycentric.z + 
-                                verts->normals[tri->nbInd] * barycentric.x + 
-                                verts->normals[tri->ncInd] * barycentric.y);
+            intersect.normal = normalize(f3(verts->normals[tri->naInd]) * barycentric.z +
+                                f3(verts->normals[tri->nbInd]) * barycentric.x +
+                                f3(verts->normals[tri->ncInd]) * barycentric.y);
 
             intersect.uv = verts->uvs[tri->uvaInd] * barycentric.z + 
                 verts->uvs[tri->uvbInd] * barycentric.x + 
@@ -846,7 +833,7 @@ __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle
             }
                 
             intersect.materialID = tri->materialID;
-            intersect.emission = tri->emission;
+            intersect.emission = f3(tri->emission);
             intersect.valid = true;
             //intersect.tri = *tri; // could be bad for performance
             intersect.triIDX = i;
@@ -856,7 +843,7 @@ __device__ inline void sceneIntersection(const Ray& r, Vertices* verts, Triangle
     }
 }
 
-__device__ inline int3 GetGridIndex(float4 p, float4 sceneMin, float cellSize) {
+__device__ inline int3 GetGridIndex(float3 p, float3 sceneMin, float cellSize) {
     return make_int3(
         floorf((p.x - sceneMin.x) / cellSize),
         floorf((p.y - sceneMin.y) / cellSize),
@@ -864,7 +851,7 @@ __device__ inline int3 GetGridIndex(float4 p, float4 sceneMin, float cellSize) {
     );
 }
 
-__device__ inline uint32_t ComputeGridHash(float4 pos, float4 sceneMin, float mergeRadius, int hashTableSize) {
+__device__ inline uint32_t ComputeGridHash(float3 pos, float3 sceneMin, float mergeRadius, int hashTableSize) {
     int3 gridPos;
     gridPos.x = floorf((pos.x - sceneMin.x) / mergeRadius);
     gridPos.y = floorf((pos.y - sceneMin.y) / mergeRadius);
@@ -910,29 +897,29 @@ __device__ inline void removeMaterialFromStack(int* stack, int* stackTop, int ma
     }
 }
 
-__device__ inline float4 sampleSky(float4 direction)
+__device__ inline float3 sampleSky(float3 direction)
 {
-    float4 unit_dir = normalize(direction); 
+    float3 unit_dir = normalize(direction);
 
     // Maps Y from [-1, 1] to [0, 1] for the gradient
     float t = 0.5f * (unit_dir.y + 1.0f);
 
     // Reduced multipliers to prevent extreme clipping
     // Horizon is usually brighter than the zenith, but 3.0 is very high
-    float4 c_horizon = 4.5f * f4(0.8f, 0.3f, 0.1f);
-    float4 c_zenith  = f4(0.3f, 0.2f, 0.9f);
+    float3 c_horizon = 4.5f * f3(0.8f, 0.3f, 0.1f);
+    float3 c_zenith  = f3(0.3f, 0.2f, 0.9f);
 
-    float4 sky_color = (1.0f - t) * c_horizon + t * c_zenith;
+    float3 sky_color = (1.0f - t) * c_horizon + t * c_zenith;
 
     // Sun Calculation
-    //float4 sun_dir = normalize(f4(-0.45f, 0.05f, 0.866f, 0.0f)); 
-    float4 sun_dir = normalize(f4(-0.65f, 0.05f, -0.866f, 0.0f)); 
+    //float3 sun_dir = normalize(f3(-0.45f, 0.05f, 0.866f));
+    float3 sun_dir = normalize(f3(-0.65f, 0.05f, -0.866f));
     float sun_focus = 800.0f;     // Higher = smaller, sharper sun
     float sun_intensity = 10.0f;  // Sun should be much brighter than sky
-    float4 sun_base = f4(1.0f, 0.8f, 0.2f, 1.0f);
+    float3 sun_base = f3(1.0f, 0.8f, 0.2f);
 
     float sun_factor = pow(max(0.0f, dot(unit_dir, sun_dir)), sun_focus);
-    float4 sun_final = sun_base * sun_intensity * sun_factor;
+    float3 sun_final = sun_base * sun_intensity * sun_factor;
 
     // IMPORTANT: Add the sun to the sky!
     return sky_color + sun_final;
@@ -951,9 +938,9 @@ __host__ inline void checkCudaErrors(const char * name)
     }
 }
 
-std::vector<float4> inline generateRandomProbes(int count, float4 sceneCenter, float sceneRadius) 
+std::vector<float3> inline generateRandomProbes(int count, float3 sceneCenter, float sceneRadius)
 {
-    std::vector<float4> probes;
+    std::vector<float3> probes;
     probes.reserve(count);
 
     // Initialize random number generator
@@ -971,11 +958,10 @@ std::vector<float4> inline generateRandomProbes(int count, float4 sceneCenter, f
         // to avoid "corner bias"
         if ((u * u + v * v + w * w) <= 1.0f) 
         {
-            float4 p;
+            float3 p;
             p.x = sceneCenter.x + (u * sceneRadius);
             p.y = sceneCenter.y + (v * sceneRadius);
             p.z = sceneCenter.z + (w * sceneRadius);
-            p.w = 0.0f; // Padding/Type matching
 
             probes.push_back(p);
         }

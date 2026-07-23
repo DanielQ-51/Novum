@@ -56,9 +56,9 @@ struct LightSampler {
     }
 
     // returns solid angle pdf
-    __device__ inline float evaluateEnvPdf(float4 dir) const {
+    __device__ inline float evaluateEnvPdf(float3 dir) const {
         if (envWeight == 0.0f || envMap.totalPower == 0.0f) return 0.0f;
-        float4 emission = envMap.sampleDir(dir);
+        float3 emission = envMap.sampleDir(dir);
         float lum = luminance(emission);
 
         int numPixels = envMap.width * envMap.height;
@@ -71,15 +71,15 @@ struct LightSampler {
     __device__ inline bool sample(
         float rand_macro,
         float4 rand_micro,
-        float4 probePos,
+        float3 probePos,
         const Vertices* verts,
-        float4& output,
-        float4& outDir,
-        float4& lightNorm,
+        float3& output,
+        float3& outDir,
+        float3& lightNorm,
         float& t_max,
         float& pdf
     ) const {
-        
+
         // 1. Categorical Selection
         if (rand_macro < envWeight) {
             // --- Sample Environment Map ---
@@ -105,40 +105,40 @@ struct LightSampler {
 
             // PDF of choosing this specific mesh light given we chose the mesh category
 
-            int lightTriInd = light.startInd + 
+            int lightTriInd = light.startInd +
                 binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
 
-            float4 pos;
+            float3 pos;
             float area;
             {
-                Triangle l = triLights[lightTriInd]; 
+                Triangle l = triLights[lightTriInd];
 
-                output = l.emission;
-                        
-                float4 apos = __ldg(&verts->positions[l.aInd]);
-                float4 bpos = __ldg(&verts->positions[l.bInd]);
-                float4 cpos = __ldg(&verts->positions[l.cInd]);
+                output = f3(l.emission);
+
+                float3 apos = f3(__ldg(&verts->positions[l.aInd]));
+                float3 bpos = f3(__ldg(&verts->positions[l.bInd]));
+                float3 cpos = f3(__ldg(&verts->positions[l.cInd]));
 
                 float u = sqrtf(rand_micro.y);
                 float v = rand_micro.z;
 
                 pos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
-                area = 0.5f * length(cross3(bpos-apos, cpos-apos));
+                area = 0.5f * length(cross(bpos-apos, cpos-apos));
 
-                float4 anorm = __ldg(&verts->normals[l.naInd]);
-                float4 bnorm = __ldg(&verts->normals[l.nbInd]);
-                float4 cnorm = __ldg(&verts->normals[l.ncInd]);
+                float3 anorm = f3(__ldg(&verts->normals[l.naInd]));
+                float3 bnorm = f3(__ldg(&verts->normals[l.nbInd]));
+                float3 cnorm = f3(__ldg(&verts->normals[l.ncInd]));
 
                 lightNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
             }
 
             float pdf_chooseLight = (1.0f - envWeight) * (light.totalPower / totalMeshPower);
-            
+
             float triPdf = (area * luminance(output) * PI) / light.totalPower;
             pdf = pdf_chooseLight * triPdf * (1.0f / area);
 
             outDir = normalize(pos - probePos);
-            
+
             t_max = length(pos-probePos);
             return 0;
         }
@@ -150,11 +150,11 @@ struct LightSampler {
     __device__ inline bool sample_ReSTIR_rc_data(
         float rand_macro,
         float4 rand_micro,
-        float4 probePos,
+        float3 probePos,
         const Vertices* verts,
-        float4& output,
-        float4& outDir,
-        float4& lightNorm,
+        float3& output,
+        float3& outDir,
+        float3& lightNorm,
         float& t_max,
         float& pdf,
         uint32_t& primID,
@@ -177,7 +177,7 @@ struct LightSampler {
                 pdf = 0.0f;
                 return 0; // Edge case: branched to mesh but none exist
             }
-    
+
             // Remap rand_macro to [0, 1) to search the mesh-only CDF
             float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
 
@@ -186,46 +186,46 @@ struct LightSampler {
 
             // PDF of choosing this specific mesh light given we chose the mesh category
 
-            int lightTriInd = light.startInd + 
+            int lightTriInd = light.startInd +
                 binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
-            
-            float4 pos;
+
+            float3 pos;
             float area;
             {
-                const Triangle& l = triLights[lightTriInd]; 
+                const Triangle& l = triLights[lightTriInd];
                 primID = l.triInd;
-                output = l.emission;
-                        
-                float4 apos = __ldg(&verts->positions[l.aInd]);
-                float4 bpos = __ldg(&verts->positions[l.bInd]);
-                float4 cpos = __ldg(&verts->positions[l.cInd]);
+                output = f3(l.emission);
+
+                float3 apos = f3(__ldg(&verts->positions[l.aInd]));
+                float3 bpos = f3(__ldg(&verts->positions[l.bInd]));
+                float3 cpos = f3(__ldg(&verts->positions[l.cInd]));
 
                 float u = sqrtf(rand_micro.y);
                 float v = rand_micro.z;
 
                 pos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
-                area = 0.5f * length(cross3(bpos-apos, cpos-apos));
+                area = 0.5f * length(cross(bpos-apos, cpos-apos));
 
-                float4 anorm = __ldg(&verts->normals[l.naInd]);
-                float4 bnorm = __ldg(&verts->normals[l.nbInd]);
-                float4 cnorm = __ldg(&verts->normals[l.ncInd]);
+                float3 anorm = f3(__ldg(&verts->normals[l.naInd]));
+                float3 bnorm = f3(__ldg(&verts->normals[l.nbInd]));
+                float3 cnorm = f3(__ldg(&verts->normals[l.ncInd]));
 
                 lightNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
                 barycentrics = f2(u * (1.0f - v), u * v);
             }
 
             float pdf_chooseLight = (1.0f - envWeight) * (light.totalPower / totalMeshPower);
-            
+
             float triPdf = (area * luminance(output) * PI) / light.totalPower;
             pdf = pdf_chooseLight * triPdf * (1.0f / area);
 
             outDir = normalize(pos - probePos);
-            
+
             t_max = length(pos-probePos);
 
             if (pdf <= 0.0f) {
                 printf("DEBUG: Light sampler returned zero PDF! PrimID: %u\n", primID);
-            } 
+            }
             return 0;
         }
     }
@@ -273,7 +273,7 @@ struct LightSampler {
         // 3. Print the nested State
         std::cout << "Mesh Lights Distribution:\n";
         std::cout << "=========================================\n";
-        
+
         for (int i = 0; i < numLights; i++) {
             std::cout << "Light [" << i << "] \n";
             std::cout << "  Start Ind : " << h_lights[i].startInd << "\n";
@@ -281,10 +281,10 @@ struct LightSampler {
             std::cout << "  Power     : " << h_lights[i].totalPower << "\n";
             std::cout << "  TLCDF Val : " << h_TLCDF[i] << "\n";
             std::cout << "  --- Bottom Level CDF (Primitives) ---\n";
-            
+
             int start = h_lights[i].startInd;
             int count = h_lights[i].numPrim;
-            
+
             for (int p = 0; p < count; p++) {
                 // Formatting safeguard to prevent terminal flooding
                 if (maxPrimsToPrint >= 0 && p >= maxPrimsToPrint && p != count - 1) {
@@ -293,7 +293,7 @@ struct LightSampler {
                     }
                     continue; // Skip the print, but still ensure the last index prints
                 }
-                
+
                 std::cout << "    Prim [" << start + p << "]: " << h_BLCDF[start + p] << "\n";
             }
             std::cout << "-----------------------------------------\n";
@@ -362,11 +362,11 @@ struct LightSamplerManager {
             float currPower = 0.0f;
 
             for (int i = curr.startInd; i < curr.startInd + curr.numPrim; i++) {
-                float4 apos = points[host_lights[i].aInd];
-                float4 bpos = points[host_lights[i].bInd];
-                float4 cpos = points[host_lights[i].cInd];
+                float3 apos = f3(points[host_lights[i].aInd]);
+                float3 bpos = f3(points[host_lights[i].bInd]);
+                float3 cpos = f3(points[host_lights[i].cInd]);
 
-                float area = 0.5f * length(cross3(bpos - apos, cpos - apos));
+                float area = 0.5f * length(cross(bpos - apos, cpos - apos));
                 currPower += area * luminance(host_lights[i].emission) * h_PI;
                 BLCDF[i] = currPower;
             }
@@ -393,8 +393,8 @@ struct LightSamplerManager {
             size_t triSize = host_lights.size() * sizeof(Triangle);
             cudaMalloc(&triLights, triSize);
             cudaMemcpy(triLights, host_lights.data(), triSize, cudaMemcpyHostToDevice);
-            
-            d_triLights = triLights; 
+
+            d_triLights = triLights;
         }
 
         if (BLCDF.size() > 0) {
@@ -410,7 +410,7 @@ struct LightSamplerManager {
         if (triLights != nullptr) cudaFree(triLights);
         if (bottomLevelCDF != nullptr) cudaFree(bottomLevelCDF);
     }
-    
+
     LightSamplerManager(const LightSamplerManager&) = delete;
     LightSamplerManager& operator=(const LightSamplerManager&) = delete;
 

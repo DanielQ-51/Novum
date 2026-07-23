@@ -14,9 +14,9 @@
 #include <fstream>
 #include <iostream>
 #include <set>
-#include <iomanip>  
+#include <iomanip>
 #include <chrono>
-#include "imageUtil.cuh" 
+#include "imageUtil.cuh"
 */
 
 #include <cuda_runtime.h>
@@ -146,20 +146,6 @@ inline __host__ __device__ __forceinline__ float length(const float4 &v) {
 
 inline __host__ __device__ __forceinline__ float lengthSquared(const float4 &v) {
     return dot(v, v);
-}
-
-inline __host__ __device__ __forceinline__ float4 normalize(const float4 &v) {
-    float invLen = rsqrtf(dot(v, v)); // 1 / sqrt(dot(v,v))
-    return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
-}
-
-inline __host__ __device__ __forceinline__ float4 cross3(const float4 &a, const float4 &b) {
-    return make_float4(
-        a.y*b.z - a.z*b.y,
-        a.z*b.x - a.x*b.z,
-        a.x*b.y - a.y*b.x,
-        0.0f
-    );
 }
 
 inline __host__ __device__ __forceinline__ float3 operator+(const float3 &a, const float3 &b) {
@@ -313,56 +299,62 @@ inline __host__ __device__ __forceinline__ float4 clampf4(float4 v, float minVal
 inline __host__ std::ostream& operator<< (std::ostream& out, const float4& v )
 {
     out << "<" << v.x << " " << v.y << " " << v.z << " " << v.w << ">";
-    return out; 
+    return out;
 }
 
-inline __device__ __forceinline__ void toWorld(const float4& wo_local, const float4& n, float4& wo_world)
+inline __host__ std::ostream& operator<< (std::ostream& out, const float3& v )
 {
-    float4 t, b;
-    if (fabs(n.x) > fabs(n.z))
-        t = normalize(f4(-n.y, n.x, 0.0f));
-    else
-        t = normalize(f4(0.0f, -n.z, n.y));
+    out << "<" << v.x << " " << v.y << " " << v.z << ">";
+    return out;
+}
 
-    b = cross3(n, t);
+inline __device__ __forceinline__ void toWorld(const float3& wo_local, const float3& n, float3& wo_world)
+{
+    float3 t, b;
+    if (fabs(n.x) > fabs(n.z))
+        t = normalize(f3(-n.y, n.x, 0.0f));
+    else
+        t = normalize(f3(0.0f, -n.z, n.y));
+
+    b = cross(n, t);
     wo_world = wo_local.x * t + wo_local.y * b + wo_local.z * n;
 }
 
-inline __device__ __forceinline__ float4 toWorld(const float4& wo_local, const float4& n)
+inline __device__ __forceinline__ float3 toWorld(const float3& wo_local, const float3& n)
 {
-    float4 t, b;
+    float3 t, b;
     if (fabs(n.x) > fabs(n.z))
-        t = normalize(f4(-n.y, n.x, 0.0f));
+        t = normalize(f3(-n.y, n.x, 0.0f));
     else
-        t = normalize(f4(0.0f, -n.z, n.y));
+        t = normalize(f3(0.0f, -n.z, n.y));
 
-    b = cross3(n, t);
+    b = cross(n, t);
     return wo_local.x * t + wo_local.y * b + wo_local.z * n;
 }
 
 
-inline __device__ __forceinline__ void toLocal(const float4& wo_world, const float4& n, float4& wo_local)
+inline __device__ __forceinline__ void toLocal(const float3& wo_world, const float3& n, float3& wo_local)
 {
-    float4 t, b;
+    float3 t, b;
     if (fabs(n.x) > fabs(n.z))
-        t = normalize(f4(-n.y, n.x, 0.0f));
+        t = normalize(f3(-n.y, n.x, 0.0f));
     else
-        t = normalize(f4(0.0f, -n.z, n.y));
+        t = normalize(f3(0.0f, -n.z, n.y));
 
-    b = cross3(n, t);
-    wo_local = f4(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n), 0.0f);
+    b = cross(n, t);
+    wo_local = f3(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n));
 }
 
-inline __device__ __forceinline__ float4 toLocal(const float4& wo_world, const float4& n)
+inline __device__ __forceinline__ float3 toLocal(const float3& wo_world, const float3& n)
 {
-    float4 t, b;
+    float3 t, b;
     if (fabs(n.x) > fabs(n.z))
-        t = normalize(f4(-n.y, n.x, 0.0f));
+        t = normalize(f3(-n.y, n.x, 0.0f));
     else
-        t = normalize(f4(0.0f, -n.z, n.y));
+        t = normalize(f3(0.0f, -n.z, n.y));
 
-    b = cross3(n, t);
-    return f4(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n), 0.0f);
+    b = cross(n, t);
+    return f3(dot(wo_world, t), dot(wo_world, b), dot(wo_world, n));
 }
 
 // Component-wise min of two float4s
@@ -377,6 +369,24 @@ inline __host__ __device__ __forceinline__ float4 fminf4(const float4 &a, const 
 // Component-wise max of two float4s
 inline __host__ __device__ __forceinline__ float4 fmaxf4(const float4 &a, const float4 &b) {
     return f4(
+        fmaxf(a.x, b.x),
+        fmaxf(a.y, b.y),
+        fmaxf(a.z, b.z)
+    );
+}
+
+// Component-wise min of two float3s
+inline __host__ __device__ __forceinline__ float3 fminf3(const float3 &a, const float3 &b) {
+    return f3(
+        fminf(a.x, b.x),
+        fminf(a.y, b.y),
+        fminf(a.z, b.z)
+    );
+}
+
+// Component-wise max of two float3s
+inline __host__ __device__ __forceinline__ float3 fmaxf3(const float3 &a, const float3 &b) {
+    return f3(
         fmaxf(a.x, b.x),
         fmaxf(a.y, b.y),
         fmaxf(a.z, b.z)
@@ -410,41 +420,41 @@ inline __host__ float surfaceArea(const float4& min, const float4& max)
     return 2.0f * (dx * dy + dx * dz + dy * dz);
 }
 
-__host__ __device__ __forceinline__ float4 sqrtf4(const float4& v) {
-    return make_float4(sqrtf(v.x), sqrtf(v.y), sqrtf(v.z), 0.0f);
+__host__ __device__ __forceinline__ float3 sqrtf3(const float3& v) {
+    return make_float3(sqrtf(v.x), sqrtf(v.y), sqrtf(v.z));
 }
 
-__host__ __device__ __forceinline__ float4 rotateX(const float4& v, float angle)
+__host__ __device__ __forceinline__ float3 rotateX(const float3& v, float angle)
 {
     float c = cosf(angle), s = sinf(angle);
-    return f4(
+    return f3(
         v.x,
         v.y * c - v.z * s,
         v.y * s + v.z * c
     );
 }
 
-__host__ __device__ __forceinline__ float4 rotateY(const float4& v, float angle)
+__host__ __device__ __forceinline__ float3 rotateY(const float3& v, float angle)
 {
     float c = cosf(angle), s = sinf(angle);
-    return f4(
+    return f3(
         v.x * c + v.z * s,
         v.y,
         -v.x * s + v.z * c
     );
 }
 
-__host__ __device__ __forceinline__ float4 rotateZ(const float4& v, float angle)
+__host__ __device__ __forceinline__ float3 rotateZ(const float3& v, float angle)
 {
     float c = cosf(angle), s = sinf(angle);
-    return f4(
+    return f3(
         v.x * c - v.y * s,
         v.x * s + v.y * c,
         v.z
     );
 }
 
-__device__ __forceinline__ float4 sampleSphere(RNGState& localState, float R)
+__device__ __forceinline__ float3 sampleSphere(RNGState& localState, float R)
 {
     float u = rand(&localState);
     float v = rand(&localState);
@@ -457,7 +467,7 @@ __device__ __forceinline__ float4 sampleSphere(RNGState& localState, float R)
     float x = r * cosf(phi);
     float y = r * sinf(phi);
 
-    return f4(R * x, R * y, R * z);
+    return f3(R * x, R * y, R * z);
 }
 
 __device__ __host__ inline float luminance(float4 c)
@@ -477,8 +487,8 @@ __host__ inline std::string trim(const std::string& str) {
     return str.substr(first, (last - first + 1));
 }
 
-__host__ inline float4 parseVec3(const std::string& val) {
-    float4 v;
+__host__ inline float3 parseVec3(const std::string& val) {
+    float3 v;
     std::stringstream ss(val);
     ss >> v.x >> v.y >> v.z;
     return v;
@@ -490,12 +500,12 @@ __host__ inline bool parseBool(const std::string& val) {
     return (v == "true");
 }
 
-__device__ __forceinline__ uint32_t toRGB9E5(float4 c)
+__device__ __forceinline__ uint32_t toRGB9E5(float3 c)
 {
     float r = fmaxf(0.0f, c.x);
     float g = fmaxf(0.0f, c.y);
     float b = fmaxf(0.0f, c.z);
-    
+
     float maxRGB = fmaxf(r, fmaxf(g, b));
 
     if (maxRGB > 65000.0f) {
@@ -526,27 +536,27 @@ __device__ __forceinline__ uint32_t toRGB9E5(float4 c)
     return (uint32_t)((expShared << 27) | ((Bi & 0x1FF) << 18) | ((Gi & 0x1FF) << 9) | (Ri & 0x1FF));
 }
 
-__device__ __forceinline__ float4 fromRGB9E5(uint32_t packed)
+__device__ __forceinline__ float3 fromRGB9E5(uint32_t packed)
 {
     int exponent = (int)(packed >> 27) - 15 - 9;
-    
-    float scale = __powf(2.0f, (float)exponent); 
-    
+
+    float scale = __powf(2.0f, (float)exponent);
+
     float r = (float)(packed & 0x1FF) * scale;
     float g = (float)((packed >> 9) & 0x1FF) * scale;
     float b = (float)((packed >> 18) & 0x1FF) * scale;
-    
-    return make_float4(r, g, b, 1.0f);
+
+    return make_float3(r, g, b);
 }
 
 // Encodes a unit vector into 32 bits (2x 16-bit snorm) with minimal error.
 __device__ __forceinline__ float signNotZero(float k) { return (k >= 0.0f) ? 1.0f : -1.0f; }
 
-__device__ __forceinline__ uint32_t packOct(float4 v)
+__device__ __forceinline__ uint32_t packOct(float3 v)
 {
     float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
     float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
-    
+
     float2 res;
     res.x = v.x * invL1;
     res.y = v.y * invL1;
@@ -564,27 +574,7 @@ __device__ __forceinline__ uint32_t packOct(float4 v)
     return ((uint32_t)(uint16_t)x) | (((uint32_t)(uint16_t)y) << 16);
 }
 
-__device__ __forceinline__ float4 unpackOct(uint32_t p) {
-    int16_t packedX = (int16_t)(p & 0xFFFF);
-    int16_t packedY = (int16_t)(p >> 16);
-
-    float x = fmaxf(-1.0f, packedX / 32767.0f);
-    float y = fmaxf(-1.0f, packedY / 32767.0f);
-
-    float3 v;
-    v.x = x;
-    v.y = y;
-    v.z = 1.0f - (fabsf(x) + fabsf(y));
-
-    float t = fmaxf(-v.z, 0.0f);
-    v.x += (v.x >= 0.0f) ? -t : t;
-    v.y += (v.y >= 0.0f) ? -t : t;
-
-    float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-    return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
-}
-
-__device__ __forceinline__ float3 unpackOctF3(uint32_t p) {
+__device__ __forceinline__ float3 unpackOct(uint32_t p) {
     int16_t packedX = (int16_t)(p & 0xFFFF);
     int16_t packedY = (int16_t)(p >> 16);
 
@@ -604,29 +594,7 @@ __device__ __forceinline__ float3 unpackOctF3(uint32_t p) {
     return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
 }
 
-__device__ __forceinline__ uint32_t packOctF3(float3 v)
-{
-    float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
-    float invL1 = (l1norm > 0.0f) ? (1.0f / l1norm) : 0.0f;
-    
-    float2 res;
-    res.x = v.x * invL1;
-    res.y = v.y * invL1;
-
-    if (v.z < 0.0f) {
-        float tempX = res.x;
-        float tempY = res.y;
-        res.x = (1.0f - fabsf(tempY)) * signNotZero(tempX);
-        res.y = (1.0f - fabsf(tempX)) * signNotZero(tempY);
-    }
-
-    int16_t x = (int16_t)__float2int_rn(fminf(fmaxf(res.x, -1.0f), 1.0f) * 32767.0f);
-    int16_t y = (int16_t)__float2int_rn(fminf(fmaxf(res.y, -1.0f), 1.0f) * 32767.0f);
-
-    return ((uint32_t)(uint16_t)x) | (((uint32_t)(uint16_t)y) << 16);
-}
-
-__device__ __forceinline__ uint32_t packOctFlags(float4 v, bool flag1, bool flag2)
+__device__ __forceinline__ uint32_t packOctFlags(float3 v, bool flag1, bool flag2)
 {
     // 1. Octahedral Projection
     float l1norm = fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
@@ -654,7 +622,7 @@ __device__ __forceinline__ uint32_t packOctFlags(float4 v, bool flag1, bool flag
     // Mask x and y to ensure they fit in 15 bits (0x7FFF), then shift.
     uint32_t packedX = (uint32_t)(x & 0x7FFF);
     uint32_t packedY = (uint32_t)(y & 0x7FFF);
-    
+
     // Shift flags to positions 30 and 31
     uint32_t packedF1 = (uint32_t)flag1 << 30;
     uint32_t packedF2 = (uint32_t)flag2 << 31;
@@ -665,13 +633,13 @@ __device__ __forceinline__ uint32_t packOctFlags(float4 v, bool flag1, bool flag
 /**
  * Unpacks the 3D vector and writes the flags to the provided pointers.
  */
-__device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* flag2) {
+__device__ __forceinline__ float3 unpackOctFlags(uint32_t p, bool* flag1, bool* flag2) {
     // 1. Extract Flags
     if (flag1) *flag1 = (p >> 30) & 1;
     if (flag2) *flag2 = (p >> 31) & 1;
 
     int32_t packedX = ((int32_t)(p << 17)) >> 17;
-    
+
     int32_t packedY = ((int32_t)(p << 2)) >> 17;
 
     float x = fmaxf(-1.0f, packedX / 16383.0f);
@@ -687,10 +655,10 @@ __device__ __forceinline__ float4 unpackOctFlags(uint32_t p, bool* flag1, bool* 
     v.y += (v.y >= 0.0f) ? -t : t;
 
     float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-    return make_float4(v.x * invLen, v.y * invLen, v.z * invLen, 0.0f);
+    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
 }
 
-__device__ __forceinline__ uint32_t packFloat2ToSnorm16(float2 v) 
+__device__ __forceinline__ uint32_t packFloat2ToSnorm16(float2 v)
 {
     float cx = fmaxf(-1.0f, fminf(v.x, 1.0f));
     float cy = fmaxf(-1.0f, fminf(v.y, 1.0f));
@@ -703,7 +671,7 @@ __device__ __forceinline__ uint32_t packFloat2ToSnorm16(float2 v)
     return packed;
 }
 
-inline __forceinline__ __device__ float2 unpackSnorm16ToFloat2(uint32_t packed) 
+inline __forceinline__ __device__ float2 unpackSnorm16ToFloat2(uint32_t packed)
 {
     int ix = (int)(packed << 16) >> 16;
     int iy = (int)packed >> 16;
@@ -717,7 +685,7 @@ inline __forceinline__ __device__ float2 unpackSnorm16ToFloat2(uint32_t packed)
     return make_float2(fx, fy);
 }
 
-__device__ __forceinline__ uint32_t packFloat2ToUnorm16(float2 v) 
+__device__ __forceinline__ uint32_t packFloat2ToUnorm16(float2 v)
 {
     float cx = fmaxf(0.0f, fminf(v.x, 1.0f));
     float cy = fmaxf(0.0f, fminf(v.y, 1.0f));
@@ -730,7 +698,7 @@ __device__ __forceinline__ uint32_t packFloat2ToUnorm16(float2 v)
     return packed;
 }
 
-__device__ __forceinline__ float2 unpackUnorm16ToFloat2(uint32_t packed) 
+__device__ __forceinline__ float2 unpackUnorm16ToFloat2(uint32_t packed)
 {
     uint32_t ix = packed & 0x0000FFFF;
     uint32_t iy = packed >> 16;
@@ -747,7 +715,7 @@ __device__ __forceinline__ uint32_t packRGBA8(float3 albedo, float roughness) {
     uint32_t g = __float2uint_rn(__saturatef(albedo.y) * 255.0f);
     uint32_t b = __float2uint_rn(__saturatef(albedo.z) * 255.0f);
     uint32_t a = __float2uint_rn(__saturatef(roughness) * 255.0f);
-    
+
     return (a << 24) | (b << 16) | (g << 8) | r;
 }
 
@@ -762,9 +730,9 @@ __device__ __forceinline__ uint32_t packRGB10A2(float3 albedo, uint32_t matTypeF
     uint32_t r = __float2uint_rn(__saturatef(albedo.x) * 1023.0f);
     uint32_t g = __float2uint_rn(__saturatef(albedo.y) * 1023.0f);
     uint32_t b = __float2uint_rn(__saturatef(albedo.z) * 1023.0f);
-    
-    uint32_t a = matTypeFlag & 0x3; 
-    
+
+    uint32_t a = matTypeFlag & 0x3;
+
     return (a << 30) | (b << 20) | (g << 10) | r;
 }
 
@@ -808,7 +776,7 @@ __device__ __forceinline__ inline float eta_vcm_to_mergeRadius(float eta_vcm, in
     return sqrtf(eta_vcm / (PI * numPhotonLightPath));
 }
 
-__device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 contribution, int idx)
+__device__ __forceinline__ inline void accumulateOutput(float4* colors, float3 contribution, int idx)
 {
     if (colors[idx].x < 0.0f || colors[idx].y < 0.0f || colors[idx].z < 0.0f) {
         printf("NEGATIVE NUMBER ADDED\n");
@@ -826,7 +794,7 @@ __device__ __forceinline__ inline void accumulateOutput(float4* colors, float4 c
     atomicAdd(&colors[idx].z, contribution.z);
 }
 
-__device__ __forceinline__ inline float4 fireflyClamp(float4 contribution) {
+__device__ __forceinline__ inline float3 fireflyClamp(float3 contribution) {
 #if DO_FIREFLY_CLAMP == 1
     float lum = luminance(contribution);
     if (lum > MAX_FIREFLY_LUM)
@@ -867,20 +835,20 @@ __device__ __forceinline__ int BurnCycles(int iterations) {
     return f;
 }
 
-__device__ inline float2 dirToUV(float4 dir) {
+__device__ inline float2 dirToUV(float3 dir) {
     // atan2f(Z, X) perfectly reverses the outDir generation
-    float phi = atan2f(dir.z, dir.x); 
-    
+    float phi = atan2f(dir.z, dir.x);
+
     // Wrap negative angles back around the circle
     if (phi < 0.0f) {
         phi += 2.0f * PI;
     }
-    
+
     float u = phi / (2.0f * PI);
-    
+
     // Clamp Y to prevent NaNs if dir.y floats slightly out of [-1, 1] bounds
-    float v = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y))) / PI; 
-    
+    float v = acosf(fmaxf(-1.0f, fminf(1.0f, dir.y))) / PI;
+
     return make_float2(u, v);
 }
 
@@ -888,10 +856,6 @@ __host__ __device__ __forceinline__ inline float lerp(float a, float b, float t)
     return a + (b - a) * t;
 }
 
-__device__ __forceinline__ float targetFunction(float4 contribution) {
-    return luminance(fireflyClamp(contribution));
-}
-
 __device__ __forceinline__ float targetFunction(float3 contribution) {
-    return luminance(fireflyClamp(f4(contribution)));
+    return luminance(fireflyClamp(contribution));
 }

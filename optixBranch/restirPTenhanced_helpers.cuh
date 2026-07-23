@@ -661,7 +661,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             if (depth + 1 == loopBound - 1) {
                 break;
             }
-            
+
             float lum = luminance(f4(throughput));
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
@@ -1160,6 +1160,7 @@ __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int
                             currentCoord.y - (int)roundf(__half2float(motionVec.y)));
     uint32_t current_idx = currentCoord.x + currentCoord.y * params.common.w;
     uint32_t history_idx = history_coord.x + history_coord.y * params.common.w;
+
     if (history_coord.x < 0 || history_coord.x >= params.common.w || 
         history_coord.y < 0 || history_coord.y >= params.common.h) {
         return false;

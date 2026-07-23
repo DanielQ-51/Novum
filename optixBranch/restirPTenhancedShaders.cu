@@ -683,7 +683,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         }
         
         throughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
-        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1 > pathRcVertexIndex) 
+        if (pathRcVertexIndex != FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND && depth + 1 > pathRcVertexIndex)
             suffixThroughput *= f3(f_val_bsdf) * fabsf(outgoing.z) / pdf_bsdf;
 
         toWorld(outgoing, normal, outgoing);
@@ -701,7 +701,7 @@ finalize_pixel:
     if (w_sum <= 0.0f) {
         restir.reservoir.setW(pixelIdx, 1.0f);
         restir.reservoir.setCachedJacobian(pixelIdx, -1.0f);
-        restir.reservoir.pathFlags[pixelIdx] = 0;
+        restir.reservoir.pathFlags[pixelIdx] = packPathFlags(1, 0, 0, 0);
         return;
     }
     
@@ -872,8 +872,9 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     //optixReorder(needs_bwd_shift, 1);
 
     if (needs_bwd_shift) {
+        // just for now, we want to print out everything.
         bwdResult = evaluateHybridShift<false>(
-            allParams, 
+            allParams,
             historyCoord.x, historyCoord.y, // Backward shift originates from the history pixel
             curr_seed, curr_pathLength, curr_rcVertexIndex, curr_type,
             curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance,
@@ -958,7 +959,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         if (isnan(W_final) || isinf(W_final)) W_final = 0.0f;
 
         if (curr_M == 0 || W_final == 0.0f) {
-            restir.reservoir.setPathFlags(pixelIdx, 0);
+            restir.reservoir.setPathFlags(pixelIdx, packPathFlags(1, 0, 0, 0));
             restir.reservoir.setW_noCS(pixelIdx, 0.0f);
         } else {
             curr_pathFlags = updateM(curr_pathFlags, new_M);
@@ -994,7 +995,7 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
     half2 mv = restir.gbuffer.getMV(pixelIdx); // just because this is a flag for ignoring
 
     if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF) { // check whether it was marked as ignore
-        if (isSpatialNeighborValid(allParams, make_int2(x, y), neighborCoord)) { // check primary movtion vec
+        if ((neighborCoord.x != -1) && isSpatialNeighborValid(allParams, make_int2(x, y), neighborCoord)) { // check primary movtion vec
             reorderHint = 0xFFFFFFFF;
         }
     }

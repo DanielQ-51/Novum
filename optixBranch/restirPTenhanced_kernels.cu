@@ -238,3 +238,117 @@ __global__ void extractDeltasKernel(uint32_t* finalBuf, uint32_t* indexTableSlot
 
     outputTex[y * dimension + x] = make_short2(dx, dy);
 }
+
+__global__ void resolveSpatialReuse(
+    PipelineParams params
+) {
+    const CommonParams& common = params.common;
+    const RestirCommonParams& restir = params.restir;
+
+    const Reservoir& reservoirIn = restir.reservoir;
+    const Reservoir& reservoirOut = restir.lastFrameReservoir;
+
+    const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= common.w || y >= common.h) return;
+
+    uint32_t self_M;
+    uint32_t self_pathLength;
+    uint32_t self_rcVertexIndex;
+    TechniqueType self_type;
+
+    const uint32_t selfIdx = y * common.w + x;
+    reservoirIn.getPathFlags(selfIdx, self_M, self_pathLength, self_rcVertexIndex, self_type);
+
+    const float3 self_F = reservoirIn.getF_globalLoad(selfIdx);
+    const float self_W = reservoirIn.getW_globalLoad(selfIdx);
+    const float self_phat = targetFunction(self_F);
+    const uint32_t self_seed = reservoirIn.getSeed_notstreaming(selfIdx);
+
+    uint32_t self_rcPrimID; 
+    float2 self_rcBary; 
+    float3 self_rcWi; 
+    float3 self_rcRadiance;
+    reservoirIn.getRcVertexGeometry_globalLoad(selfIdx, self_rcPrimID, self_rcBary, self_rcWi, self_rcRadiance);
+
+    float self_cachedJacobian;
+    float self_cachedNee;
+    reservoirIn.getCachedValues_globalLoad(selfIdx, self_cachedJacobian, self_cachedNee);
+
+    const uint32_t texIdx = restir.currentSpatialReuseIndex;
+    const int2 neighborCoord = get_paired_neighbor(
+        make_int2(x, y), texIdx, common.frame_index,
+        restir.reuseTextureSizes[texIdx],
+        make_int2(common.w, common.h),
+        restir.reuseTextures[texIdx]
+    );
+
+    bool neighborUsable = false;
+    float w_neighbor = 0.0f;
+    float m_canonical = 1.0f;
+
+    float3 shifted_F = f3(0.0f);
+    float  shifted_phat = 0.0f;
+    float  shifted_newCachedJacobian = 0.0f;
+
+    uint32_t nb_M = 0u, nb_pathLength = 0u, nb_rcVertexIndex = 0u;
+    TechniqueType nb_type = 0u;
+    uint32_t nb_seed = 0u;
+    uint32_t nb_rcPrimID = 0u; float2 nb_rcBary = f2(0.0f);
+    float3 nb_rcWi = f3(0.0f), nb_rcRadiance = f3(0.0f);
+    float nb_cachedNee = -1.0f;
+
+
+    bool hasPartner = false;
+    if (neighborCoord.x >= 0 && neighborCoord.y >= 0) {
+        const uint32_t partnerIdx = neighborCoord.y * common.w + neighborCoord.x;
+
+        bool fwd_valid; float3 fwd_contribution; float fwd_jacobian, fwd_newCachedJacobian;
+        restir.shiftResultBuffer.getResult(selfIdx, fwd_valid, fwd_contribution, fwd_jacobian, fwd_newCachedJacobian);
+
+        bool bwd_valid; float3 bwd_contribution; float bwd_jacobian, bwd_newCachedJacobian;
+        restir.shiftResultBuffer.getResult(partnerIdx, bwd_valid, bwd_contribution, bwd_jacobian, bwd_newCachedJacobian);
+
+        reservoirIn.getPathFlags(partnerIdx, nb_M, nb_pathLength, nb_rcVertexIndex, nb_type);
+        const float3 nb_F = reservoirIn.getF_globalLoad(partnerIdx);
+        const float  nb_W = reservoirIn.getW_globalLoad(partnerIdx);
+        const float  nb_phat = targetFunction(nb_F);
+
+        if (fwd_valid && nb_M > 0u) {
+            shifted_F = fwd_contribution;
+            shifted_phat = targetFunction(shifted_F);
+            shifted_newCachedJacobian = fwd_newCachedJacobian;
+
+            const float denom = (float)self_M * shifted_phat * fwd_jacobian + (float)nb_M * nb_phat;
+            if (denom > 0.0f) {
+                const float m_neighbor = ((float)nb_M * nb_phat) / denom;
+                w_neighbor     = m_neighbor * shifted_phat * nb_W * fwd_jacobian;
+                neighborUsable = true;
+
+                // Identity only needed if this sample ends up winning.
+                nb_seed = reservoirIn.getSeed_notstreaming(partnerIdx);
+                reservoirIn.getRcVertexGeometry_globalLoad(partnerIdx, nb_rcPrimID,
+                                                           nb_rcBary, nb_rcWi, nb_rcRadiance);
+                if (needNeePDF(nb_type)) {
+                    nb_cachedNee = reservoirIn.getCachedNEE_globalLoad(partnerIdx);
+                }
+            }
+        }
+
+        if (bwd_valid && nb_M > 0u) {
+            const float bwd_phat = targetFunction(bwd_contribution);
+            const float denom = (float)self_M * self_phat
+                              + (float)nb_M   * bwd_phat * bwd_jacobian;
+            if (denom > 0.0f) {
+                m_canonical = ((float)self_M * self_phat) / denom;
+            }
+        }
+
+        const float w_canonical = m_canonical * self_phat * self_W;
+        const float w_sum       = w_canonical + w_neighbor;
+        const uint32_t new_M    = min(self_M + (hasPartner ? nb_M : 0u), 255u);
+    }
+
+    
+}

@@ -410,8 +410,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     // Loading environment map
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+#if USE_ENV_MAP == 1
     EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_2k.exr"));
-    //EnvironmentMapManager envManager(ASSET_PATH("assets/environment/black.exr"));
+#else
+    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/black.exr"));
+#endif
     //envManager.setRotation(70.0f + (float)renderNumber);
     envManager.setRotation(130.0f);
     

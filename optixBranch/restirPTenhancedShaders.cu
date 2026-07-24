@@ -250,16 +250,17 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                         sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D : PATH_TYPE_NEE_AREA_K_EQ_D
                     );
 
+                    //neepdf = (t_max * t_max * pdf_nee) / cosLight;
+                    neepdf = pdf_nee; // must store origin measure pdf for k=d
+
                     actualRcVertexGeometry = packRcGeometry(
                         neePrimID,  // Also flags whether or not it is an environment or area light via sentinel value
                         neeBarycentrics,
                         shadingPosToLightNormalized,   // undefined for k=d, but we store the direction of the sampled dir
-                        emission    // since the light is the rc vertex, its just the emission
+                        emission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
                     );
 
                     actualCachedJacobian = 1.0f; // di case.
-                    //neepdf = (t_max * t_max * pdf_nee) / cosLight;
-                    neepdf = pdf_nee; // must store origin measure pdf for k=d
                 }
             } else {
                 rand(&localState);
@@ -337,14 +338,14 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 uint32_t rcInd;
                 if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) {
                     // k = d
+                    neepdf = pdf_sampleLight;
                     actualRcVertexGeometry = packRcGeometry(
                         0xFFFFFFFF, // flags a env hit
                         f2(0.0f),   // undefined for env hit
                         r.direction,   // undefined for k=d, but we store the direction of the sampled dir
-                        envEmission
+                        envEmission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
                     );
                     actualCachedJacobian = prevDelta ? 1.0f : lastPDF; // direction copy for that case (if not direction copy, this variable isnt neccesary)
-                    neepdf = pdf_sampleLight;
                     pathType = PATH_TYPE_BSDF_ENV_K_EQ_D;
                     rcInd = prevDelta ?
                         FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY : // direction copy is impossible if the prev vertex was full specular
@@ -354,9 +355,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     // This means the previous iteration, the previous vertex was marked as the rc vertex, thus, the rcvertexgeometry
                     // holds a rcWi that points towards this current vertex, which is correct.
 
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, envEmission); // must save raw emission
-                    actualCachedJacobian = pathCachedJacobian;
                     neepdf = pdf_sampleLight;
+                    // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
+                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, envEmission / neepdf);
+                    actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_ENV_K_EQ_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
                 } else {
@@ -487,22 +489,23 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 uint32_t rcInd;
                 if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) {
                     // k = d
+                    neepdf = sampleLightPDF; // must store area pdf for k=d
                     actualRcVertexGeometry = packRcGeometry(
                         hitData.primId,
                         hitData.barycentrics,
                         f3(0.0f),
-                        suffixThroughput * lightEmission
+                        suffixThroughput * lightEmission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
                     );
                     //actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
                     actualCachedJacobian = 1.0f; // we rely on a full replay for this
-                    neepdf = sampleLightPDF; // must store area pdf for k=d
                     pathType = PATH_TYPE_BSDF_AREA_K_EQ_D;
                     rcInd = FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY;
                 } else if (pathRcVertexIndex == depth) {
                     // k = d - 1
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, lightEmission);
-                    actualCachedJacobian = pathCachedJacobian;
                     neepdf = (hitData.t * hitData.t * sampleLightPDF) / fabsf(incomingDirLocal.z);
+                    // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
+                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, lightEmission / neepdf);
+                    actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_AREA_K_EQ_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
                 } else {
@@ -623,23 +626,23 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                         uint32_t pathType;
                         if (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) {
                             // k = d
+                            neepdf = pdf_nee; // must store original measure for k=d
                             actualRcVertexGeometry = packRcGeometry(
                                 neePrimID,
                                 neeBarycentrics,
                                 shadingPosToLightNormalized,
-                                emission // emission ONLY
+                                emission / neepdf // emission ONLY, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
                             );
                             actualCachedJacobian = 1.0f;
-                            neepdf = pdf_nee; // must store original measure for k=d
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D : PATH_TYPE_NEE_AREA_K_EQ_D;
                         } else if (pathRcVertexIndex == depth + 1) {
                             // k = d - 1
-                            //float3 rcRadiance = sampledEnv ? (emission / pdf_nee) : (emission * cosLight / (pdf_nee * t_max * t_max));
-                            float3 rcRadiance = emission;
+                            neepdf = sampledEnv ? (pdf_nee) : ((t_max * t_max * pdf_nee) / cosLight);
+                            // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
+                            float3 rcRadiance = emission / neepdf;
                             actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * rcRadiance);
                             actualRcVertexGeometry = updateRcVertexWi(actualRcVertexGeometry, shadingPosToLightNormalized);
                             actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
-                            neepdf = sampledEnv ? (pdf_nee) : ((t_max * t_max * pdf_nee) / cosLight);
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D_MINUS_1 : PATH_TYPE_NEE_AREA_K_EQ_D_MINUS_1;
                         } else {
                             // k < d - 1

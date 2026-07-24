@@ -59,6 +59,10 @@
 #define DO_SPATIAL_SHIFT 1
 #endif
 
+#ifndef USE_ENV_MAP
+#define USE_ENV_MAP 1
+#endif
+
 // Runs the reuse texture self tests once at startup and prints a report.
 // Costs a few ms, only meant to be on while debugging the pairing. At 0 the
 // validation kernels are not compiled at all.

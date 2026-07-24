@@ -33,6 +33,13 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     const CommonParams& params = allParams.common; // gets compiled out, so not taking up registers
     const RestirCommonParams& restir = allParams.restir; // gets compiled out, so not taking up registers
 
+    // k=d and k=d-1 store raw emission divided by the light pdf, so it fits in RGB9E5's range
+    // (a bright sun overflows the ~65408 ceiling and loses its magnitude entirely). Decode here.
+    // rcRadiance is by-value, so the caller's copy stays encoded for re-storage.
+    if (needNeePDF(type) && cached_nee > 0.0f) {
+        rcRadiance *= cached_nee;
+    }
+
     uint32_t reorderHint = (rcVertexIndex == FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY) ? 0u : 0xFFFFFFFF;
     optixReorder(reorderHint, 1); // ser so good
 

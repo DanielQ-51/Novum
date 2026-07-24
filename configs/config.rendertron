@@ -40,7 +40,8 @@ Meshes (path; multiplier * emission; materialID):
 assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
 assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 4
 assets/scenedata/cornellbox/bunny.obj; 0.0 * (0.0, 0.0, 0.0); 5
-assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
+.assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
+assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 2
 assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
 .assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
 assets/scenedata/cornellbox/lightMedium.obj; 25.5 * (1.0, 1.0, 1.0); 2

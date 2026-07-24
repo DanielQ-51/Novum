@@ -13,10 +13,10 @@ extern "C" {
 }
 
 extern "C" __global__ void __closesthit__gather() {
-    float2 uvs = optixGetTriangleBarycentrics();
+    //float2 uvs = optixGetTriangleBarycentrics();
 
-    optixSetPayload_0(__float_as_uint(uvs.x));
-    optixSetPayload_1(__float_as_uint(uvs.y));
+    //optixSetPayload_0(__float_as_uint(uvs.x));
+    //optixSetPayload_1(__float_as_uint(uvs.y));
 }
 
 extern "C" __global__ void __raygen__unidirectional() {

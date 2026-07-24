@@ -364,14 +364,12 @@ struct Camera
 
         float jitterX = 0.0f;
         float jitterY = 0.0f;
-        if (x == 400 && y == 250)
-            printf("before calling rand, seed is %u\n", localState.getSeed());
+
         if (antiAliasJitterDist != 0.0f) {
             jitterX = (rand(&localState) - 0.5f) * antiAliasJitterDist;
             jitterY = (rand(&localState) - 0.5f) * antiAliasJitterDist;
         }
-        if (x == 400 && y == 250)
-            printf("after calling rand, seed is %u\n", localState.getSeed());
+
         jitter.x = __float2half(jitterX);
         jitter.y = __float2half(jitterY);
 

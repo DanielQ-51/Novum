@@ -64,8 +64,8 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_minus_1_reconnectio
     );
 
     if (occluded) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon failed reconnection visibility test for k=d-1\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon failed reconnection visibility test for k=d-1\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -157,27 +157,27 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_minus_1_reconnectio
 
     // Safety Checks
     if (jacobian_numerator <= 0.0f || jacobian_denominator <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k=d-1 zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k=d-1 zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
 
     if (xkminus1_pdf <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k=d-1 xkminus1_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k=d-1 xkminus1_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
     if (rc_xk_bsdf_pdf <= 0.0f && !(is_nee(pathType))) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k=d-1 rc_xk_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k=d-1 rc_xk_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
     if (targetFunction(result.contribution) <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k=d-1 phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k=d-1 phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -238,8 +238,8 @@ __device__ __forceinline__ inline ShiftResult perform_K_less_than_D_minus_1_reco
     );
 
     if (occluded) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon failed reconnection visibility test for k<d-1\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon failed reconnection visibility test for k<d-1\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -320,27 +320,27 @@ __device__ __forceinline__ inline ShiftResult perform_K_less_than_D_minus_1_reco
 
     // Safety Checks
     if (jacobian_numerator <= 0.0f || jacobian_denominator <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k<d-1 zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k<d-1 zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
 
     if (xkminus1_pdf <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k<d-1 xkminus1_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k<d-1 xkminus1_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
     if (rc_xk_bsdf_pdf <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k<d-1 rc_xk_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k<d-1 rc_xk_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
     if (targetFunction(result.contribution) <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: internal recon k<d-1 phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon k<d-1 phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -401,8 +401,8 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_reconnection(
     );
 
     if (occluded) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon failed reconnection visibility test for k=d\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon failed reconnection visibility test for k=d\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -470,8 +470,8 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_reconnection(
     // Add safety checks at the end like the other funcions
 
     if (p_sampled_light <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon k=d p_sampled_light zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon k=d p_sampled_light zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -479,8 +479,8 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_reconnection(
     // 2. Ensure the BSDF at y_{k-1} can actually scatter towards the light.
     // Even if this is an NEE path, if the BSDF PDF is zero, the connection is physically impossible.
     if (xkminus1_bsdf_pdf <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon k=d xkminus1_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon k=d xkminus1_bsdf_pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
@@ -488,16 +488,16 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_reconnection(
     // 3. Ensure we aren't dividing by zero when calculating the Jacobian.
     // This is only applicable for the BSDF Environment hit, since the other paths hardcode jacobian = 1.0f.
     if (is_bsdf(pathType) && is_env(pathType) && jacobian_denominator <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon k=d env bsdf zero jacobian_denominator\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon k=d env bsdf zero jacobian_denominator\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }
 
     // 4. Ensure the final target function evaluates to a valid, non-zero weight.
     if (targetFunction(result.contribution) <= 0.0f) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("SHIFT ABORT [%s]: recon k=d phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("SHIFT ABORT [%s]: recon k=d phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
         }
         return {false, f3(0), 0.0f, 0.0f};
     }

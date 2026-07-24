@@ -75,6 +75,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         params.accum_buffer[pixelIdx] = f4(contribution);
 #endif
         restir.reservoir.pathFlags[pixelIdx] = 0;
+        restir.reservoir.setCachedJacobian(pixelIdx, -1.0f); // gate this out of shifts, like the empty-hit case
         restir.gbuffer.setInvalidMotionVec(pixelIdx);
         save_rng(pixelIdx, &localState, nullptr);
         return;
@@ -102,8 +103,8 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         ImplicitEmission
     );
 
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-        printf("candidate gen shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
+    if (IS_DEBUG_PIXEL(x, y)) {
+        DEBUG_PRINTF("candidate gen shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
     }
 
     float3 albedo;
@@ -400,14 +401,14 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         );
 
 
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("candidate gen shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("candidate gen shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
         }
 
 
 
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
                 (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) ?
                 f3(1.0f, 0.0f, 0.0f) :
                 f3(0.0f, 1.0f, 0.0f), 3
@@ -463,8 +464,6 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
                 // p_(x_k-1 -> x_k) * G(x_k-1 -> x_k) * P(x_k -> x_k+1)
                 pathCachedJacobian = lastPDF * pdf_bsdf * fabsf(incomingDirLocal.z) / (hitData.t * hitData.t);
-
-                restir.reservoir.rcVertexRandomSeed[pixelIdx] = localState.getSeed();
             }
         }
 
@@ -731,11 +730,11 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
 
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-        printf("Fresh candidate gen reservoir: \n");
-        printPixelData(restir.reservoir, restir.gbuffer, pixelIdx, params.frame_index);
-        printf("History reservoir: \n");
-        printPixelData(restir.lastFrameReservoir, restir.gbuffer, pixelIdx, params.frame_index);
+    if (IS_DEBUG_PIXEL(x, y)) {
+        DEBUG_PRINTF("Fresh candidate gen reservoir: \n");
+        DEBUG_PRINT_PIXEL(restir.reservoir, restir.gbuffer, pixelIdx, params.frame_index);
+        DEBUG_PRINTF("History reservoir: \n");
+        DEBUG_PRINT_PIXEL(restir.lastFrameReservoir, restir.gbuffer, pixelIdx, params.frame_index);
     }
     half2 mv = restir.gbuffer.getMV(pixelIdx);
     int2 historyCoord = make_int2(-1, -1);
@@ -806,8 +805,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
 
     uint32_t hist_seed = restir.lastFrameReservoir.getSeed_notstreaming(historyIdx);
 
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-        printf("frame %u at the start of temporal seed: %u\n", params.frame_index, hist_seed);
+    if (IS_DEBUG_PIXEL(x, y)) {
+        DEBUG_PRINTF("frame %u at the start of temporal seed: %u\n", params.frame_index, hist_seed);
     }
 
     // ==============================================================================
@@ -866,8 +865,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     bool needs_bwd_shift = (curr_M > 0) &&
                            (curr_cachedJacobianDenom != -1.0f);
 
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y && !needs_bwd_shift) {
-        printf("Backwards shift judged to not be needed.\n");
+    if (IS_DEBUG_PIXEL(x, y) && !needs_bwd_shift) {
+        DEBUG_PRINTF("Backwards shift judged to not be needed.\n");
     }
     //optixReorder(needs_bwd_shift, 1);
 
@@ -901,8 +900,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             w_tentative = mis_weight_hist * fwd_phat * hist_W * fwdResult.jacobian;
         }
     }
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y)
-        printf("forward shift resulted in a jacobian of %f\n forward shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", fwdResult.jacobian, fwdResult.contribution.x, fwdResult.contribution.y, fwdResult.contribution.z, fwdResult.new_cached_jacobian);
+    if (IS_DEBUG_PIXEL(x, y))
+        DEBUG_PRINTF("forward shift resulted in a jacobian of %f\n forward shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", fwdResult.jacobian, fwdResult.contribution.x, fwdResult.contribution.y, fwdResult.contribution.z, fwdResult.new_cached_jacobian);
 
     float bwd_phat = targetFunction(bwdResult.contribution);
     // B. Evaluate Current Path MIS (Evaluated at X_c)
@@ -914,8 +913,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         }
     }
 
-    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y && needs_bwd_shift) {
-        printf("backwards shift resulted in a jacobian of %f\n backwards shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", bwdResult.jacobian, bwdResult.contribution.x, bwdResult.contribution.y, bwdResult.contribution.z, bwdResult.new_cached_jacobian);
+    if (IS_DEBUG_PIXEL(x, y) && needs_bwd_shift) {
+        DEBUG_PRINTF("backwards shift resulted in a jacobian of %f\n backwards shfit produced an F of: <%f, %f, %f>, new Jacobian Denom: %f\n", bwdResult.jacobian, bwdResult.contribution.x, bwdResult.contribution.y, bwdResult.contribution.z, bwdResult.new_cached_jacobian);
 
     }
 
@@ -980,82 +979,64 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
 
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
+    uint32_t texIdx = launch_index.z;
     int pixelIdx = y*params.w + x;
 
-    int2 neighborCoord = get_paired_neighbor(
-        make_int2(x, y),
-        restir.currentSpatialReuseIndex,
-        params.frame_index,
-        restir.reuseTextureSizes[restir.currentSpatialReuseIndex],
+    uint32_t self_M, self_pathLength, self_rcVertexIndex;
+    TechniqueType self_type;
+    restir.reservoir.getPathFlags(pixelIdx, self_M, self_pathLength, self_rcVertexIndex, self_type);
+    const float self_cachedJacobian = restir.reservoir.getCachedJacobian_globalLoad(pixelIdx);
+
+    half2 mv = restir.gbuffer.getMV(pixelIdx);
+
+    const int2 partnerCoord = get_paired_neighbor(
+        make_int2(x, y), texIdx, params.frame_index,
+        restir.reuseTextureSizes[texIdx],
         make_int2(params.w, params.h),
-        restir.reuseTextures[restir.currentSpatialReuseIndex]
+        restir.reuseTextures[texIdx]
     );
-    uint32_t reorderHint = 0u;
 
-    half2 mv = restir.gbuffer.getMV(pixelIdx); // just because this is a flag for ignoring
+    bool selfShiftable = (self_M > 0u)
+        && (self_cachedJacobian != -1.0f)   // exclude empty candidates (M=1, cachedJac=-1, type=0)
+        && (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF)
+        && (partnerCoord.x >= 0) && (partnerCoord.y >= 0)
+        && isSpatialNeighborValid(allParams, make_int2(x, y), partnerCoord);
 
-    if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF) { // check whether it was marked as ignore
-        if ((neighborCoord.x != -1) && isSpatialNeighborValid(allParams, make_int2(x, y), neighborCoord)) { // check primary movtion vec
-            reorderHint = 0xFFFFFFFF;
-        }
-    }
-
-    // Optionally go one step beyond stream compaction, and sort by morton code
+    uint32_t reorderHint = selfShiftable ? 0xFFFFFFFFu : 0u;
 #if TEMPORAL_SER_SORT_MORTON_CODE == 1
-    uint32_t cx = neighborCoord.x >> 5;
-    uint32_t cy = neighborCoord.y >> 5;
-
-    uint32_t spatial_hint = (expandBits(cx) | (expandBits(cy) << 1)) & 0x7Fu;
-    if (reorderHint != 0u) {
-        reorderHint = spatial_hint | 0x80u;
-    }
-
+    uint32_t spatial_hint = (expandBits(partnerCoord.x >> 5) |
+                            (expandBits(partnerCoord.y >> 5) << 1)) & 0x7Fu;
+    if (reorderHint != 0u) reorderHint = spatial_hint | 0x80u;
     optixReorder(reorderHint, 8);
 #else
     optixReorder(reorderHint, 1);
 #endif
 
-    if (reorderHint == 0u) {
-        restir.shiftResultBuffer.setResult(pixelIdx, false, f3(), 0.0f, 0.0f);
-        return;
-    }
+    ShiftResult result;
 
-    uint32_t neighborIdx = neighborCoord.x + neighborCoord.y * params.w;
+    if (selfShiftable) {
+        uint32_t self_rcPrimID; float2 self_rcBary; float3 self_rcWi, self_rcRadiance;
+        restir.reservoir.getRcVertexGeometry_globalLoad(pixelIdx, self_rcPrimID, self_rcBary,
+                                                        self_rcWi, self_rcRadiance);
+        const uint32_t self_seed = restir.reservoir.getSeed_notstreaming(pixelIdx);
+        float self_cachedNee = -1.0f;
+        if (needNeePDF(self_type)) self_cachedNee = restir.reservoir.getCachedNEE_globalLoad(pixelIdx);
 
-    uint32_t neighbor_M;
-    uint32_t neighbor_pathLength;
-    uint32_t neighbor_rcVertexIndex;
-    TechniqueType neighbor_type;
-    restir.reservoir.getPathFlags(neighborIdx, neighbor_M, neighbor_pathLength, neighbor_rcVertexIndex, neighbor_type);
-
-    uint32_t neighbor_rcPrimID;
-    float2 neighbor_rcBarycentrics;
-    float3 neighbor_rcWi;
-    float3 neighbor_rcRadiance;
-
-    restir.reservoir.getRcVertexGeometry_globalLoad(neighborIdx, neighbor_rcPrimID, neighbor_rcBarycentrics, neighbor_rcWi, neighbor_rcRadiance);
-
-    float neighbor_cachedJacobianDenom = restir.reservoir.getCachedJacobian_globalLoad(neighborIdx);
-    float neighbor_cachedNeePdf = -1.0f;
-
-    if (needNeePDF(neighbor_type)) {
-        neighbor_cachedNeePdf = restir.reservoir.getCachedNEE_globalLoad(neighborIdx);
-    }
-
-    uint32_t neighbor_seed = restir.reservoir.getSeed_notstreaming(neighborIdx);
-
-    ShiftResult fwdResult;
-    if (neighbor_M > 0 && neighbor_cachedJacobianDenom != -1.0f) {
-        fwdResult = evaluateHybridShift<false>(
+        // Replay OUR path at the PARTNER's pixel: T(self -> partner).
+        result = evaluateHybridShift<false>(
             allParams,
-            x, y,
-            neighbor_seed, neighbor_pathLength, neighbor_rcVertexIndex, neighbor_type,
-            neighbor_rcPrimID, neighbor_rcBarycentrics, neighbor_rcWi, neighbor_rcRadiance,
-            neighbor_cachedNeePdf, neighbor_cachedJacobianDenom
+            partnerCoord.x, partnerCoord.y,
+            self_seed, self_pathLength, self_rcVertexIndex, self_type,
+            self_rcPrimID, self_rcBary, self_rcWi, self_rcRadiance,
+            self_cachedNee, self_cachedJacobian
         );
-    } else {
-        fwdResult = {false, f3(0), 0.0f, 0.0f};
     }
 
-    restir.shiftResultBuffer.setResult(pixelIdx, fwdResult.isValid, fwdResult.contribution, fwdResult.jacobian, fwdResult.new_cached_jacobian);
+    restir.shiftResultBuffer[texIdx].setResult(
+        pixelIdx, 
+        result.isValid, 
+        result.contribution, 
+        result.jacobian, 
+        result.new_cached_jacobian
+    );
 }

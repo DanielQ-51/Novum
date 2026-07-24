@@ -34,9 +34,13 @@ __host__ void launch_restir (
     short2* reuseTexture2 = allocateReuseTexture(230, 16);
     short2* reuseTexture3 = allocateReuseTexture(210, 16);
 
-    ShiftResultBuffer shiftResultBuffer;
+    ShiftResultBuffer shiftResultBuffer1;
+    ShiftResultBuffer shiftResultBuffer2;
+    ShiftResultBuffer shiftResultBuffer3;
     
-    void* sr_bufferMemory = allocateShiftResultBuffer(shiftResultBuffer, commonParams.w * commonParams.h);
+    void* sr_bufferMemory_1 = allocateShiftResultBuffer(shiftResultBuffer1, commonParams.w * commonParams.h);
+    void* sr_bufferMemory_2 = allocateShiftResultBuffer(shiftResultBuffer2, commonParams.w * commonParams.h);
+    void* sr_bufferMemory_3 = allocateShiftResultBuffer(shiftResultBuffer3, commonParams.w * commonParams.h);
     
 
     PipelineParams allParams = {};
@@ -53,9 +57,22 @@ __host__ void launch_restir (
     restirParams.reuseTextureSizes[0] = 254;
     restirParams.reuseTextureSizes[1] = 230;
     restirParams.reuseTextureSizes[2] = 210;
-    restirParams.shiftResultBuffer = shiftResultBuffer;
+    restirParams.shiftResultBuffer[0] = shiftResultBuffer1;
+    restirParams.shiftResultBuffer[1] = shiftResultBuffer2;
+    restirParams.shiftResultBuffer[2] = shiftResultBuffer3;
 
     allParams.restir = restirParams;
+
+#if VALIDATE_REUSE_TEXTURES == 1
+    validateReuseTextures(
+        restirParams.reuseTextures,
+        restirParams.reuseTextureSizes,
+        NUM_REUSE_TEXTURES,
+        commonParams.w, commonParams.h,
+        8,   // frames to sweep (covers all transpose/flip combinations)
+        16   // n_sigma passed to allocateReuseTexture above
+    );
+#endif
 
     CUdeviceptr d_params;
     cudaMalloc(reinterpret_cast<void**>(&d_params), sizeof(PipelineParams));
@@ -152,8 +169,29 @@ __host__ void launch_restir (
                 1                       // Launch Z
             );
         }
-        
 
+#if DO_SPATIAL_SHIFT == 1 
+{
+        optixLaunch(
+            engineState.pipeline,
+            stream,
+            d_params,
+            sizeof(PipelineParams), 
+            &engineState.sbt_restirSpatial,                  
+            commonParams.w,                   // Launch X
+            commonParams.h,                   // Launch Y
+            NUM_REUSE_TEXTURES                       // Launch Z
+        );
+
+        resolveSpatialReuse<<<gridSize, blockSize, 0, stream>>>(
+            allParams
+        );
+
+        Reservoir temp = allParams.restir.lastFrameReservoir;
+        allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
+        allParams.restir.reservoir = temp;
+}
+#endif
         displayWinningReservoirs<<<gridSize, blockSize, 0, stream>>>(allParams);
         
 #if SAVE_SEQUENCE == 1
@@ -198,14 +236,17 @@ __host__ void launch_restir (
         allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
         allParams.restir.reservoir = temp;
 
+        #if DEBUG_MODE == 1
         // These are temporary, ideally we do not have these. These are just safety checks for correctness checking
         cudaMemsetAsync(allParams.restir.reservoir.F, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.W, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.initRandomSeed, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.pathFlags, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.rcVertexGeometry, 0, commonParams.w * commonParams.h * sizeof(float4), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.rcVertexCachedValues, 0, commonParams.w * commonParams.h * sizeof(float2), stream);
-
+        cudaMemsetAsync(allParams.restir.reservoir.cachedJacobian, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.cachedNeePdf, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        #endif
+        
         GBuffer tempGB = allParams.restir.prevGbuffer;
         allParams.restir.prevGbuffer = allParams.restir.gbuffer;
         allParams.restir.gbuffer = tempGB;
@@ -237,7 +278,9 @@ __host__ void launch_restir (
     cudaFree(reuseTexture1);
     cudaFree(reuseTexture2);
     cudaFree(reuseTexture3);
-    cudaFree(sr_bufferMemory);
+    cudaFree(sr_bufferMemory_1);
+    cudaFree(sr_bufferMemory_2);
+    cudaFree(sr_bufferMemory_3);
 }
 
 

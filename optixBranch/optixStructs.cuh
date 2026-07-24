@@ -63,8 +63,7 @@ struct RestirCommonParams {
     uint8_t* __restrict__ duplication_map;
     short2* reuseTextures[NUM_REUSE_TEXTURES]; 
     uint32_t reuseTextureSizes[NUM_REUSE_TEXTURES]; 
-    uint32_t currentSpatialReuseIndex; // The current index of the reuse textures
-    ShiftResultBuffer shiftResultBuffer;
+    ShiftResultBuffer shiftResultBuffer[NUM_REUSE_TEXTURES];
 };
 
 struct CandidateGenParams {

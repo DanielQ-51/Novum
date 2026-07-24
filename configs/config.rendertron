@@ -4,7 +4,7 @@ width: 800
 height: 800
 
 Integrator: UNIDIRFAST
-Sample Count: 250
+Sample Count: 30
 Post Process: true
 
 Unidirectional Max Depth: 10

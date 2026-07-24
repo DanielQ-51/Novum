@@ -1103,7 +1103,7 @@ void printNvdbMetadata(const std::string& filePath) {
 int main ()
 {
     printNvdbMetadata(ASSET_PATH("assets/vdb/nvdb/industrial/smoke_0000.nvdb"));
-    string configName = ASSET_PATH("configs/volumeTest.rendertron");
+    string configName = ASSET_PATH("configs/config.rendertron");
 
     initRender(configName, 0); 
     //return;

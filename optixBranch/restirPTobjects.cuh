@@ -4,6 +4,7 @@
 #include "sceneContexts.cuh"
 #include "objects.cuh"
 #include "util.cuh"
+#include "settings.cuh"
 
 /*
 enum TechniqueType{
@@ -14,7 +15,7 @@ enum TechniqueType{
 using TechniqueType = uint32_t;
 
 #ifndef RESERVOIR_SIZE
-#define RESERVOIR_SIZE 44
+#define RESERVOIR_SIZE 40
 #endif
 
 #ifndef GBUFFER_SIZE
@@ -137,13 +138,8 @@ struct Reservoir {
      */
     uint4* __restrict__ rcVertexGeometry;
 
-    /**
-     *  x: cached jacobian terms
-     *  y: nee light pdf
-     */
-    float2* __restrict__ rcVertexCachedValues;
-
-    uint32_t* __restrict__ rcVertexRandomSeed;
+    float* __restrict__ cachedJacobian;
+    float* __restrict__ cachedNeePdf;
 
     __device__ __forceinline__ float3 getF_globalLoad(uint32_t idx) const {
         return fromRGB9E5(__ldg(&(F[idx])));
@@ -154,21 +150,20 @@ struct Reservoir {
     }
 
     __device__ __forceinline__ float getCachedJacobian_globalLoad(uint32_t idx) const {
-        return __ldg(&(rcVertexCachedValues[idx].x));
+        return __ldg(&(cachedJacobian[idx]));
     }
 
     __device__ __forceinline__ float setCachedJacobian(uint32_t idx, float val) const {
-        return rcVertexCachedValues[idx].x = val;
+        return cachedJacobian[idx] = val;
     }
 
     __device__ __forceinline__ float getCachedNEE_globalLoad(uint32_t idx) const {
-        return __ldg(&(rcVertexCachedValues[idx].y));
+        return __ldg(&(cachedNeePdf[idx]));
     }
 
     __device__ __forceinline__ void getCachedValues_globalLoad(uint32_t idx, float& jacobian, float& neePDF) const {
-        float2 cached = __ldg(&(rcVertexCachedValues[idx]));
-        jacobian = cached.x;
-        neePDF = cached.y;
+        jacobian = __ldg(&(cachedJacobian[idx]));
+        neePDF = __ldg(&(cachedNeePdf[idx]));
     }
 
     __device__ __forceinline__ void getRcVertexGeometry_globalLoad(uint32_t idx, uint32_t& primID, float2& bary, float3& wi, float3& radiance) const {
@@ -230,7 +225,8 @@ struct Reservoir {
         F[idx] = inF;
         pathFlags[idx] = inPathFlags;
         rcVertexGeometry[idx] = inRcVertexGeometry;
-        rcVertexCachedValues[idx] = f2(inRcVertexJacobian, inNeePDF);
+        cachedJacobian[idx] = inRcVertexJacobian;
+        cachedNeePdf[idx] = inNeePDF;
     }
 
     __device__ __forceinline__ void saveReservoirAll(
@@ -254,7 +250,8 @@ struct Reservoir {
         initRandomSeed[idx] = seed;
         pathFlags[idx] = packPathFlags(M, pathLength, rcVertexIndex, type);
         rcVertexGeometry[idx] = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcRadiance);
-        rcVertexCachedValues[idx] = f2(inRcVertexJacobian, inNeePDF);
+        cachedJacobian[idx] = inRcVertexJacobian;
+        cachedNeePdf[idx] = inNeePDF;
     }
 };
 
@@ -271,8 +268,8 @@ __host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
     r.initRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.pathFlags = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.rcVertexGeometry = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
-    r.rcVertexCachedValues = reinterpret_cast<float2*>(ptr); ptr += numPixel * sizeof(float2);
-    r.rcVertexRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    r.cachedJacobian = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
+    r.cachedNeePdf = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
 
     return raw;
 }
@@ -393,6 +390,9 @@ __host__ inline void* allocateGBuffer(GBuffer& r, uint32_t numPixel) {
     return raw;
 }
 
+// Roughly 30 format strings live in this one function. Compiled out entirely at
+// DEBUG_MODE 0; call it through DEBUG_PRINT_PIXEL rather than directly.
+#if DEBUG_MODE == 1
 __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint32_t pixelIdx, uint32_t frame) {
     // ==========================================
     // 1. UNPACK RESERVOIR DATA
@@ -418,9 +418,8 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     float3 rcRadiance = fromRGB9E5(geom.w);
 
     // Unpack Cached Values
-    float2 cached = r.rcVertexCachedValues[pixelIdx];
-    float jacobian = cached.x;
-    float neePDF = cached.y;
+    float jacobian = r.cachedJacobian[pixelIdx];
+    float neePDF = r.cachedNeePdf[pixelIdx];
 
     // ==========================================
     // 2. UNPACK GBUFFER DATA
@@ -475,6 +474,7 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     printf("  Motion Vector      : (%.3f, %.3f)\n", mv.x, mv.y);
     printf("==================================================\n\n");
 }
+#endif // DEBUG_MODE == 1
 
 struct ShiftResult {
     bool isValid;               // True if visibility, footprint, and pdfs pass

@@ -46,8 +46,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     }
 
     if constexpr (!isReverseShift) {
-        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-            printf("frame %u using rng with state: %u for temporal reuse, replaying from %u, %u, with initial camera ray o(%f, %f, %f), d(%f, %f, %f)\n", params.frame_index, seed, x, y, r.origin.x, r.origin.y, r.origin.z, r.direction.x, r.direction.y, r.direction.z);
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("frame %u using rng with state: %u for temporal reuse, replaying from %u, %u, with initial camera ray o(%f, %f, %f), d(%f, %f, %f)\n", params.frame_index, seed, x, y, r.origin.x, r.origin.y, r.origin.z, r.direction.x, r.direction.y, r.direction.z);
         }
     }
 
@@ -73,8 +73,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: primary ray miss for full replay\n", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: primary ray miss for full replay\n", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
         }
@@ -101,8 +101,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             ImplicitEmission
         );
         if constexpr (!isReverseShift) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("replaying shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("replaying shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
             }
         }
 
@@ -151,8 +151,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (pdf_bsdf < EPSILON && !K_is_D(type) && (pathLength != 2))
         {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: full replay scattering pdf zero for primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: full replay scattering pdf zero for primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
         }
@@ -161,8 +161,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float p = clamp(lum, 0.05f, 1.0f);
         float rr_roll = rand(&localState);
         if (rr_roll > p) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f};
         }
@@ -185,8 +185,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: full replay secondary ray missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: full replay secondary ray missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
             }
@@ -214,11 +214,11 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             );
 
             if constexpr (!isReverseShift) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
                         f3(0.0f, 1.0f, 1.0f), 3
                     );
-                    printf("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
+                    DEBUG_PRINTF("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
                 }
             }
 
@@ -271,8 +271,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
 
             if (!isValid) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: full replay failed reciprocality on dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: full replay failed reciprocality on dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -289,8 +289,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: FULL REPLAY RR failed", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -298,8 +298,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             if (pdf_bsdf < EPSILON && !K_is_D(type) && (pathLength != depth + 2))
             {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: full replay scattering pdf zero for secondary bounce\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: full replay scattering pdf zero for secondary bounce\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -320,8 +320,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (is_env(type)) {
             if (hitData.isHit) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: last full replay hit scene when it should hit env\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: last full replay hit scene when it should hit env\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -345,15 +345,15 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             return result;
         } else {
             if (!hitData.isHit) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: last full replay hit env when it should hit scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: last full replay hit env when it should hit scene\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
         }
 
         if (!is_bsdf(type)) {
-            printf("Error: full replay for bsdf has wrongly packed type or wrongly chosen rcvertexindex flag\n");
+            DEBUG_PRINTF("Error: full replay for bsdf has wrongly packed type or wrongly chosen rcvertexindex flag\n");
             return {false, f3(0), 0.0f, 0.0f};
         }
 
@@ -383,11 +383,11 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         toLocal(r.direction, normal, incomingDirLocal);
 
         if constexpr (!isReverseShift) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
                     f3(0.0f, 1.0f, 1.0f), 3
                 );
-                printf("replaying shading pos depth %u: %f, %f, %f\n", pathLength-1, shadingPos.x, shadingPos.y, shadingPos.z);
+                DEBUG_PRINTF("replaying shading pos depth %u: %f, %f, %f\n", pathLength-1, shadingPos.x, shadingPos.y, shadingPos.z);
             }
         }
 
@@ -410,8 +410,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             return result;
 
         } else {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: full replay ended on non emissive surface\n", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: full replay ended on non emissive surface\n", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f};
         }
@@ -436,8 +436,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: recon missed scene on primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: recon missed scene on primary hit\n", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
         }
@@ -464,8 +464,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             ImplicitEmission
         );
         if constexpr (!isReverseShift) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("replaying shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("replaying shading pos depth 0: %f, %f, %f\n", shadingPos.x, shadingPos.y, shadingPos.z);
             }
         }
 
@@ -518,8 +518,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             if (pdf_bsdf < EPSILON)
             {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon primary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon primary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f}; // something went wrong, cant finish temporal shift
             }
@@ -528,8 +528,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -558,8 +558,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon secondary hit missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon secondary hit missed scene\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f}; // Something went wrong, and the shift cannot be completed
             }
@@ -587,11 +587,11 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             );
             if constexpr (!isReverseShift) {
 
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    drawLine(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
                         f3(0.0f, 1.0f, 1.0f), 3
                     );
-                    printf("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
+                    DEBUG_PRINTF("replaying shading pos depth %u: %f, %f, %f\n", depth, shadingPos.x, shadingPos.y, shadingPos.z);
                 }
             }
 
@@ -644,8 +644,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             }
             //optixReorder(isValid ? 1 : 0, 1);
             if (!isValid) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon failed dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon failed dual footprint\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -666,8 +666,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float p = clamp(lum, 0.05f, 1.0f);
             float rr_roll = rand(&localState);
             if (rr_roll > p) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon RR failed", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -679,8 +679,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             if (pdf_bsdf < EPSILON)
             {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon secondary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon secondary hit scattering pdf zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -705,8 +705,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (rcPrimID != 0xFFFFFFFF) {
             if (rcPrimID >= params.shadeContext.triNum) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -816,7 +816,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 jacobianDenom
             );
         } else {
-            printf("Alert: invalid path type with respect to k vs d\n");
+            DEBUG_PRINTF("Alert: invalid path type with respect to k vs d\n");
             return {false, f3(0), 0.0f, 0.0f};
         }
     }
@@ -831,8 +831,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         if (rcPrimID != 0xFFFFFFFF) {
             if (rcPrimID >= params.shadeContext.triNum) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: recon wrongly initialized rcPrimID\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -883,8 +883,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         }
 
         if constexpr (!isReverseShift) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                drawLine(params.overlay_buffer, params.camera, lastPos, lastPos + (visibility_dir * visibility_dist),
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPos, lastPos + (visibility_dir * visibility_dist),
                     f3(0.7f, 0.0f, 1.0f), 3
                 );
             }
@@ -907,8 +907,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         result.p_hat = -1.0f;
 
         if (occluded) {
-            if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                printf("SHIFT ABORT [%s]: recon failed reconnection visibility test\n", isReverseShift ? "REVERSE" : "FORWARD");
+            if (IS_DEBUG_PIXEL(x, y)) {
+                DEBUG_PRINTF("SHIFT ABORT [%s]: recon failed reconnection visibility test\n", isReverseShift ? "REVERSE" : "FORWARD");
             }
             return {false, f3(0), 0.0f, 0.0f};
         } else if (is_internal_rc_vertex(type)) {
@@ -967,8 +967,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             new_cached_jacobian = p_new_suffix;
 
             if (p_new_suffix <= 0.0f || jacobianDenom <= 0.0f) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: internal recon zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon zero p_new_suffix or jacobianDenom\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -976,14 +976,14 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float jacobian = p_new_suffix / jacobianDenom;
 
             if (pdf_1 <= 0.0f) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: internal recon pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
             if (pdf_2 <= 0.0f && !(K_is_D_minus_1(type) && is_nee(type))) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: internal recon pdf_2 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon pdf_2 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -1026,8 +1026,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             result.jacobian = jacobian;
             result.new_cached_jacobian = new_cached_jacobian;
             if (result.p_hat <= 0.0f) {
-                if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                    printf("SHIFT ABORT [%s]: internal recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                if (IS_DEBUG_PIXEL(x, y)) {
+                    DEBUG_PRINTF("SHIFT ABORT [%s]: internal recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                 }
                 return {false, f3(0), 0.0f, 0.0f};
             }
@@ -1059,8 +1059,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
                 float p_sampled = (is_nee(type)) ? cached_nee : pdf_1;
                 if (p_sampled <= 0.0f || (!is_nee(type) && pdf_1 <= 0.0f)) {
-                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                        printf("SHIFT ABORT [%s]: k=d env recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    if (IS_DEBUG_PIXEL(x, y)) {
+                        DEBUG_PRINTF("SHIFT ABORT [%s]: k=d env recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                     }
                     return {false, f3(0), 0.0f, 0.0f};
                 }
@@ -1071,8 +1071,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 if (is_bsdf(type)) { // Direction copy
                     // jacobianDenom should just be a single pdf for direction copy
                     if (jacobianDenom <= 0.0f || pdf_1 <= 0.0f) {
-                        if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                            printf("SHIFT ABORT [%s]: k=d env bsdf recon jacobian or pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                        if (IS_DEBUG_PIXEL(x, y)) {
+                            DEBUG_PRINTF("SHIFT ABORT [%s]: k=d env bsdf recon jacobian or pdf_1 zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                         }
                         return {false, f3(0), 0.0f, 0.0f};
                     }
@@ -1088,8 +1088,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 result.p_hat = targetFunction(result.contribution);
 
                 if (result.p_hat <= 0.0f) {
-                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                        printf("SHIFT ABORT [%s]: k=d env recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    if (IS_DEBUG_PIXEL(x, y)) {
+                        DEBUG_PRINTF("SHIFT ABORT [%s]: k=d env recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                     }
                     return {false, f3(0), 0.0f, 0.0f};
                 }
@@ -1122,8 +1122,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
                 float p_sampled = converted_cached_nee;
                 if (p_sampled <= 0.0f) {
-                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                        printf("SHIFT ABORT [%s]: k=d nee recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    if (IS_DEBUG_PIXEL(x, y)) {
+                        DEBUG_PRINTF("SHIFT ABORT [%s]: k=d nee recon p_sampled zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                     }
                     return {false, f3(0), 0.0f, 0.0f};
                 }
@@ -1138,8 +1138,8 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 result.p_hat = targetFunction(result.contribution);
 
                 if (result.p_hat <= 0.0f) {
-                    if (x == DEBUG_TEST_PIXEL_X && y == DEBUG_TEST_PIXEL_Y) {
-                        printf("SHIFT ABORT [%s]: k=d nee recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
+                    if (IS_DEBUG_PIXEL(x, y)) {
+                        DEBUG_PRINTF("SHIFT ABORT [%s]: k=d nee recon phat zero\n", isReverseShift ? "REVERSE" : "FORWARD");
                     }
                     return {false, f3(0), 0.0f, 0.0f};
                 }
@@ -1323,12 +1323,16 @@ __device__ int2 get_paired_neighbor(
     short2 raw_short_delta = pairing_buffer[flat_index];
     int2 final_delta = make_int2(raw_short_delta.x, raw_short_delta.y);
 
-    // Apply inverse transformations to the delta
-    if (transpose) {
-        final_delta = make_int2(final_delta.y, final_delta.x);
-    }
+    // Apply inverse transformations to the delta. The forward map above is
+    // transpose then flip, whose linear part is a 90 degree rotation, so the
+    // inverse has to undo them in the opposite order: flip first, then transpose.
+    // Doing it the other way round applies the rotation a second time instead of
+    // cancelling it, and the pairing stops being self inverting.
     if (flip_x) {
         final_delta.x = -final_delta.x;
+    }
+    if (transpose) {
+        final_delta = make_int2(final_delta.y, final_delta.x);
     }
 
     // Apply the delta to get the actual neighbor pixel coordinate

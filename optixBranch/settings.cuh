@@ -1,15 +1,10 @@
 #pragma once
 
+#ifndef USE_RESTIR_PT
+#define USE_RESTIR_PT 1
+#endif
+
 // Master switch for device side debug instrumentation.
-//
-// At 0, every debug printf, its format string, the overlay drawLine calls and
-// the per pixel test that guards them are removed by the preprocessor. This
-// matters more than it looks: the format strings live in the constant bank and
-// each printf lowers to a vprintf call plus an argument buffer built on the
-// local stack, so leaving them in costs constant memory, instruction cache and
-// registers even on pixels that never print. Relying on the optimizer to drop
-// them is not enough, since Debug builds compile with -O0 -G.
-//
 // Host side prints (timings, memory usage) are deliberately not gated.
 #ifndef DEBUG_MODE
 #define DEBUG_MODE 1
@@ -17,6 +12,10 @@
 
 #ifndef SAVE_SEQUENCE
 #define SAVE_SEQUENCE 1
+#endif
+
+#ifndef SAVE_FOR_VIDEO
+#define SAVE_FOR_VIDEO 1
 #endif
 
 #ifndef ACCUMULATE_FRAMES
@@ -32,7 +31,7 @@
 #endif
 
 #ifndef CAMERA_MOVES
-#define CAMERA_MOVES 0
+#define CAMERA_MOVES 1
 #endif
 
 #ifndef LERP_MCAP
@@ -44,11 +43,11 @@
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_X
-#define DEBUG_TEST_PIXEL_X 365
+#define DEBUG_TEST_PIXEL_X 117
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_Y
-#define DEBUG_TEST_PIXEL_Y (800 - 200)
+#define DEBUG_TEST_PIXEL_Y (1400 - 830)
 #endif
 
 #ifndef NUM_REUSE_TEXTURES
@@ -56,18 +55,26 @@
 #endif
 
 #ifndef DO_SPATIAL_SHIFT
-#define DO_SPATIAL_SHIFT 1
+#define DO_SPATIAL_SHIFT 0
 #endif
 
 #ifndef USE_ENV_MAP
 #define USE_ENV_MAP 1
 #endif
 
+#ifndef TEMPORAL_USE_DUAL_MV
+#define TEMPORAL_USE_DUAL_MV 1
+#endif
+
+#ifndef TEMPORAL_SER_SORT_MORTON_CODE
+#define TEMPORAL_SER_SORT_MORTON_CODE 0
+#endif
+
 // Runs the reuse texture self tests once at startup and prints a report.
 // Costs a few ms, only meant to be on while debugging the pairing. At 0 the
 // validation kernels are not compiled at all.
 #ifndef VALIDATE_REUSE_TEXTURES
-#define VALIDATE_REUSE_TEXTURES 1
+#define VALIDATE_REUSE_TEXTURES 0
 #endif
 
 // ---------------------------------------------------------------------------
@@ -88,4 +95,16 @@
     #define DEBUG_PRINTF(...)       ((void)0)
     #define DEBUG_DRAWLINE(...)     ((void)0)
     #define DEBUG_PRINT_PIXEL(...)  ((void)0)
+#endif
+
+#ifndef NORMAL_REJECTION_THRESHOLD
+#define NORMAL_REJECTION_THRESHOLD 0.98f
+#endif
+
+#ifndef PLANAR_DIST_REJECTION_THRESHOLD
+#define PLANAR_DIST_REJECTION_THRESHOLD 0.005f
+#endif
+
+#ifndef TRUE_DIST_REJECTION_THRESHOLD
+#define TRUE_DIST_REJECTION_THRESHOLD 30.0f
 #endif

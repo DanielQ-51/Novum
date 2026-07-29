@@ -87,9 +87,9 @@ __host__ void launch_restir (
 #if CAMERA_MOVES == 0 
     TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.0f, 90.0f, 0.0f);
 #else
-    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
+    //TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
 #endif
-    //LinearCameraAnimation animation = LinearCameraAnimation(f3(commonParams.camera.cameraOrigin), f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.005f, 0.0f, 0.0f) ,f3());
+    LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.01f, 0.0f, 0.0f) ,f3());
     animation.update(allParams.common.camera, 0);
 
     dim3 blockSize(32, 8);  
@@ -191,8 +191,13 @@ __host__ void launch_restir (
         allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
         allParams.restir.reservoir = temp;
 }
-#endif
+#else
+        // Spatial disabled -> the resolve (and its shading section) never runs,
+        // so fall back to the standalone display kernel. Note this path still
+        // shades with F*W, so it retains the color noise the vector-weight
+        // shading in resolveSpatialReuse is there to fix.
         displayWinningReservoirs<<<gridSize, blockSize, 0, stream>>>(allParams);
+#endif
         
 #if SAVE_SEQUENCE == 1
 
@@ -217,12 +222,13 @@ __host__ void launch_restir (
         }
         std::stringstream ss;
         
-        
-#if DEBUG_VISUALIZE_TYPE == 1
+#if SAVE_FOR_VIDEO == 1
+    #if DEBUG_VISUALIZE_TYPE == 1
         ss << "renders/restirDebug/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
-#elif DEBUG_VISUALIZE_TYPE == 0
-        ss << "renders/restir/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
-#endif  
+    #elif DEBUG_VISUALIZE_TYPE == 0
+        ss << "renders/restir/teapotver/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
+    #endif  
+#endif
 
         std::string filename = ASSET_PATH(ss.str());
         
@@ -235,17 +241,6 @@ __host__ void launch_restir (
         Reservoir temp = allParams.restir.lastFrameReservoir;
         allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
         allParams.restir.reservoir = temp;
-
-        #if DEBUG_MODE == 1
-        // These are temporary, ideally we do not have these. These are just safety checks for correctness checking
-        cudaMemsetAsync(allParams.restir.reservoir.F, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.W, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.initRandomSeed, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.pathFlags, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.rcVertexGeometry, 0, commonParams.w * commonParams.h * sizeof(float4), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.cachedJacobian, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        cudaMemsetAsync(allParams.restir.reservoir.cachedNeePdf, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-        #endif
         
         GBuffer tempGB = allParams.restir.prevGbuffer;
         allParams.restir.prevGbuffer = allParams.restir.gbuffer;
@@ -253,6 +248,18 @@ __host__ void launch_restir (
 
         allParams.restir.lastFrameCamera = allParams.common.camera;
         animation.update(allParams.common.camera, frame + 1);
+
+        cudaMemsetAsync(allParams.restir.reservoir.F, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.W, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.initRandomSeed, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.pathFlags, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.rcVertexGeometry, 0, commonParams.w * commonParams.h * sizeof(float4), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.rcVertexRadiance, 0, commonParams.w * commonParams.h * sizeof(uint32_t), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.cachedJacobian, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+        cudaMemsetAsync(allParams.restir.reservoir.cachedNeePdf, 0, commonParams.w * commonParams.h * sizeof(float), stream);
+
+
+
         cudaStreamSynchronize(stream);
     }
 

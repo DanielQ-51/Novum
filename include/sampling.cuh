@@ -14,11 +14,15 @@ enum LightType {
     LIGHT_ENV = 1
 };
 
-struct __align__(16) LightDescriptor {
-    int type; // 0 for mesh
-    int startInd; // start index in the respective array
-    int numPrim; // number of primitives in this light
-    float totalPower; // total power of this light
+// Defaults matter: instanceID indexes ShadeContext::transformationMatrices on the
+// device, so a descriptor that leaves it unset reads far out of bounds. Instance 0
+// is the identity instance, which is the correct fallback for untransformed geometry.
+struct LightDescriptor {
+    int type = 0; // 0 for mesh
+    int startInd = 0; // start index in the respective array
+    int numPrim = 0; // number of primitives in this light
+    float totalPower = 0.0f; // total power of this light
+    uint32_t instanceID = 0;
 };
 
 struct LightSampler {
@@ -66,168 +70,6 @@ struct LightSampler {
 
         // Adjusted to use envMap.totalPower and scale by the envWeight
         return envWeight * (lum * numPixels) / (two_pi_sq * envMap.totalPower);
-    }
-
-    __device__ inline bool sample(
-        float rand_macro,
-        float4 rand_micro,
-        float3 probePos,
-        const Vertices* verts,
-        float3& output,
-        float3& outDir,
-        float3& lightNorm,
-        float& t_max,
-        float& pdf
-    ) const {
-
-        // 1. Categorical Selection
-        if (rand_macro < envWeight) {
-            // --- Sample Environment Map ---
-            float microPDF;
-            t_max = 1E30;
-
-            envMap.sample(rand_micro, outDir, output, microPDF);
-            pdf = microPDF * envWeight;
-            return 1;
-
-        } else {
-            // --- Sample Mesh Light ---
-            if (numLights == 0) {
-                pdf = 0.0f;
-                return 0; // Edge case: branched to mesh but none exist
-            }
-
-            // Remap rand_macro to [0, 1) to search the mesh-only CDF
-            float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
-
-            int index = binarySearchCDF(topLevelCDF, numLights, mapped_rand);
-            LightDescriptor light = lights[index];
-
-            // PDF of choosing this specific mesh light given we chose the mesh category
-
-            int lightTriInd = light.startInd +
-                binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
-
-            float3 pos;
-            float area;
-            {
-                Triangle l = triLights[lightTriInd];
-
-                output = f3(l.emission);
-
-                float3 apos = f3(__ldg(&verts->positions[l.aInd]));
-                float3 bpos = f3(__ldg(&verts->positions[l.bInd]));
-                float3 cpos = f3(__ldg(&verts->positions[l.cInd]));
-
-                float u = sqrtf(rand_micro.y);
-                float v = rand_micro.z;
-
-                pos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
-                area = 0.5f * length(cross(bpos-apos, cpos-apos));
-
-                float3 anorm = f3(__ldg(&verts->normals[l.naInd]));
-                float3 bnorm = f3(__ldg(&verts->normals[l.nbInd]));
-                float3 cnorm = f3(__ldg(&verts->normals[l.ncInd]));
-
-                lightNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
-            }
-
-            float pdf_chooseLight = (1.0f - envWeight) * (light.totalPower / totalMeshPower);
-
-            float triPdf = (area * luminance(output) * PI) / light.totalPower;
-            pdf = pdf_chooseLight * triPdf * (1.0f / area);
-
-            outDir = normalize(pos - probePos);
-
-            t_max = length(pos-probePos);
-            return 0;
-        }
-    }
-
-    /**
-     * Specialized helper for when the ReSTIR algorithm evalutes DI contributions, returns the reconnection data
-     */
-    __device__ inline bool sample_ReSTIR_rc_data(
-        float rand_macro,
-        float4 rand_micro,
-        float3 probePos,
-        const Vertices* verts,
-        float3& output,
-        float3& outDir,
-        float3& lightNorm,
-        float& t_max,
-        float& pdf,
-        uint32_t& primID,
-        float2& barycentrics
-    ) const {
-        // 1. Categorical Selection
-        if (rand_macro < envWeight) {
-            // --- Sample Environment Map ---
-            float microPDF;
-            t_max = 1E30;
-
-            envMap.sample(rand_micro, outDir, output, microPDF);
-            pdf = microPDF * envWeight;
-            primID = 0xFFFFFFFF;
-            return 1;
-
-        } else {
-            // --- Sample Mesh Light ---
-            if (numLights == 0) {
-                pdf = 0.0f;
-                return 0; // Edge case: branched to mesh but none exist
-            }
-
-            // Remap rand_macro to [0, 1) to search the mesh-only CDF
-            float mapped_rand = (rand_macro - envWeight) / (1.0f - envWeight);
-
-            int index = binarySearchCDF(topLevelCDF, numLights, mapped_rand);
-            LightDescriptor light = lights[index];
-
-            // PDF of choosing this specific mesh light given we chose the mesh category
-
-            int lightTriInd = light.startInd +
-                binarySearchCDF(bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
-
-            float3 pos;
-            float area;
-            {
-                const Triangle& l = triLights[lightTriInd];
-                primID = l.triInd;
-                output = f3(l.emission);
-
-                float3 apos = f3(__ldg(&verts->positions[l.aInd]));
-                float3 bpos = f3(__ldg(&verts->positions[l.bInd]));
-                float3 cpos = f3(__ldg(&verts->positions[l.cInd]));
-
-                float u = sqrtf(rand_micro.y);
-                float v = rand_micro.z;
-
-                pos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
-                area = 0.5f * length(cross(bpos-apos, cpos-apos));
-
-                float3 anorm = f3(__ldg(&verts->normals[l.naInd]));
-                float3 bnorm = f3(__ldg(&verts->normals[l.nbInd]));
-                float3 cnorm = f3(__ldg(&verts->normals[l.ncInd]));
-
-                lightNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
-                barycentrics = f2(u * (1.0f - v), u * v);
-            }
-
-            float pdf_chooseLight = (1.0f - envWeight) * (light.totalPower / totalMeshPower);
-
-            float triPdf = (area * luminance(output) * PI) / light.totalPower;
-            pdf = pdf_chooseLight * triPdf * (1.0f / area);
-
-            outDir = normalize(pos - probePos);
-
-            t_max = length(pos-probePos);
-
-            if (pdf <= 0.0f) {
-                printf("DEBUG: Light sampler returned zero PDF! PrimID: %u\n", primID);
-            }
-            return 0;
-        }
     }
 
     __host__ void printDebugState(int maxPrimsToPrint = 16) const {
@@ -301,6 +143,7 @@ struct LightSampler {
         std::cout << "=========================================\n\n";
     }
 };
+
 
 struct LightSamplerManager {
     LightDescriptor* lights = nullptr;

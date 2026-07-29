@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include "imageUtil.cuh"
+#include "helpers.cuh"
 #include "sceneContexts.cuh"
 #include <cub/cub.cuh>
 
@@ -422,7 +423,8 @@ __global__ void render_volume_surface_integrated(
                         shadingPos = toNovum(world_hit_pos);
                     }
 
-                    bool sampledEnv = sceneContext.lightSampler.sample(
+                    bool sampledEnv = sample(
+                        sceneContext.lightSampler,
                         rand(&localState), rand4(&localState),
                         shadingPos,
                         sceneContext.vertices,
@@ -570,7 +572,8 @@ __global__ void render_volume_surface_integrated(
                 float t_max;
                 float pdf;
 
-                bool sampledEnv = sceneContext.lightSampler.sample(
+                bool sampledEnv = sample(
+                    sceneContext.lightSampler,
                     rand(&localState), rand4(&localState),
                     shadingPos,
                     sceneContext.vertices,

@@ -397,7 +397,7 @@ __device__ __forceinline__ inline ShiftResult perform_K_is_D_reconnection(
     bool occluded = traceVisibility(
         params,
         Ray(xkminus1_pos + (xkminus1_to_xk_direction_normalized * RAY_EPSILON), xkminus1_to_xk_direction_normalized),
-        xkminus1_to_xk_distance * (1.0f - EPSILON2)
+        xkminus1_to_xk_distance * (1.0f - RAY_EPSILON)
     );
 
     if (occluded) {

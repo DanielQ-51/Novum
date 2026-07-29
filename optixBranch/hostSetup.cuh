@@ -353,6 +353,58 @@ __host__ OptixTraversableHandle buildOptixGAS(
     return gas_handle;
 }
 
+__host__ OptixTraversableHandle buildOptixIAS(
+    OptixDeviceContext context,
+    CUdeviceptr d_instances,
+    size_t numInstance,
+    CUdeviceptr& out_d_ias_output_buffer // Keep this to free during cleanup
+) {
+    if (numInstance < 1) {
+        throw std::runtime_error("Error: Attempting to build an IAS with 0 instances.");
+    }
+
+    std::cout << "Begin OptiX IAS build with " << numInstance << " instances." << std::endl;
+
+    OptixBuildInput ias_input = {};
+    ias_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    ias_input.instanceArray.instances = d_instances;
+    ias_input.instanceArray.numInstances = static_cast<uint32_t>(numInstance);
+
+    OptixAccelBuildOptions ias_accel_options = {};
+    ias_accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    ias_accel_options.operation  = OPTIX_BUILD_OPERATION_BUILD;
+
+    OptixAccelBufferSizes ias_buffer_sizes;
+    optixAccelComputeMemoryUsage(context, &ias_accel_options, &ias_input, 1, &ias_buffer_sizes);
+
+    CUdeviceptr d_temp_buffer_ias;
+    cudaMalloc(reinterpret_cast<void**>(&d_temp_buffer_ias), ias_buffer_sizes.tempSizeInBytes);
+    cudaMalloc(reinterpret_cast<void**>(&out_d_ias_output_buffer), ias_buffer_sizes.outputSizeInBytes);
+
+    OptixTraversableHandle iasHandle = 0;
+    optixAccelBuild(
+        context,
+        0,                  // CUDA stream
+        &ias_accel_options,
+        &ias_input,
+        1,                  // Number of build inputs
+        d_temp_buffer_ias,
+        ias_buffer_sizes.tempSizeInBytes,
+        out_d_ias_output_buffer,
+        ias_buffer_sizes.outputSizeInBytes,
+        &iasHandle,
+        nullptr,            
+        0                   
+    );
+
+    cudaDeviceSynchronize();
+
+    cudaFree(reinterpret_cast<void*>(d_temp_buffer_ias));
+
+    std::cout << "OptiX IAS build complete." << std::endl;
+    return iasHandle;
+}
+
 int initRender(OptixEngineState& engineState, string configPath, int renderNumber)
 {
     RenderConfig config;
@@ -411,7 +463,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
 #if USE_ENV_MAP == 1
-    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_2k.exr"));
+    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_1k.exr"));
 #else
     EnvironmentMapManager envManager(ASSET_PATH("assets/environment/black.exr"));
 #endif
@@ -624,11 +676,57 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     }
 
     CUdeviceptr out_d_gas_output_buffer;
-    OptixTraversableHandle bvhHandle = buildOptixGAS(
+    OptixTraversableHandle BLAShandle = buildOptixGAS(
         engineState.context,
         positions,
         indices,
         out_d_gas_output_buffer
+    );
+
+    std::vector<OptixInstance> instances;
+    std::vector<float4> transformMatrices; // Switched to float4!
+
+    OptixInstance inst = {};
+    float transform[12] = {
+        1.0f, 0.0f, 0.0f, 0.0f, 
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f
+    };
+
+    // 1. Push 3 float4 rows into your vector for the device shaders
+    transformMatrices.push_back(make_float4(transform[0], transform[1], transform[2],  transform[3]));
+    transformMatrices.push_back(make_float4(transform[4], transform[5], transform[6],  transform[7]));
+    transformMatrices.push_back(make_float4(transform[8], transform[9], transform[10], transform[11]));
+
+    // 2. OptixInstance still wants raw floats, so we keep the memcpy exactly as you had it
+    memcpy(inst.transform, transform, sizeof(float) * 12);
+    inst.instanceId = 0;
+    inst.sbtOffset = 0;
+    inst.visibilityMask = 255;
+    inst.flags = OPTIX_INSTANCE_FLAG_NONE;
+    inst.traversableHandle = BLAShandle;
+
+    instances.push_back(inst);
+
+    // --- Upload Instances ---
+    CUdeviceptr d_instances;
+    cudaMalloc(reinterpret_cast<void**>(&d_instances), sizeof(OptixInstance) * instances.size());
+    cudaMemcpy(reinterpret_cast<void*>(d_instances), instances.data(), sizeof(OptixInstance) * instances.size(), cudaMemcpyHostToDevice);
+
+    // --- Upload Matrices ---
+    float4* d_matrices;
+
+    // transformMatrices.size() is now the number of float4s (3 per instance), 
+    // so the memory allocation math becomes super clean!
+    cudaMalloc(&d_matrices, transformMatrices.size() * sizeof(float4));
+    cudaMemcpy(d_matrices, transformMatrices.data(), transformMatrices.size() * sizeof(float4), cudaMemcpyHostToDevice);
+    
+    CUdeviceptr out_d_ias_output_buffer;
+    OptixTraversableHandle TLAShandle = buildOptixIAS(
+        engineState.context,
+        d_instances,
+        instances.size(),
+        out_d_ias_output_buffer
     );
 
     auto afterBVH = std::chrono::high_resolution_clock::now();
@@ -663,6 +761,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     sc.textures = textures_d;
     sc.lightSampler = lightManager.getSampler();
     sc.triNum = mesh.size();
+    sc.transformationMatrices = d_matrices;
 
     lightManager.getSampler().printDebugState();
 
@@ -670,7 +769,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     params.w = w;
     params.h = h;
     params.frame_index = 0;
-    params.bvh_handle = bvhHandle; 
+    params.bvh_handle = TLAShandle; 
     params.accum_buffer = out_colors; 
     params.camera = camera;
     params.shadeContext = sc;
@@ -679,23 +778,22 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     PipelineParams allParams = {};
     allParams.common = params;
 
-    /*
-    CUdeviceptr d_params;
-    cudaMalloc(reinterpret_cast<void**>(&d_params), sizeof(PipelineParams));
-    cudaMemcpy(reinterpret_cast<void*>(d_params), &allParams, sizeof(PipelineParams), cudaMemcpyHostToDevice);
-    */
-
     dim3 blockSize(16, 16);  
     dim3 gridSize((w+15)/16, (h+15)/16);
 
     CUstream stream;
     cudaStreamCreate(&stream);
 
+#if USE_RESTIR_PT == 1
     auto renderStartTime = std::chrono::steady_clock::now();
     launch_restir(engineState, params, sampleCount);
-
+#elif USE_RESTIR_PT == 0
     /* sdasdasd\\\\
     
+    CUdeviceptr d_params;
+    cudaMalloc(reinterpret_cast<void**>(&d_params), sizeof(PipelineParams));
+    cudaMemcpy(reinterpret_cast<void*>(d_params), &allParams, sizeof(PipelineParams), cudaMemcpyHostToDevice);
+
     for (int sample = 0; sample < sampleCount; sample++) {
 
 
@@ -749,8 +847,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
             cudaMemcpyHostToDevice, 
             stream
         );
-    }*/
+    }
     
+    //cudaFree(reinterpret_cast<void*>(d_params));
+    */
+#endif
     cudaMemcpy(host_colors, out_colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < w; i++)
@@ -763,7 +864,9 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
 
     // memory freeing
     cudaFree(reinterpret_cast<void*>(out_d_gas_output_buffer));
-    //cudaFree(reinterpret_cast<void*>(d_params));
+    cudaFree(reinterpret_cast<void*>(out_d_ias_output_buffer));
+    cudaFree(reinterpret_cast<void*>(d_instances));
+    cudaFree(reinterpret_cast<void*>(d_matrices));
     cudaFree(out_colors);
     cudaFree(d_finalOutput);
     cudaFree(verts);

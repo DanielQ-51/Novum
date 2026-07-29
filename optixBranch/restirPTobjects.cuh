@@ -15,18 +15,20 @@ enum TechniqueType{
 using TechniqueType = uint32_t;
 
 #ifndef RESERVOIR_SIZE
-#define RESERVOIR_SIZE 40
+#define RESERVOIR_SIZE 44
 #endif
 
 #ifndef GBUFFER_SIZE
 #define GBUFFER_SIZE 20
 #endif
 
+// Path Types
+
 #define SHIFT_IS_NEE           (1 << 0) // 0 = BSDF, 1 = NEE
 #define SHIFT_IS_ENV           (1 << 1) // 0 = Area/Mesh, 1 = Environment
 #define SHIFT_K_IS_D           (1 << 2) // 1 if k == d
 #define SHIFT_K_IS_D_MINUS_1   (1 << 3) // 1 if k == d - 1
-#define SHIFT_K_LESS_D_MINUS_1 (1 << 4) // 1 if k <= d - 1
+#define SHIFT_K_LESS_D_MINUS_1 (1 << 4) // 1 if k < d - 1
 
 // --- K = D (Reconnecting directly to the light) ---
 #define PATH_TYPE_NEE_AREA_K_EQ_D  (SHIFT_IS_NEE | SHIFT_K_IS_D)
@@ -49,7 +51,6 @@ using TechniqueType = uint32_t;
 #define FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND 0xFFFFFFFF
 #define FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY 0xFF
 #define FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_DIRECTION_COPY 0xFE
-
 __device__ __forceinline__ uint32_t packPathFlags(
     uint32_t M, uint32_t pathLength, uint32_t rcVertexInd, TechniqueType type
 ) {
@@ -93,19 +94,14 @@ __device__ __forceinline__ uint4 packRcGeometry(
     uint32_t primID,
     float2 barycentrics,
     float3 rcVertexWi,
-    float3 rcVertexRadiance
+    uint32_t rcInstanceID // Changed from radiance to instanceID
 ) {
     uint4 data;
     data.x = primID;
     data.y = packFloat2ToUnorm16(barycentrics);
     data.z = packOct(rcVertexWi);
-    data.w = toRGB9E5(rcVertexRadiance);
+    data.w = rcInstanceID; // Directly storing the instance ID
     return data;
-}
-
-// Takes in a packed uint4, and just replaces the last channel with what the raidance should be.
-__device__ __forceinline__ uint4 updateRcVertexRadiance(const uint4& in, float3 radiance) {
-    return make_uint4(in.x, in.y, in.z, toRGB9E5(radiance));
 }
 
 // Takes in a packed uint4, and just replaces the 3rd channel with what the wi should be.
@@ -113,7 +109,6 @@ __device__ __forceinline__ uint4 updateRcVertexWi(const uint4& in, float3 wi) {
     return make_uint4(in.x, in.y, packOct(wi), in.w);
 }
 
-// 40 bytes
 struct Reservoir {
     float* __restrict__ W;
 
@@ -131,12 +126,14 @@ struct Reservoir {
     uint32_t* __restrict__ pathFlags;
 
     /**
-     *  x: rcVertexInstanceID
+     *  x: rcVertexPrimID
      *  y: rcVertexBarycentrics (2 x 16 bit unorm)
      *  z: rcVertexWi (octahedral 2 x 16 bit snorm)
-     *  w: rcVertexRadiance (RBG9E5)
+     *  w: rcVertexInstanceID
      */
     uint4* __restrict__ rcVertexGeometry;
+
+    uint32_t* __restrict__ rcVertexRadiance;
 
     float* __restrict__ cachedJacobian;
     float* __restrict__ cachedNeePdf;
@@ -166,12 +163,22 @@ struct Reservoir {
         neePDF = __ldg(&(cachedNeePdf[idx]));
     }
 
-    __device__ __forceinline__ void getRcVertexGeometry_globalLoad(uint32_t idx, uint32_t& primID, float2& bary, float3& wi, float3& radiance) const {
+    // Updated to output instanceID and fetch radiance from the new buffer
+    __device__ __forceinline__ void getRcVertexGeometry_globalLoad(
+        uint32_t idx, 
+        uint32_t& primID, 
+        float2& bary, 
+        float3& wi, 
+        float3& radiance, 
+        uint32_t& instanceID
+    ) const {
         uint4 data = __ldg(&rcVertexGeometry[idx]);
         primID = data.x;
         bary = unpackUnorm16ToFloat2(data.y);
         wi = unpackOct(data.z);
-        radiance = fromRGB9E5(data.w);
+        instanceID = data.w; 
+        
+        radiance = fromRGB9E5(__ldg(&rcVertexRadiance[idx])); 
     }
 
     __device__ __forceinline__ void getPathFlags(
@@ -218,6 +225,7 @@ struct Reservoir {
         uint32_t inF,
         uint32_t inPathFlags,
         uint4 inRcVertexGeometry,
+        uint32_t inRcVertexRadiance,
         float inRcVertexJacobian,
         float inNeePDF
     ) const {
@@ -225,6 +233,7 @@ struct Reservoir {
         F[idx] = inF;
         pathFlags[idx] = inPathFlags;
         rcVertexGeometry[idx] = inRcVertexGeometry;
+        rcVertexRadiance[idx] = inRcVertexRadiance;
         cachedJacobian[idx] = inRcVertexJacobian;
         cachedNeePdf[idx] = inNeePDF;
     }
@@ -238,6 +247,7 @@ struct Reservoir {
         uint32_t pathLength,
         uint32_t rcVertexIndex,
         TechniqueType type,
+        uint32_t rcInstanceID,
         uint32_t rcPrimID,
         float2 rcBarycentrics,
         float3 rcWi,
@@ -249,13 +259,13 @@ struct Reservoir {
         F[idx] = toRGB9E5(inF);
         initRandomSeed[idx] = seed;
         pathFlags[idx] = packPathFlags(M, pathLength, rcVertexIndex, type);
-        rcVertexGeometry[idx] = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcRadiance);
+        rcVertexGeometry[idx] = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcInstanceID); // Updated geometry pack
+        rcVertexRadiance[idx] = toRGB9E5(rcRadiance); // Pack directly to the new buffer
         cachedJacobian[idx] = inRcVertexJacobian;
         cachedNeePdf[idx] = inNeePDF;
     }
 };
 
-// so professional i could cry
 __host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
     numPixel = (numPixel + 31) & ~31;
 
@@ -265,15 +275,18 @@ __host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
     char* ptr = static_cast<char*>(raw);
     r.W = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
     r.F = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+
     r.initRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.pathFlags = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.rcVertexGeometry = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
+    
+    r.rcVertexRadiance = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
+    
     r.cachedJacobian = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
     r.cachedNeePdf = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
 
     return raw;
 }
-
 
 /**
  * Gbuffer for shift rejection, primary footprint calculation, and guide layers for denoising
@@ -415,7 +428,8 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     uint32_t rcPrimID = geom.x;
     float2 rcBary = unpackUnorm16ToFloat2(geom.y);
     float3 rcWi = unpackOct(geom.z);
-    float3 rcRadiance = fromRGB9E5(geom.w);
+    uint32_t rcInstanceID = geom.w;
+    float3 rcRadiance = fromRGB9E5(r.rcVertexRadiance[pixelIdx]);
 
     // Unpack Cached Values
     float jacobian = r.cachedJacobian[pixelIdx];
@@ -459,6 +473,10 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
         printf("  Prim ID            : Environment\n");
     else
         printf("  Prim ID            : %u\n", rcPrimID);
+    if (rcInstanceID == 0xFFFFFFFF)
+        printf("  Instance ID        : none (env / untransformed)\n");
+    else
+        printf("  Instance ID        : %u\n", rcInstanceID);
     printf("  Barycentrics       : (%.3f, %.3f)\n", rcBary.x, rcBary.y);
     printf("  Wi (Oct Unpacked)  : (%.3f, %.3f, %.3f)\n", rcWi.x, rcWi.y, rcWi.z);
     printf("  Radiance           : (%.3f, %.3f, %.3f)\n", rcRadiance.x, rcRadiance.y, rcRadiance.z);

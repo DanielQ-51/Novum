@@ -489,10 +489,16 @@ __global__ void resolveSpatialReuse(
             restir.reuseTextures[t]);
 
         neighborConfidence[t] = 0u;
-        if (neighborCoord[t].x >= 0 && neighborCoord[t].y >= 0) {
+        
+        const bool pairAccepted =
+               (neighborCoord[t].x >= 0) && (neighborCoord[t].y >= 0)
+            && isSpatialPairAccepted(allParams, make_int2(x, y), neighborCoord[t]);
+
+        if (pairAccepted) {
             neighborPixelIdx[t] = neighborCoord[t].y * params.w + neighborCoord[t].x;
             if (IS_DEBUG_PIXEL(x, y)) {
-                DEBUG_PRINTF("frame %u at spatial neighbor %u: %u\n", params.frame_index, t, restir.reservoir.initRandomSeed[neighborPixelIdx[t]]);
+                DEBUG_PRINTF("frame %u at spatial neighbor %u: %u\n", params.frame_index, t,
+                             restir.reservoir.initRandomSeed[neighborPixelIdx[t]]);
                 DEBUG_PRINT_PIXEL(restir.reservoir, restir.gbuffer, neighborPixelIdx[t], params.frame_index);
             }
             uint32_t m, pathLen, rcIdx; TechniqueType type;
@@ -508,6 +514,13 @@ __global__ void resolveSpatialReuse(
     float canonicalMisWeight = (totalConfidence > 0.0f)
         ? ((float)currentConfidence / totalConfidence) : 1.0f;
     float weightSum = 0.0f;
+
+    // P2 6.3: vector-valued resampling weights, accumulated in parallel with the scalar
+    // ones. Scalar weights drive selection/resampling; this RGB sum drives shading.
+    // Its luminance equals weightSum by construction (targetFunction == luminance), so it
+    // is a drop-in for F_selected * W_final -- same brightness, chroma averaged over all
+    // candidates instead of taken from the single winner. That is what kills color noise.
+    float3 shadingWeightSum = f3(0.0f);
 
     int    winningTexture = -1;   // -1 means the canonical won
     float3 winning_shiftedF = f3(0.0f);
@@ -568,6 +581,9 @@ __global__ void resolveSpatialReuse(
         if (!(neighborResamplingWeight > 0.0f)) continue;
 
         weightSum += neighborResamplingWeight;
+        // same weight, RGB instead of its luminance
+        shadingWeightSum += neighborMisWeight * forwardContribution * neighbor_W * forwardJacobian;
+
         if (rand(&localState) < (neighborResamplingWeight / weightSum)) {
             winningTexture = (int)t;
             winning_shiftedF = forwardContribution;
@@ -578,6 +594,9 @@ __global__ void resolveSpatialReuse(
 
     const float canonicalResamplingWeight = canonicalMisWeight * currentTargetPdf * self_W;
     weightSum += canonicalResamplingWeight;
+    // canonical uses the identity shift, so no Jacobian factor
+    shadingWeightSum += canonicalMisWeight * self_F * self_W;
+
     if (canonicalResamplingWeight > 0.0f && rand(&localState) < (canonicalResamplingWeight / weightSum))
         winningTexture = -1;
 
@@ -592,10 +611,10 @@ __global__ void resolveSpatialReuse(
         uint32_t winner_M, winner_pathLength, winner_rcVertexIndex; TechniqueType winner_type;
         reservoirIn.getPathFlags(winnerIdx, winner_M, winner_pathLength,
                                  winner_rcVertexIndex, winner_type);
-        uint32_t winner_rcPrimID; float2 winner_rcBarycentrics;
+        uint32_t winner_rcPrimID, winner_rcInstanceID; float2 winner_rcBarycentrics;
         float3   winner_rcWi, winner_rcRadiance;
         reservoirIn.getRcVertexGeometry_globalLoad(winnerIdx, winner_rcPrimID,
-            winner_rcBarycentrics, winner_rcWi, winner_rcRadiance);
+            winner_rcBarycentrics, winner_rcWi, winner_rcRadiance, winner_rcInstanceID);
         float winner_cachedNeePdf = -1.0f;
         if (needNeePDF(winner_type))
             winner_cachedNeePdf = reservoirIn.getCachedNEE_globalLoad(winnerIdx);
@@ -604,17 +623,17 @@ __global__ void resolveSpatialReuse(
             selfIdx, W_final, winning_shiftedF,
             reservoirIn.getSeed_notstreaming(winnerIdx), new_M,
             winner_pathLength, winner_rcVertexIndex, winner_type,
-            winner_rcPrimID, winner_rcBarycentrics, winner_rcWi, winner_rcRadiance,
+            winner_rcInstanceID, winner_rcPrimID, winner_rcBarycentrics, winner_rcWi, winner_rcRadiance,
             winning_newCachedJacobian,   // suffix pdf recomputed for OUR prefix
             winner_cachedNeePdf);        // shift-invariant: shared rc vertex / light
     } else {
         float W_final = (currentTargetPdf > 0.0f) ? (weightSum / currentTargetPdf) : 0.0f;
         if (isnan(W_final) || isinf(W_final)) W_final = 0.0f;
 
-        uint32_t current_rcPrimID; float2 current_rcBarycentrics;
+        uint32_t current_rcPrimID, current_rcInstanceID; float2 current_rcBarycentrics;
         float3   current_rcWi, current_rcRadiance;
         reservoirIn.getRcVertexGeometry_globalLoad(selfIdx, current_rcPrimID,
-            current_rcBarycentrics, current_rcWi, current_rcRadiance);
+            current_rcBarycentrics, current_rcWi, current_rcRadiance, current_rcInstanceID);
         float current_cachedJacobian, current_cachedNeePdf;
         reservoirIn.getCachedValues_globalLoad(selfIdx,
             current_cachedJacobian, current_cachedNeePdf);
@@ -623,8 +642,59 @@ __global__ void resolveSpatialReuse(
             selfIdx, W_final, self_F,
             reservoirIn.getSeed_notstreaming(selfIdx), new_M,
             self_pathLength, self_rcVertexIndex, self_type,
-            current_rcPrimID, current_rcBarycentrics, current_rcWi, current_rcRadiance,
+            current_rcInstanceID, current_rcPrimID, current_rcBarycentrics, current_rcWi, current_rcRadiance,
             current_cachedJacobian, current_cachedNeePdf);  // unchanged: our path didn't move
+    }
+
+    // ==============================================================================
+    // 6. SHADING  (replaces displayWinningReservoirs)
+    //
+    // Everything above resamples and republishes the reservoir. Nothing below feeds
+    // back into it -- this section only writes the frame's color.
+    //
+    // We shade with shadingWeightSum (P2 6.3) rather than F_selected * W_final. Both
+    // carry the same luminance, but the vector sum marginalizes over the index choice,
+    // so chroma is the MIS-weighted average of all candidates instead of one sampled
+    // hue. Without this, a converged reservoir gives correct brightness with a random
+    // color per frame -- the colored speckle on flat walls.
+    // ==============================================================================
+    {
+        if (IS_DEBUG_PIXEL(x, y)) {
+            DEBUG_PRINTF("frame %u at the end seed: %u\n", params.frame_index, restir.reservoir.initRandomSeed[selfIdx]);
+            DEBUG_PRINT_PIXEL(restir.reservoir, restir.gbuffer, selfIdx, params.frame_index);
+        }
+        // 0xFFFFFFFF = environment miss: its color already went straight to accum_buffer
+        // in candidate gen, and there is no reservoir here to shade.
+        // skip-shade = directly-viewed emitter: emission already accumulated, and we do
+        // not want the (noisy) indirect reservoir drawn on top of it this frame.
+        half2 motionVec = restir.gbuffer.getMV(selfIdx);
+        const bool suppressShading =
+               (reinterpret_cast<const uint32_t&>(motionVec) == 0xFFFFFFFF)
+            || restir.gbuffer.getSkipShade(selfIdx);
+
+        if (!suppressShading) {
+            float3 shaded = fireflyClamp(shadingWeightSum);
+
+            if (isnan(shaded.x) || isnan(shaded.y) || isnan(shaded.z) ||
+                isinf(shaded.x) || isinf(shaded.y) || isinf(shaded.z)) {
+                shaded = f3(0.0f);
+            }
+
+#if DEBUG_VISUALIZE_TYPE == 1
+            {
+                const uint32_t shownFlags = (winningTexture >= 0)
+                    ? reservoirIn.pathFlags[neighborPixelIdx[winningTexture]]
+                    : reservoirIn.pathFlags[selfIdx];
+                shaded = debugVisualizeTechnique(extractType(shownFlags), extractRcInd(shownFlags));
+            }
+#endif
+
+#if ACCUMULATE_FRAMES == 1
+            params.accum_buffer[selfIdx] += f4(shaded);
+#else
+            params.accum_buffer[selfIdx] = f4(shaded);
+#endif
+        }
     }
 }
 

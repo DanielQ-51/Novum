@@ -24,6 +24,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
     uint32_t rcVertexIndex,               // Base path data
     TechniqueType type,                       // Base path data
     uint32_t rcPrimID,                    // Base path data
+    uint32_t rcInstanceID,
     float2 rcBarycentrics,                    // Base path data
     float3 rcWi,                              // Base path data
     float3 rcRadiance,                        // Base path data
@@ -77,7 +78,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         float primaryFootprint;
     {
-        SurfaceHit hitData = traceClosest(params, r);
+        SurfaceHit hitData = traceClosestNoSER(params, r);
 
         if (!hitData.isHit) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -105,7 +106,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             shadingPos,
             normal,
             backface,
-            ImplicitEmission
+            ImplicitEmission,
+
+            hitData.instanceId
         );
         if constexpr (!isReverseShift) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -185,11 +188,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         prevDelta = currDelta;
         lastPDF = pdf_bsdf;
     }
+        #if DEBUG_MODE == 1
         float3 lastPOS_GETRIDOFME = r.origin;
-
+        #endif
         // depth + 1 is the "index" of the curr vertex, so this stops at y_k-1
         for (int depth = 1; depth + 1 < pathLength; depth++) {
-            SurfaceHit hitData = traceClosest(params, r);
+            SurfaceHit hitData = traceClosestNoSER(params, r);
 
             if (!hitData.isHit) {
                 if (IS_DEBUG_PIXEL(x, y)) {
@@ -217,7 +221,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 shadingPos,
                 normal,
                 backface,
-                lightEmission
+                lightEmission,
+
+                hitData.instanceId
             );
 
             if constexpr (!isReverseShift) {
@@ -319,11 +325,13 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             prevDelta = currDelta;
             lastPDF = pdf_bsdf;
             lastCosine = fabsf(dot(outgoing, normal));
+            #if DEBUG_MODE == 1
             lastPOS_GETRIDOFME = shadingPos;
+            #endif
         }
 
         // now we are on the last bounce
-        SurfaceHit hitData = traceClosest(params, r);
+        SurfaceHit hitData = traceClosestNoSER(params, r);
 
         if (is_env(type)) {
             if (hitData.isHit) {
@@ -383,7 +391,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             shadingPos,
             normal,
             backface,
-            lightEmission
+            lightEmission,
+
+            hitData.instanceId
         );
 
         float3 incomingDirLocal;
@@ -440,7 +450,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         float primaryFootprint;
     {
-        SurfaceHit hitData = traceClosest(params, r);
+        SurfaceHit hitData = traceClosestNoSER(params, r);
 
         if (!hitData.isHit) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -468,7 +478,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             shadingPos,
             normal,
             backface,
-            ImplicitEmission
+            ImplicitEmission,
+
+            hitData.instanceId
         );
         if constexpr (!isReverseShift) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -555,14 +567,16 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             lastPDF = pdf_bsdf;
         }
     }
+        #if DEBUG_MODE == 1
         float3 lastPOS_GETRIDOFME = r.origin;
+        #endif
 
         uint32_t loopBound = (K_is_D(type)) ?
             pathLength:
             rcVertexIndex;
         // depth + 1 is the "index" of the curr vertex, so this stops at y_k-1
         for (int depth = 1; depth + 1 < loopBound; depth++) {
-            SurfaceHit hitData = traceClosest(params, r);
+            SurfaceHit hitData = traceClosestNoSER(params, r);
 
             if (!hitData.isHit) {
                 if (IS_DEBUG_PIXEL(x, y)) {
@@ -590,7 +604,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 shadingPos,
                 normal,
                 backface,
-                lightEmission
+                lightEmission,
+
+                hitData.instanceId
             );
             if constexpr (!isReverseShift) {
 
@@ -701,7 +717,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             prevDelta = currDelta;
             lastPDF = pdf_bsdf;
             lastCosine = fabsf(dot(outgoing, normal));
+            #if DEBUG_MODE == 1
             lastPOS_GETRIDOFME = shadingPos;
+            #endif
         }
 
         int rc_xk_materialID;
@@ -730,7 +748,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 rc_xk_uv,
                 rc_xk_pos,
                 rc_xk_normal,
-                rc_xk_backface
+                rc_xk_backface,
+
+                rcInstanceID
             );
         }
 
@@ -823,7 +843,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 jacobianDenom
             );
         } else {
-            DEBUG_PRINTF("Alert: invalid path type with respect to k vs d\n");
+            DEBUG_PRINTF("Alert: invalid path type with respect to k vs d, type is: %u, with seed %u and path length %u\n", type, seed, pathLength);
             return {false, f3(0), 0.0f, 0.0f};
         }
     }
@@ -857,7 +877,9 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 xk_pos,
                 normal,
                 backface,
-                emission
+                emission,
+
+                hitData.instanceId
             );
         }
 
@@ -1183,7 +1205,7 @@ __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int
     float3 currNorm = params.restir.gbuffer.getNormal(current_idx);
     float3 pastNorm = params.restir.prevGbuffer.getNormal(history_idx);
 
-    if (dot(currNorm, pastNorm) < 0.98f) {
+    if (dot(currNorm, pastNorm) < NORMAL_REJECTION_THRESHOLD) {
         return false;
     }
 
@@ -1202,14 +1224,15 @@ __device__ __forceinline__ bool isHistoryValid(const PipelineParams& params, int
 
     float plane_distance = abs(dot(pos_diff, currNorm));
 
-    float depth_tolerance = 0.01f + (length(current_pos - params.common.camera.cameraOrigin) * 0.01f);
+    float depth_tolerance = PLANAR_DIST_REJECTION_THRESHOLD + 
+        (length(current_pos - params.common.camera.cameraOrigin) * PLANAR_DIST_REJECTION_THRESHOLD);
 
     if (plane_distance > depth_tolerance) {
         return false;
     }
 
     float true_distance = length(pos_diff);
-    if (plane_distance > depth_tolerance || true_distance > depth_tolerance * 5.0f) {
+    if (true_distance > depth_tolerance * TRUE_DIST_REJECTION_THRESHOLD) {
         return false;
     }
 
@@ -1233,7 +1256,7 @@ __device__ __forceinline__ bool isSpatialNeighborValid(const PipelineParams& par
     float3 currNorm = params.restir.gbuffer.getNormal(current_idx);
     float3 neighNorm = params.restir.gbuffer.getNormal(neighbor_idx);
 
-    if (dot(currNorm, neighNorm) < 0.98f) {
+    if (dot(currNorm, neighNorm) < NORMAL_REJECTION_THRESHOLD) {
         return false;
     }
 
@@ -1251,8 +1274,9 @@ __device__ __forceinline__ bool isSpatialNeighborValid(const PipelineParams& par
     float3 pos_diff = neighbor_pos - current_pos;
 
     // Check if the neighbor is roughly on the same plane as the current pixel
-    float plane_distance = abs(dot(pos_diff, currNorm));
-    float depth_tolerance = 0.01f + (length(current_pos - params.common.camera.cameraOrigin) * 0.01f);
+    float plane_distance = fabsf(dot(pos_diff, currNorm));
+    float depth_tolerance = PLANAR_DIST_REJECTION_THRESHOLD + 
+        (length(current_pos - params.common.camera.cameraOrigin) * PLANAR_DIST_REJECTION_THRESHOLD);
 
     if (plane_distance > depth_tolerance) {
         return false;
@@ -1260,11 +1284,18 @@ __device__ __forceinline__ bool isSpatialNeighborValid(const PipelineParams& par
 
     // Check if the neighbor is physically too far away in 3D space
     float true_distance = length(pos_diff);
-    if (true_distance > depth_tolerance * 5.0f) {
+    if (true_distance > depth_tolerance * TRUE_DIST_REJECTION_THRESHOLD) {
         return false;
     }
 
     return true;
+}
+
+__device__ __forceinline__ bool isSpatialPairAccepted(
+    const PipelineParams& allParams, int2 a, int2 b)
+{
+    return isSpatialNeighborValid(allParams, a, b)
+        && isSpatialNeighborValid(allParams, b, a);
 }
 
 __device__ __forceinline__ uint32_t expandBits(uint32_t v) {

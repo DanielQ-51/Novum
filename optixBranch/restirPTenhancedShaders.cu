@@ -10,14 +10,6 @@
 #include "restirPTenhanced_helpers.cuh"
 #include "settings.cuh"
 
-#ifndef TEMPORAL_USE_DUAL_MV
-#define TEMPORAL_USE_DUAL_MV 1
-#endif
-
-#ifndef TEMPORAL_SER_SORT_MORTON_CODE
-#define TEMPORAL_SER_SORT_MORTON_CODE 1
-#endif
-
 
 extern "C" {
     __constant__ PipelineParams allParams;
@@ -46,14 +38,16 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     bool prevDelta;
     float lastCosine;
 
+    #if DEBUG_MODE == 1
     float3 lastPOS_GETRIDOFME; // for displaying the debug paths
-
+    #endif
     float w_sum = 0.0f;
     uint32_t F = 0;
     uint32_t pathFlags = 0;
     uint32_t pathRcVertexIndex = FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND; // mark unchosen
     uint4 pathRcVertexGeometry = make_uint4(0, 0, 0, 0);
     uint4 actualRcVertexGeometry = make_uint4(0, 0, 0, 0);
+    uint32_t rcRadiance = 0u; // written into the reservoir unconditionally at finalize_pixel
     float pathCachedJacobian = 0.0f;
     float actualCachedJacobian = 0.0f;
     float neepdf = -1.0f;
@@ -76,6 +70,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 #endif
         restir.reservoir.pathFlags[pixelIdx] = 0;
         restir.reservoir.setCachedJacobian(pixelIdx, -1.0f); // gate this out of shifts, like the empty-hit case
+        restir.reservoir.F[pixelIdx] = 0u; // no reservoir here: zero contribution, not last-cycle stale radiance
         restir.gbuffer.setInvalidMotionVec(pixelIdx);
         save_rng(pixelIdx, &localState, nullptr);
         return;
@@ -100,7 +95,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         shadingPos,
         normal,
         backface,
-        ImplicitEmission
+        ImplicitEmission,
+
+        hitData.instanceId
     );
 
     if (IS_DEBUG_PIXEL(x, y)) {
@@ -157,9 +154,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         float pdf_nee;
 
         uint32_t neePrimID; // 0xFFFFFFFF for env, otherwise the triangle primID
+        uint32_t lightInstanceID;
         float2 neeBarycentrics;
 
-        bool sampledEnv = params.shadeContext.lightSampler.sample_ReSTIR_rc_data(
+        bool sampledEnv = sample_ReSTIR_rc_data(params.shadeContext.lightSampler,
             rand(&localState), rand4(&localState),
             shadingPos,
             params.shadeContext.vertices,
@@ -169,7 +167,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             t_max,
             pdf_nee,
             neePrimID,
-            neeBarycentrics
+            neeBarycentrics,
+            lightInstanceID,
+            params.shadeContext.transformationMatrices
         );
 
         float3 shadingPosToLightLocal;
@@ -257,8 +257,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                         neePrimID,  // Also flags whether or not it is an environment or area light via sentinel value
                         neeBarycentrics,
                         shadingPosToLightNormalized,   // undefined for k=d, but we store the direction of the sampled dir
-                        emission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
+                        lightInstanceID
                     );
+                    
+                    rcRadiance = toRGB9E5(emission / neepdf); // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
 
                     actualCachedJacobian = 1.0f; // di case.
                 }
@@ -313,7 +315,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
     prevDelta = currDelta;
     lastPDF = pdf_bsdf;
+    #if DEBUG_MODE == 1
     lastPOS_GETRIDOFME = shadingPos;
+    #endif
 }
     for (int depth = 1; depth < params.max_depth; depth++)
     {
@@ -343,8 +347,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                         0xFFFFFFFF, // flags a env hit
                         f2(0.0f),   // undefined for env hit
                         r.direction,   // undefined for k=d, but we store the direction of the sampled dir
-                        envEmission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
+                        0xFFFFFFFF // there is no instance ID
                     );
+                    rcRadiance = toRGB9E5(envEmission / neepdf); // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
                     actualCachedJacobian = prevDelta ? 1.0f : lastPDF; // direction copy for that case (if not direction copy, this variable isnt neccesary)
                     pathType = PATH_TYPE_BSDF_ENV_K_EQ_D;
                     rcInd = prevDelta ?
@@ -357,13 +362,15 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
                     neepdf = pdf_sampleLight;
                     // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, envEmission / neepdf);
+                    actualRcVertexGeometry = pathRcVertexGeometry;
+                    rcRadiance = toRGB9E5(envEmission / neepdf);
                     actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_ENV_K_EQ_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
                 } else {
                     // k < d - 1
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * envEmission * misWeight);
+                    actualRcVertexGeometry = pathRcVertexGeometry;
+                    rcRadiance = toRGB9E5(suffixThroughput * envEmission * misWeight);
                     actualCachedJacobian = pathCachedJacobian;
                     neepdf = -1.0f;
                     pathType = PATH_TYPE_BSDF_ENV_K_LESS_D_MINUS_1;
@@ -399,7 +406,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             shadingPos,
             normal,
             backface,
-            emission
+            emission,
+
+            hitData.instanceId
         );
 
 
@@ -410,11 +419,13 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
 
         if (IS_DEBUG_PIXEL(x, y)) {
+            #if DEBUG_MODE == 1
             DEBUG_DRAWLINE(params.overlay_buffer, params.camera, lastPOS_GETRIDOFME, shadingPos,
                 (pathRcVertexIndex == FLAG_CANDIDATE_GEN_RC_INDEX_UNFOUND) ?
                 f3(1.0f, 0.0f, 0.0f) :
                 f3(0.0f, 1.0f, 0.0f), 3
             );
+            #endif
         }
 
 
@@ -461,7 +472,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     hitData.primId,
                     hitData.barycentrics,
                     out_world,
-                    f3() // cannot yet be determined, this will be fillbut ed in when a candidate is streamed in
+                    hitData.instanceId
                 );
 
                 // p_(x_k-1 -> x_k) * G(x_k-1 -> x_k) * P(x_k -> x_k+1)
@@ -482,7 +493,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             w_sum += w_i;
 
             float roll = rand(&localState);
-            if (w_sum > 0.0f && roll < w_i / w_sum) {
+            if (w_sum > 0.0f && roll < w_i / w_sum && hitData.t > EPSILON3) {
                 F = toRGB9E5(throughput * lightEmission * misWeight);
 
                 uint32_t pathType;
@@ -494,8 +505,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                         hitData.primId,
                         hitData.barycentrics,
                         f3(0.0f),
-                        suffixThroughput * lightEmission / neepdf // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
+                        hitData.instanceId
                     );
+                    rcRadiance = toRGB9E5(suffixThroughput * lightEmission / neepdf); // RGB9E5-range encode; decoded by *neepdf in evaluateHybridShift
                     //actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
                     actualCachedJacobian = 1.0f; // we rely on a full replay for this
                     pathType = PATH_TYPE_BSDF_AREA_K_EQ_D;
@@ -504,13 +516,15 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     // k = d - 1
                     neepdf = (hitData.t * hitData.t * sampleLightPDF) / fabsf(incomingDirLocal.z);
                     // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, lightEmission / neepdf);
+                    actualRcVertexGeometry = pathRcVertexGeometry;
+                    rcRadiance = toRGB9E5(lightEmission / neepdf);
                     actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_AREA_K_EQ_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
                 } else {
                     // k < d - 1
-                    actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * lightEmission * misWeight);
+                    actualRcVertexGeometry = pathRcVertexGeometry;
+                    rcRadiance = toRGB9E5(suffixThroughput * lightEmission * misWeight);
                     actualCachedJacobian = pathCachedJacobian;
                     pathType = PATH_TYPE_BSDF_AREA_K_LESS_D_MINUS_1;
                     rcInd = pathRcVertexIndex;
@@ -535,9 +549,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             float pdf_nee;
 
             uint32_t neePrimID; // 0xFFFFFFFF for env, otherwise the triangle primID
+            uint32_t lightInstanceID;
             float2 neeBarycentrics;
 
-            bool sampledEnv = params.shadeContext.lightSampler.sample_ReSTIR_rc_data(
+            bool sampledEnv = sample_ReSTIR_rc_data(params.shadeContext.lightSampler,
                 rand(&localState), rand4(&localState),
                 shadingPos,
                 params.shadeContext.vertices,
@@ -547,7 +562,10 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 t_max,
                 pdf_nee,
                 neePrimID,
-                neeBarycentrics
+                neeBarycentrics,
+                lightInstanceID,
+
+                params.shadeContext.transformationMatrices
             );
 
             float3 shadingPosToLightLocal;
@@ -620,7 +638,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     w_sum += w_i;
 
                     float roll = rand(&localState);
-                    if (w_sum > 0.0f && roll < w_i / w_sum) {
+                    if (w_sum > 0.0f && roll < w_i / w_sum && t_max > EPSILON3) {
                         F = toRGB9E5(throughput * contributionSansThroughput * misWeight);
 
                         uint32_t pathType;
@@ -631,22 +649,23 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                                 neePrimID,
                                 neeBarycentrics,
                                 shadingPosToLightNormalized,
-                                emission / neepdf // emission ONLY, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
+                                lightInstanceID
                             );
+                            rcRadiance = toRGB9E5(emission / neepdf); // emission ONLY, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
                             actualCachedJacobian = 1.0f;
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D : PATH_TYPE_NEE_AREA_K_EQ_D;
                         } else if (pathRcVertexIndex == depth + 1) {
                             // k = d - 1
                             neepdf = sampledEnv ? (pdf_nee) : ((t_max * t_max * pdf_nee) / cosLight);
                             // raw emission, RGB9E5-range encoded; decoded by *neepdf in evaluateHybridShift
-                            float3 rcRadiance = emission / neepdf;
-                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * rcRadiance);
-                            actualRcVertexGeometry = updateRcVertexWi(actualRcVertexGeometry, shadingPosToLightNormalized);
+                            rcRadiance = toRGB9E5(suffixThroughput * emission / neepdf);
+                            actualRcVertexGeometry = updateRcVertexWi(pathRcVertexGeometry, shadingPosToLightNormalized);
                             actualCachedJacobian = lastPDF * (fabsf(incomingDirLocal.z) / (hitData.t * hitData.t));
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_EQ_D_MINUS_1 : PATH_TYPE_NEE_AREA_K_EQ_D_MINUS_1;
                         } else {
                             // k < d - 1
-                            actualRcVertexGeometry = updateRcVertexRadiance(pathRcVertexGeometry, suffixThroughput * contributionSansThroughput * misWeight);
+                            actualRcVertexGeometry = pathRcVertexGeometry;
+                            rcRadiance = toRGB9E5(suffixThroughput * contributionSansThroughput * misWeight);
                             actualCachedJacobian = pathCachedJacobian;
                             neepdf = -1.0f;
                             pathType = sampledEnv ? PATH_TYPE_NEE_ENV_K_LESS_D_MINUS_1 : PATH_TYPE_NEE_AREA_K_LESS_D_MINUS_1;
@@ -696,7 +715,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         prevDelta = currDelta;
         lastPDF = pdf_bsdf;
         lastCosine = fabsf(dot(outgoing, normal));
+        #if DEBUG_MODE == 1
         lastPOS_GETRIDOFME = shadingPos;
+        #endif
     }
 
 finalize_pixel:
@@ -704,6 +725,7 @@ finalize_pixel:
         restir.reservoir.setW(pixelIdx, 1.0f);
         restir.reservoir.setCachedJacobian(pixelIdx, -1.0f);
         restir.reservoir.pathFlags[pixelIdx] = packPathFlags(1, 0, 0, 0);
+        restir.reservoir.F[pixelIdx] = 0u; // empty sample: zero contribution, not last-cycle stale radiance
         return;
     }
 
@@ -716,6 +738,7 @@ finalize_pixel:
         F,
         pathFlags,
         actualRcVertexGeometry,
+        rcRadiance,
         actualCachedJacobian,
         neepdf
     );
@@ -732,13 +755,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     uint32_t x = launch_index.x;
     uint32_t y = launch_index.y;
     int pixelIdx = y*params.w + x;
-
-    if (IS_DEBUG_PIXEL(x, y)) {
-        DEBUG_PRINTF("Fresh candidate gen reservoir: \n");
-        DEBUG_PRINT_PIXEL(restir.reservoir, restir.gbuffer, pixelIdx, params.frame_index);
-        DEBUG_PRINTF("History reservoir: \n");
-        DEBUG_PRINT_PIXEL(restir.lastFrameReservoir, restir.gbuffer, pixelIdx, params.frame_index);
-    }
+    
     half2 mv = restir.gbuffer.getMV(pixelIdx);
     int2 historyCoord = make_int2(-1, -1);
     uint32_t reorderHint = 0u;
@@ -747,12 +764,15 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     if (mvBits != 0xFFFFFFFF) { // 0xFFFFFFFF = no reprojectable surface (env miss). Skip-shade pixels keep a real MV and reuse normally.
         if (isHistoryValid(allParams, make_int2(x, y), mv, historyCoord)) { // check primary movtion vec
             reorderHint = 0xFFFFFFFF;
-        } else {
+        } 
+        #if TEMPORAL_USE_DUAL_MV == 1
+        else {
             mv = restir.gbuffer.getDualMV(pixelIdx);
             if (isHistoryValid(allParams, make_int2(x, y), mv, historyCoord)) { // check dual motion vec
                 reorderHint = 0xFFFFFFFF;
             }
         }
+        #endif
     }
 
     // Optionally go one step beyond stream compaction, and sort by morton code
@@ -775,6 +795,13 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
 
     uint32_t historyIdx = historyCoord.x + historyCoord.y * params.w;
 
+    if (IS_DEBUG_PIXEL(x, y)) {
+        DEBUG_PRINTF("Fresh candidate gen reservoir: \n");
+        DEBUG_PRINT_PIXEL(restir.reservoir, restir.gbuffer, pixelIdx, params.frame_index);
+        DEBUG_PRINTF("History reservoir: \n");
+        DEBUG_PRINT_PIXEL(restir.lastFrameReservoir, restir.prevGbuffer, historyIdx, params.frame_index - 1);
+    }
+
     uint8_t dupe_val = __ldg(&restir.duplication_map[historyIdx]);
     float D = (float)dupe_val / 255.0f;
 
@@ -796,8 +823,9 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     float2 hist_rcBarycentrics;
     float3 hist_rcWi;
     float3 hist_rcRadiance;
+    uint32_t hist_rcInstanceID;
 
-    restir.lastFrameReservoir.getRcVertexGeometry_globalLoad(historyIdx, hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance);
+    restir.lastFrameReservoir.getRcVertexGeometry_globalLoad(historyIdx, hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance, hist_rcInstanceID);
 
     float hist_cachedJacobianDenom = restir.lastFrameReservoir.getCachedJacobian_globalLoad(historyIdx);
     float hist_cachedNeePdf = -1.0f;
@@ -831,7 +859,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     float2 curr_rcBarycentrics;
     float3 curr_rcWi;
     float3 curr_rcRadiance;
-    restir.reservoir.getRcVertexGeometry_globalLoad(pixelIdx, curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance);
+    uint32_t curr_rcInstanceID;
+    restir.reservoir.getRcVertexGeometry_globalLoad(pixelIdx, curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance, curr_rcInstanceID);
 
     float curr_cachedJacobianDenom = restir.reservoir.getCachedJacobian_globalLoad(pixelIdx);
     float curr_cachedNeePdf = -1.0f;
@@ -853,9 +882,13 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             allParams,
             x, y,
             hist_seed, hist_pathLength, hist_rcVertexIndex, hist_type,
-            hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance,
+            hist_rcPrimID, hist_rcInstanceID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance,
             hist_cachedNeePdf, hist_cachedJacobianDenom
         );
+
+        if (fwdResult.isValid && fwdResult.new_cached_jacobian < EPSILON3) {
+            fwdResult = {false, f3(0), 0.0f, 0.0f};
+        }
     } else {
         fwdResult = {false, f3(0), 0.0f, 0.0f};
     }
@@ -864,9 +897,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     // ==============================================================================
     // 3. THE BACKWARD SHIFT (Current Path -> History Pixel)
     // ==============================================================================
-    ShiftResult bwdResult; // TODO, replace this (and evaluate hybrid shift) with a reverseresult and evaluatereverseshift, to save registers
-    bool needs_bwd_shift = (curr_M > 0) &&
-                           (curr_cachedJacobianDenom != -1.0f);
+    ShiftResult bwdResult; 
+    bool needs_bwd_shift = (curr_cachedJacobianDenom != -1.0f);
 
     if (IS_DEBUG_PIXEL(x, y) && !needs_bwd_shift) {
         DEBUG_PRINTF("Backwards shift judged to not be needed.\n");
@@ -879,7 +911,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             allParams,
             historyCoord.x, historyCoord.y, // Backward shift originates from the history pixel
             curr_seed, curr_pathLength, curr_rcVertexIndex, curr_type,
-            curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance,
+            curr_rcPrimID, curr_rcInstanceID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance,
             curr_cachedNeePdf, curr_cachedJacobianDenom
         );
     } else {
@@ -949,6 +981,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             hist_pathLength,
             hist_rcVertexIndex,
             hist_type,
+            hist_rcInstanceID,
             hist_rcPrimID,
             hist_rcBarycentrics,
             hist_rcWi,
@@ -999,12 +1032,18 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
         restir.reuseTextures[texIdx]
     );
 
-    bool selfShiftable = (self_M > 0u)
-        && (self_cachedJacobian != -1.0f)   // exclude empty candidates (M=1, cachedJac=-1, type=0)
-        && (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF)
-        && (partnerCoord.x >= 0) && (partnerCoord.y >= 0)
-        && isSpatialNeighborValid(allParams, make_int2(x, y), partnerCoord);
+    // Pair acceptance: a property of (P, N), decided before touching any path.
+    const bool pairAccepted =
+           (partnerCoord.x >= 0) && (partnerCoord.y >= 0)
+        && isSpatialPairAccepted(allParams, make_int2(x, y), partnerCoord);
 
+    // Self-shiftability: a property of THIS pixel's path. An accepted pair whose
+    // shift fails is still accepted -- it stays in c_tot and in the MIS denominators.
+    const bool selfShiftable = pairAccepted
+        && (self_M > 0u)
+        && (self_cachedJacobian != -1.0f)
+        && (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF);
+        
     uint32_t reorderHint = selfShiftable ? 0xFFFFFFFFu : 0u;
 #if TEMPORAL_SER_SORT_MORTON_CODE == 1
     uint32_t spatial_hint = (expandBits(partnerCoord.x >> 5) |
@@ -1018,9 +1057,9 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
     ShiftResult result;
 
     if (selfShiftable) {
-        uint32_t self_rcPrimID; float2 self_rcBary; float3 self_rcWi, self_rcRadiance;
+        uint32_t self_rcPrimID, self_rcInstanceID; float2 self_rcBary; float3 self_rcWi, self_rcRadiance;
         restir.reservoir.getRcVertexGeometry_globalLoad(pixelIdx, self_rcPrimID, self_rcBary,
-                                                        self_rcWi, self_rcRadiance);
+                                                        self_rcWi, self_rcRadiance, self_rcInstanceID);
         const uint32_t self_seed = restir.reservoir.getSeed_notstreaming(pixelIdx);
         float self_cachedNee = -1.0f;
         if (needNeePDF(self_type)) self_cachedNee = restir.reservoir.getCachedNEE_globalLoad(pixelIdx);
@@ -1030,7 +1069,7 @@ extern "C" __global__ void __raygen__restirSpatialReuse() {
             allParams,
             partnerCoord.x, partnerCoord.y,
             self_seed, self_pathLength, self_rcVertexIndex, self_type,
-            self_rcPrimID, self_rcBary, self_rcWi, self_rcRadiance,
+            self_rcPrimID, self_rcInstanceID, self_rcBary, self_rcWi, self_rcRadiance,
             self_cachedNee, self_cachedJacobian
         );
     }

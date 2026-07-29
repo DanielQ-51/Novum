@@ -918,7 +918,7 @@ __device__ inline float3 sampleSky(float3 direction)
     float sun_intensity = 10.0f;  // Sun should be much brighter than sky
     float3 sun_base = f3(1.0f, 0.8f, 0.2f);
 
-    float sun_factor = pow(max(0.0f, dot(unit_dir, sun_dir)), sun_focus);
+    float sun_factor = powf(fmaxf(0.0f, dot(unit_dir, sun_dir)), sun_focus);
     float3 sun_final = sun_base * sun_intensity * sun_factor;
 
     // IMPORTANT: Add the sun to the sky!

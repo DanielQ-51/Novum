@@ -25,12 +25,12 @@ __device__ inline void cosine_sample_f(RNGState& localState, const float3& baseC
     u1 = fminf(u1, 1.0f-EPSILON);
     float u2 = rand(&localState);
 
-    float r = sqrt(u1);
+    float r = sqrtf(u1);
     float phi = 2.0f * PI * u2;
 
-    float x = r * cos(phi);
-    float y = r * sin(phi);
-    float z = sqrt(1.0f - u1);
+    float x = r * cosf(phi);
+    float y = r * sinf(phi);
+    float z = sqrtf(1.0f - u1);
 
     wo = f3(x,y,z);
 
@@ -45,12 +45,12 @@ __device__ inline void cosine_emit(RNGState& localState, float3& wo, float& pdf)
     u1 = fminf(u1, 1.0f-EPSILON);
     float u2 = rand(&localState);
 
-    float r = sqrt(u1);
+    float r = sqrtf(u1);
     float phi = 2.0f * PI * u2;
 
-    float x = r * cos(phi);
-    float y = r * sin(phi);
-    float z = sqrt(1.0f - u1);
+    float x = r * cosf(phi);
+    float y = r * sinf(phi);
+    float z = sqrtf(1.0f - u1);
 
     wo = f3(x,y,z);
     cosine_pdf(wo, pdf);

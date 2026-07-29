@@ -31,14 +31,14 @@
 __device__ __constant__ float EPSILON = 0.0000001f;
 __device__ __constant__ float EPSILON3 = 0.001f;
 __device__ __constant__ float EPSILON2 = 0.01f;
-__device__ __constant__ float RAY_EPSILON = 0.0001f;
+__device__ __constant__ float RAY_EPSILON = 0.00001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float INVPI = 0.3183098f;
 
 
 
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 50.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 15.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 

@@ -534,6 +534,132 @@ __device__ __forceinline__ void drawLine(float4* overlay, Camera camera, float3 
     }
 }
 
+// Helper function to determine where a point lies relative to the screen bounds
+__device__ __forceinline__ int computeOutCode(float x, float y, float w, float h) {
+    int code = 0;
+    if (x < 0.0f) code |= 1;      // Left
+    else if (x >= w) code |= 2;   // Right
+    if (y < 0.0f) code |= 4;      // Top (assuming 0 is top)
+    else if (y >= h) code |= 8;   // Bottom
+    return code;
+}
+
+__device__ __forceinline__ void drawRay(float4* overlay, Camera camera, float3 origin, float3 dir, float3 color, int thickness)
+{
+    // 1. Extend the ray to a distant point far beyond the scene bounds
+    float3 p1 = origin;
+    float3 p2 = origin + (dir * 100000.0f); 
+
+    float nearClip = 0.002f;
+    float3 camPos = camera.cameraOrigin;
+    float3 camFwd = camera.forward;
+
+    // 2. 3D Near-Plane Clipping (Prevents behind-camera projection issues)
+    float d1 = dot(p1 - camPos, camFwd) - nearClip;
+    float d2 = dot(p2 - camPos, camFwd) - nearClip;
+
+    if (d1 < 0.0f && d2 < 0.0f) return;
+
+    if (d1 < 0.0f) {
+        float t = d1 / (d1 - d2);
+        p1 = p1 + (p2 - p1) * t;
+    } 
+    else if (d2 < 0.0f) {
+        float t = d2 / (d2 - d1);
+        p2 = p2 + (p1 - p2) * t;
+    }
+
+    float2 pxf1, pxf2;
+    if (!camera.worldToRaster(p1, pxf1) || !camera.worldToRaster(p2, pxf2))
+        return;
+    
+    // 3. Cohen-Sutherland 2D Screen Clipping
+    // CRITICAL: This stops the GPU from iterating thousands of times off-screen.
+    float x0 = pxf1.x, y0 = pxf1.y;
+    float x1 = pxf2.x, y1 = pxf2.y;
+    float w = (float)camera.w;
+    float h = (float)camera.h;
+
+    int outcode0 = computeOutCode(x0, y0, w, h);
+    int outcode1 = computeOutCode(x1, y1, w, h);
+    bool accept = false;
+
+    while (true) {
+        if (!(outcode0 | outcode1)) {
+            // Both points inside screen bounds
+            accept = true;
+            break;
+        } else if (outcode0 & outcode1) {
+            // Both points share an outside zone (e.g., both above screen), line is invisible
+            break;
+        } else {
+            // Calculate intersection with the screen edge
+            float x, y;
+            int outcodeOut = outcode0 ? outcode0 : outcode1;
+
+            if (outcodeOut & 8) {        // Bottom edge
+                x = x0 + (x1 - x0) * (h - 1.0f - y0) / (y1 - y0);
+                y = h - 1.0f;
+            } else if (outcodeOut & 4) { // Top edge
+                x = x0 + (x1 - x0) * (0.0f - y0) / (y1 - y0);
+                y = 0.0f;
+            } else if (outcodeOut & 2) { // Right edge
+                y = y0 + (y1 - y0) * (w - 1.0f - x0) / (x1 - x0);
+                x = w - 1.0f;
+            } else if (outcodeOut & 1) { // Left edge
+                y = y0 + (y1 - y0) * (0.0f - x0) / (x1 - x0);
+                x = 0.0f;
+            }
+
+            // Move the outside point to the intersection
+            if (outcodeOut == outcode0) {
+                x0 = x; y0 = y;
+                outcode0 = computeOutCode(x0, y0, w, h);
+            } else {
+                x1 = x; y1 = y;
+                outcode1 = computeOutCode(x1, y1, w, h);
+            }
+        }
+    }
+
+    if (!accept) return; // Ray does not intersect the screen at all
+
+    // 4. Bresenham Line Drawing (Now strictly bounded to the screen)
+    int ix0 = (int)x0; int iy0 = (int)y0;
+    int ix1 = (int)x1; int iy1 = (int)y1;
+
+    int dx = abs(ix1 - ix0);
+    int dy = -abs(iy1 - iy0);
+    int sx = ix0 < ix1 ? 1 : -1;
+    int sy = iy0 < iy1 ? 1 : -1;
+    int err = dx + dy; 
+
+    bool isSteep = abs(iy1 - iy0) > abs(ix1 - ix0);
+    int startW = -(thickness / 2);
+    int endW = startW + thickness - 1;
+
+    while (true) {
+        for (int w_offset = startW; w_offset <= endW; ++w_offset) {
+            int px = isSteep ? (ix0 + w_offset) : ix0;
+            int py = isSteep ? iy0 : (iy0 + w_offset);
+
+            // We still keep the bounds check here to handle the thickness offsets
+            if (px >= 0 && px < camera.w && py >= 0 && py < camera.h) {
+                int pixelIndex = py * camera.w + px;
+                atomicExch(&overlay[pixelIndex].x, color.x);
+                atomicExch(&overlay[pixelIndex].y, color.y);
+                atomicExch(&overlay[pixelIndex].z, color.z);
+            }
+        }
+
+        if (ix0 == ix1 && iy0 == iy1) break;
+
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; ix0 += sx; }
+        if (e2 <= dx) { err += dx; iy0 += sy; }
+    }
+}
+
 struct PathVertices {
     // material ID at this vertex
     int* materialID;

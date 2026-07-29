@@ -36,6 +36,7 @@ struct ShadeContext
     const Triangle* __restrict__ lights;
     const Triangle* __restrict__ scene;
     const Vertices* __restrict__ vertices; 
+    const float4* __restrict__ transformationMatrices; 
     LightSampler lightSampler;
     int lightNum;
     uint32_t triNum;

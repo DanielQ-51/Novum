@@ -94,7 +94,8 @@ extern "C" __global__ void __raygen__unidirectional() {
             float t_max;
             float pdf;
 
-            bool sampledEnv = params.shadeContext.lightSampler.sample(
+            bool sampledEnv = sample(
+                params.shadeContext.lightSampler,
                 rand(&localState), rand4(&localState),
                 shadingPos,
                 params.shadeContext.vertices,

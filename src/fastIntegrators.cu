@@ -5,6 +5,7 @@
 #include "imageUtil.cuh"
 #include "wavefrontHelper.cuh"
 #include "sceneContexts.cuh"
+#include "helpers.cuh"
 #include <cub/cub.cuh>
 
 __device__ __constant__ bool SAMPLE_ENVIRONMENT = false;
@@ -497,7 +498,8 @@ __global__ void shade(
         float t_max;
         float pdf;
 
-        bool sampledEnv = shadeContext.lightSampler.sample(
+        bool sampledEnv = sample(
+            shadeContext.lightSampler,
             rand(&localState), rand4(&localState),
             shadingPos,
             shadeContext.vertices,

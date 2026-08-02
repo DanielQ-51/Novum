@@ -87,10 +87,10 @@ __host__ void launch_restir (
 #if CAMERA_MOVES == 0 
     TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.0f, 90.0f, 0.0f);
 #else
-    //TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
+    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
 #endif
-    LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.01f, 0.0f, 0.0f) ,f3());
-    animation.update(allParams.common.camera, 0);
+    //LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.01f, 0.0f, 0.0f) ,f3());
+    //animation.update(allParams.common.camera, 0);
 
     dim3 blockSize(32, 8);  
     dim3 gridSize((commonParams.w+31)/32, (commonParams.h+7)/8);
@@ -162,8 +162,8 @@ __host__ void launch_restir (
                 engineState.pipeline,
                 stream,
                 d_params,
-                sizeof(PipelineParams), 
-                &engineState.sbt_restirTemporal,                  
+                sizeof(PipelineParams),
+                &engineState.sbt_restirTemporal,
                 commonParams.w,                   // Launch X
                 commonParams.h,                   // Launch Y
                 1                       // Launch Z
@@ -249,6 +249,7 @@ __host__ void launch_restir (
         allParams.restir.lastFrameCamera = allParams.common.camera;
         animation.update(allParams.common.camera, frame + 1);
 
+        /* 
         cudaMemsetAsync(allParams.restir.reservoir.F, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.W, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.initRandomSeed, 0, commonParams.w * commonParams.h * sizeof(float), stream);
@@ -257,7 +258,7 @@ __host__ void launch_restir (
         cudaMemsetAsync(allParams.restir.reservoir.rcVertexRadiance, 0, commonParams.w * commonParams.h * sizeof(uint32_t), stream);
         cudaMemsetAsync(allParams.restir.reservoir.cachedJacobian, 0, commonParams.w * commonParams.h * sizeof(float), stream);
         cudaMemsetAsync(allParams.restir.reservoir.cachedNeePdf, 0, commonParams.w * commonParams.h * sizeof(float), stream);
-
+        */
 
 
         cudaStreamSynchronize(stream);

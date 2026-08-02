@@ -7,7 +7,7 @@
 // Master switch for device side debug instrumentation.
 // Host side prints (timings, memory usage) are deliberately not gated.
 #ifndef DEBUG_MODE
-#define DEBUG_MODE 1
+#define DEBUG_MODE 0
 #endif
 
 #ifndef SAVE_SEQUENCE
@@ -43,11 +43,11 @@
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_X
-#define DEBUG_TEST_PIXEL_X 117
+#define DEBUG_TEST_PIXEL_X 750
 #endif
 
 #ifndef DEBUG_TEST_PIXEL_Y
-#define DEBUG_TEST_PIXEL_Y (1400 - 830)
+#define DEBUG_TEST_PIXEL_Y (1400 - 1070)
 #endif
 
 #ifndef NUM_REUSE_TEXTURES
@@ -55,11 +55,11 @@
 #endif
 
 #ifndef DO_SPATIAL_SHIFT
-#define DO_SPATIAL_SHIFT 0
+#define DO_SPATIAL_SHIFT 1
 #endif
 
 #ifndef USE_ENV_MAP
-#define USE_ENV_MAP 1
+#define USE_ENV_MAP 0
 #endif
 
 #ifndef TEMPORAL_USE_DUAL_MV

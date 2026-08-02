@@ -78,7 +78,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         float primaryFootprint;
     {
-        SurfaceHit hitData = traceClosestNoSER(params, r);
+        SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -193,7 +193,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         #endif
         // depth + 1 is the "index" of the curr vertex, so this stops at y_k-1
         for (int depth = 1; depth + 1 < pathLength; depth++) {
-            SurfaceHit hitData = traceClosestNoSER(params, r);
+            SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
                 if (IS_DEBUG_PIXEL(x, y)) {
@@ -331,7 +331,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         }
 
         // now we are on the last bounce
-        SurfaceHit hitData = traceClosestNoSER(params, r);
+        SurfaceHit hitData = traceClosest(params, r);
 
         if (is_env(type)) {
             if (hitData.isHit) {
@@ -450,7 +450,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
         float primaryFootprint;
     {
-        SurfaceHit hitData = traceClosestNoSER(params, r);
+        SurfaceHit hitData = traceClosest(params, r);
 
         if (!hitData.isHit) {
             if (IS_DEBUG_PIXEL(x, y)) {
@@ -576,7 +576,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             rcVertexIndex;
         // depth + 1 is the "index" of the curr vertex, so this stops at y_k-1
         for (int depth = 1; depth + 1 < loopBound; depth++) {
-            SurfaceHit hitData = traceClosestNoSER(params, r);
+            SurfaceHit hitData = traceClosest(params, r);
 
             if (!hitData.isHit) {
                 if (IS_DEBUG_PIXEL(x, y)) {

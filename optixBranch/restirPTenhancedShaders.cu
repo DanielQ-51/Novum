@@ -240,7 +240,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                 w_sum += w_i;
 
                 float roll = rand(&localState);
-                if (w_sum > 0.0f && roll < w_i / w_sum) {
+                if (w_sum > 0.0f && roll < w_i / w_sum && t_max > EPSILON3) {
 
                     F = toRGB9E5(contribution * misWeight);
                     pathFlags = packPathFlags(
@@ -907,7 +907,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
 
     if (needs_bwd_shift) {
         // just for now, we want to print out everything.
-        bwdResult = evaluateHybridShift<false>(
+        bwdResult = evaluateHybridShift<true>(
             allParams,
             historyCoord.x, historyCoord.y, // Backward shift originates from the history pixel
             curr_seed, curr_pathLength, curr_rcVertexIndex, curr_type,
@@ -996,6 +996,8 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         if (curr_M == 0 || W_final == 0.0f) {
             restir.reservoir.setPathFlags(pixelIdx, packPathFlags(1, 0, 0, 0));
             restir.reservoir.setW_noCS(pixelIdx, 0.0f);
+            restir.reservoir.setCachedJacobian(pixelIdx, -1.0f); // gate out of subsequent shifts, matching the candidate-gen empty case
+            restir.reservoir.F[pixelIdx] = 0u;                   // avoid stale radiance leaking into p_hat
         } else {
             curr_pathFlags = updateM(curr_pathFlags, new_M);
             restir.reservoir.setPathFlags(pixelIdx, curr_pathFlags);

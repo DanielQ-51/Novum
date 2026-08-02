@@ -38,7 +38,7 @@ __device__ __constant__ float INVPI = 0.3183098f;
 
 
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 15.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 1500000.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
@@ -857,5 +857,6 @@ __host__ __device__ __forceinline__ inline float lerp(float a, float b, float t)
 }
 
 __device__ __forceinline__ float targetFunction(float3 contribution) {
-    return luminance(fireflyClamp(contribution));
+    //return luminance(fireflyClamp(contribution));
+    return luminance(contribution);
 }

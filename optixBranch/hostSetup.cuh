@@ -21,6 +21,7 @@
 #include <optix.h>
 #include <optix_stubs.h>
 #include <optix_function_table_definition.h>
+#include <optix_stack_size.h>   // [STACK_FIX] needed for optixUtilComputeStackSizes / optixPipelineSetStackSize
 
 
 #define ASSET_PATH(path) (std::string(ROOT_DIR) + "/" + path)
@@ -176,16 +177,47 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
 
     OptixPipeline pipeline = nullptr;
     OptixPipelineLinkOptions linkOptions = {};
-    linkOptions.maxTraceDepth = 0;
+    linkOptions.maxTraceDepth = 1;   // [STACK_FIX] shaders trace via optixTraverse; 0 is UB (was 0)
 
     optixPipelineCreate(
-        context, 
-        &pipelineOptions, 
-        &linkOptions, 
-        programGroups, 6, 
-        nullptr, nullptr, 
+        context,
+        &pipelineOptions,
+        &linkOptions,
+        programGroups, 6,
+        nullptr, nullptr,
         &pipeline
     );
+
+    // [STACK_FIX] BEGIN - set an explicit pipeline stack size.
+    // Previously no stack size was set, so OptiX used a default derived from
+    // maxTraceDepth=0 and assumed a single-GAS scene. Adding the IAS -> GAS
+    // (2-level) traversal pushed the deepest raygen (temporal reuse) past that
+    // default, overflowing the continuation stack on frame 1. Size it explicitly
+    // and declare maxTraversableGraphDepth = 2 for the instance layer.
+    {
+        OptixStackSizes stackSizes = {};
+        for (auto pg : programGroups) {
+            optixUtilAccumulateStackSizes(pg, &stackSizes, pipeline);
+        }
+
+        uint32_t dcStackTraversal = 0, dcStackState = 0, continuationStack = 0;
+        optixUtilComputeStackSizes(
+            &stackSizes,
+            /* maxTraceDepth */ 1,   // [STACK_FIX] must match linkOptions.maxTraceDepth
+            /* maxCCDepth    */ 0,
+            /* maxDCDepth    */ 0,
+            &dcStackTraversal, &dcStackState, &continuationStack
+        );
+
+        optixPipelineSetStackSize(
+            pipeline,
+            dcStackTraversal,
+            dcStackState,
+            continuationStack,
+            /* maxTraversableGraphDepth */ 2   // IAS -> GAS
+        );
+    }
+    // [STACK_FIX] END
 
     struct RaygenRecord {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE];

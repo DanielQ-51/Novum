@@ -4,7 +4,7 @@ width: 1400
 height: 1400
 
 Integrator: UNIDIRFAST
-Sample Count: 3000
+Sample Count: 1000
 Post Process: true
 
 Unidirectional Max Depth: 8
@@ -46,4 +46,4 @@ assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
 assets/scenedata/cornellbox/leftwall.obj; 0.0 * (0.0, 0.0, 0.0); 1
 .assets/scenedata/cornellbox/rightwall.obj; 0.0 * (0.0, 0.0, 0.0); 3
 assets/scenedata/cornellbox/lightMedium.obj; 25.5 * (1.0, 1.0, 1.0); 2
-assets/scenedata/cornellbox/pyramidlight.obj; 35.5 * (0.1, 1.0, 0.1); 2
+.assets/scenedata/cornellbox/spherelight.obj; 85.5 * (0.1, 1.0, 0.1); 2

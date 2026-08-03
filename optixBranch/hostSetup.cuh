@@ -816,74 +816,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     CUstream stream;
     cudaStreamCreate(&stream);
 
-#if USE_RESTIR_PT == 1
-    auto renderStartTime = std::chrono::steady_clock::now();
+    // The render loop lives in launch_restir. The unidirectional path tracer is
+    // no longer driven from here: when settings.cuh sets EQUAL_TIME_COMPARE == 1,
+    // launch_restir runs the PT back-to-back with ReSTIR each frame (same camera,
+    // equal GPU-time budget) and writes a parallel sequence to renders/unidirectional/.
     launch_restir(engineState, params, sampleCount);
-#elif USE_RESTIR_PT == 0
-    /* sdasdasd\\\\
-    
-    CUdeviceptr d_params;
-    cudaMalloc(reinterpret_cast<void**>(&d_params), sizeof(PipelineParams));
-    cudaMemcpy(reinterpret_cast<void*>(d_params), &allParams, sizeof(PipelineParams), cudaMemcpyHostToDevice);
-
-    for (int sample = 0; sample < sampleCount; sample++) {
-
-
-        
-        optixLaunch(
-            engineState.pipeline,
-            stream,
-            d_params,               // The GPU pointer we just allocated
-            sizeof(PipelineParams), // FIXED: Was sizeof(Params)
-            &engineState.sbt_unidirectional,                  
-            w,                   // Launch X
-            h,                   // Launch Y
-            1                       // Launch Z
-        );
-        
-
-
-        if ((sample % 1 == 0 || sample == sampleCount-1) && DO_PROGRESSIVERENDER) 
-        {
-            cleanAndFormatImageNoOverlay<<<gridSize, blockSize>>>(
-                params.accum_buffer, d_finalOutput, w, h, sample
-            );
-
-            cudaMemcpy(host_colors, d_finalOutput, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
-
-            #pragma omp parallel for
-            for (int i = 0; i < w * h; i++) {
-                int x = i % w;
-                int y = i / w;
-                image.setColor(x, y, host_colors[i]);
-            }
-            std::string filename = "render.bmp";
-            image.saveImageBMP(filename);
-            image.saveImageCSV_MONO(0);
-            
-
-            auto currentTime = std::chrono::steady_clock::now();
-            std::chrono::duration<double, std::milli> elapsed = currentTime - renderStartTime;
-            double avgTimeMs = elapsed.count() / (sample + 1);
-            
-            printf("\rSample %d/%d | Avg Time/Frame: %.2f ms", sample + 1, sampleCount, avgTimeMs);
-            fflush(stdout);
-        }
-
-        params.frame_index++;
-        
-        cudaMemcpyAsync(
-            reinterpret_cast<void*>(d_params), 
-            &params, 
-            sizeof(PipelineParams), 
-            cudaMemcpyHostToDevice, 
-            stream
-        );
-    }
-    
-    //cudaFree(reinterpret_cast<void*>(d_params));
-    */
-#endif
     cudaMemcpy(host_colors, out_colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < w; i++)

@@ -4,6 +4,16 @@
 #define USE_RESTIR_PT 1
 #endif
 
+// Equal-time comparison harness. When 1, launch_restir also runs the
+// unidirectional path tracer back-to-back each frame: it measures the ReSTIR
+// frame's GPU time with CUDA events, then adaptively fills exactly that time
+// budget with PT samples on the same camera, emitting a parallel BMP sequence
+// under renders/unidirectional/. 0 = clean ReSTIR-only build (no PT code, no
+// per-frame timing overhead compiled in).
+#ifndef EQUAL_TIME_COMPARE
+#define EQUAL_TIME_COMPARE 0
+#endif
+
 // Master switch for device side debug instrumentation.
 // Host side prints (timings, memory usage) are deliberately not gated.
 #ifndef DEBUG_MODE
@@ -15,7 +25,7 @@
 #endif
 
 #ifndef SAVE_FOR_VIDEO
-#define SAVE_FOR_VIDEO 1
+#define SAVE_FOR_VIDEO 0
 #endif
 
 #ifndef ACCUMULATE_FRAMES
@@ -23,11 +33,11 @@
 #endif
 
 #ifndef DEBUG_VISUALIZE_TYPE
-#define DEBUG_VISUALIZE_TYPE 0
+#define DEBUG_VISUALIZE_TYPE 1
 #endif
 
 #ifndef TEMPORAL_SKIP_REVERSE_SHIFT
-#define TEMPORAL_SKIP_REVERSE_SHIFT 0
+#define TEMPORAL_SKIP_REVERSE_SHIFT 1
 #endif
 
 #ifndef CAMERA_MOVES
@@ -59,11 +69,19 @@
 #endif
 
 #ifndef USE_ENV_MAP
-#define USE_ENV_MAP 0
+#define USE_ENV_MAP 1
 #endif
 
 #ifndef TEMPORAL_USE_DUAL_MV
 #define TEMPORAL_USE_DUAL_MV 1
+#endif
+
+// 1 = adaptive cCap reduction via the sample duplication map (Enhanced §5).
+// 0 = disable it and fall back to the original hard M-cap of Lin 2022
+//     (cCap = LERP_MCAP constant). Also skips the per-frame duplication-map
+//     kernel (a 17x17 neighborhood scan per pixel) on the host side.
+#ifndef USE_DUPLICATION_MAP
+#define USE_DUPLICATION_MAP 1
 #endif
 
 #ifndef TEMPORAL_SER_SORT_MORTON_CODE

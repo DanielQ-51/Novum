@@ -15,6 +15,7 @@
 #include "restirPTenhanced_kernels.cuh"
 #include "restirPTenhanced_spatialReuseTextures.cuh"
 #include "settings.cuh"
+#include <filesystem>
 
 __host__ void launch_restir (
     OptixEngineState engineState,
@@ -118,6 +119,39 @@ __host__ void launch_restir (
             freeB / (1024.0*1024),
             totalB / (1024.0*1024));
 
+#if EQUAL_TIME_COMPARE == 1
+    // --- Equal-time unidirectional PT comparison state ---------------------
+    // Separate accumulation so the PT pass never touches ReSTIR's buffers.
+    float4* d_pt_accum;
+    float4* d_pt_final;
+    cudaMalloc(&d_pt_accum, commonParams.w * commonParams.h * sizeof(float4));
+    cudaMalloc(&d_pt_final, commonParams.w * commonParams.h * sizeof(float4));
+
+    CUdeviceptr d_pt_params;
+    cudaMalloc(reinterpret_cast<void**>(&d_pt_params), sizeof(PipelineParams));
+
+    Image ptImage = Image(commonParams.w, commonParams.h);
+
+    // Pinned ring of per-sample launch params (identical except the RNG seed).
+    // Pinned memory + distinct slots let the PT loop fire its sample launches as
+    // one un-synchronised burst with no host-buffer aliasing hazard. 64 distinct
+    // seeds per frame is ample; beyond that seeds repeat (harmless).
+    const int PT_SEED_RING = 64;
+    PipelineParams* h_ptRing = nullptr;
+    cudaMallocHost(&h_ptRing, PT_SEED_RING * sizeof(PipelineParams));
+
+    // frameStart/frameStop bracket ONLY the ReSTIR render kernels; ptStart/ptMid
+    // time the one calibration sample; ptStart/ptNow time the whole PT burst.
+    cudaEvent_t frameStart, frameStop, ptStart, ptMid, ptNow;
+    cudaEventCreate(&frameStart);
+    cudaEventCreate(&frameStop);
+    cudaEventCreate(&ptStart);
+    cudaEventCreate(&ptMid);
+    cudaEventCreate(&ptNow);
+
+    std::filesystem::create_directories(ASSET_PATH("renders/unidirectional"));
+#endif
+
     cudaEventRecord(start, stream);
 
     for (uint32_t frame = 0; frame < frameCount; frame++) {
@@ -132,12 +166,16 @@ __host__ void launch_restir (
 
         // Generate candidates, fill allParams.restir.reservoir
 
+#if EQUAL_TIME_COMPARE == 1
+        cudaEventRecord(frameStart, stream);
+#endif
+
         optixLaunch(
             engineState.pipeline,
             stream,
             d_params,
-            sizeof(PipelineParams), 
-            &engineState.sbt_restirCandidate,                  
+            sizeof(PipelineParams),
+            &engineState.sbt_restirCandidate,
             commonParams.w,                   // Launch X
             commonParams.h,                   // Launch Y
             1                       // Launch Z
@@ -149,12 +187,14 @@ __host__ void launch_restir (
             commonParams.h
         );
 
+#if USE_DUPLICATION_MAP
         computeDuplicationMapKernel<<<gridSize, blockSize, 0, stream>>>(
-            allParams.restir.lastFrameReservoir, 
-            allParams.restir.duplication_map, 
-            commonParams.w, 
+            allParams.restir.lastFrameReservoir,
+            allParams.restir.duplication_map,
+            commonParams.w,
             commonParams.h
         );
+#endif
         
 
         if (frame > 0) {
@@ -198,7 +238,90 @@ __host__ void launch_restir (
         // shading in resolveSpatialReuse is there to fix.
         displayWinningReservoirs<<<gridSize, blockSize, 0, stream>>>(allParams);
 #endif
-        
+
+#if EQUAL_TIME_COMPARE == 1
+        // End of the ReSTIR render work for this frame. Everything after this
+        // (BMP save, host copy) is CPU/IO and is deliberately excluded from the
+        // time budget handed to the PT below.
+        cudaEventRecord(frameStop, stream);
+#endif
+
+#if EQUAL_TIME_COMPARE == 1
+        // ---------------------------------------------------------------------
+        // Equal-time unidirectional PT pass. Runs back-to-back with the ReSTIR
+        // render -- NO host work (save/copy) in between, so the GPU stays boosted
+        // and the timing is taken hot, not from an idle P-state. Uses THIS
+        // frame's camera (animation.update hasn't advanced it yet) and fills the
+        // ReSTIR frame's GPU-time budget with samples launched as un-synced
+        // bursts (a per-sample sync would idle the GPU and inflate every number).
+        // ---------------------------------------------------------------------
+        cudaEventSynchronize(frameStop);
+        float restirMs = 0.0f;
+        cudaEventElapsedTime(&restirMs, frameStart, frameStop);
+
+        // Fresh accumulation each video frame (no cross-frame accumulation;
+        // matches ReSTIR's per-frame reconstruction). Sequential single-sample
+        // launches accumulate with += safely -- they serialise on the stream.
+        cudaMemsetAsync(d_pt_accum, 0, commonParams.w * commonParams.h * sizeof(float4), stream);
+
+        // Refill the pinned seed ring for this frame: same params, one distinct
+        // frame_index (RNG seed) per slot, pointed at the PT accumulation buffer.
+        for (int i = 0; i < PT_SEED_RING; i++) {
+            h_ptRing[i] = allParams;
+            h_ptRing[i].common.accum_buffer = d_pt_accum;
+            h_ptRing[i].common.frame_index  = frame * PT_SEED_RING + i;
+        }
+
+        auto ptLaunch = [&](int s) {
+            cudaMemcpyAsync(reinterpret_cast<void*>(d_pt_params),
+                            &h_ptRing[s % PT_SEED_RING],
+                            sizeof(PipelineParams), cudaMemcpyHostToDevice, stream);
+            optixLaunch(engineState.pipeline, stream, d_pt_params, sizeof(PipelineParams),
+                        &engineState.sbt_unidirectional,
+                        commonParams.w, commonParams.h, 1);
+        };
+
+        // Phase 1: one calibration sample to estimate per-sample GPU cost.
+        cudaEventRecord(ptStart, stream);
+        ptLaunch(0);
+        cudaEventRecord(ptMid, stream);
+        cudaEventSynchronize(ptMid);
+        float calMs = 0.0f;
+        cudaEventElapsedTime(&calMs, ptStart, ptMid);
+
+        // Samples that fit in the ReSTIR budget (at least the one already fired).
+        int ptSamples = (calMs > 0.0f) ? (int)(restirMs / calMs) : 1;
+        if (ptSamples < 1) ptSamples = 1;
+
+        // Phase 2: launch the remainder as one un-synced burst, then sync once.
+        for (int s = 1; s < ptSamples; s++) ptLaunch(s);
+        cudaEventRecord(ptNow, stream);
+        cudaEventSynchronize(ptNow);
+        float ptElapsed = 0.0f;
+        cudaEventElapsedTime(&ptElapsed, ptStart, ptNow);
+
+        // Divisor is currentSampleCount + 1, so pass ptSamples - 1 to divide by ptSamples.
+        cleanAndFormatImageNoOverlay<<<gridSize, blockSize, 0, stream>>>(
+            d_pt_accum, d_pt_final, commonParams.w, commonParams.h, ptSamples - 1
+        );
+        cudaMemcpyAsync(host_colors, d_pt_final,
+                        commonParams.w * commonParams.h * sizeof(float4),
+                        cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+
+        #pragma omp parallel for
+        for (int i = 0; i < commonParams.w * commonParams.h; i++) {
+            ptImage.setColor(i % commonParams.w, i / commonParams.w, host_colors[i]);
+        }
+        std::stringstream ptss;
+        ptss << "renders/unidirectional/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
+        ptImage.saveImageBMP(ASSET_PATH(ptss.str()));
+
+        printf("frame %4u | ReSTIR %7.3f ms | PT %4d spp (%.3f ms)\n",
+               frame, restirMs, ptSamples, ptElapsed);
+        fflush(stdout);
+#endif
+
 #if SAVE_SEQUENCE == 1
 
 #if ACCUMULATE_FRAMES == 1
@@ -207,7 +330,7 @@ __host__ void launch_restir (
         );
 #else
         cleanAndFormatImage<<<gridSize, blockSize, 0, stream>>>(
-            allParams.common.accum_buffer, allParams.common.overlay_buffer, d_finalOutput, commonParams.w, commonParams.h, 1
+            allParams.common.accum_buffer, allParams.common.overlay_buffer, d_finalOutput, commonParams.w, commonParams.h, 0
         );
 #endif
 
@@ -237,6 +360,7 @@ __host__ void launch_restir (
         image.saveImageBMP(filename2);
         cudaMemsetAsync(d_overlay, 0, commonParams.w * commonParams.h * sizeof(float4), stream);
 #endif
+
         // Swap reservoirs (changes baked into vram at start of loop)
         Reservoir temp = allParams.restir.lastFrameReservoir;
         allParams.restir.lastFrameReservoir = allParams.restir.reservoir;
@@ -276,6 +400,17 @@ __host__ void launch_restir (
 
 
     cudaFree(reinterpret_cast<void*>(d_params));
+#if EQUAL_TIME_COMPARE == 1
+    cudaFree(d_pt_accum);
+    cudaFree(d_pt_final);
+    cudaFree(reinterpret_cast<void*>(d_pt_params));
+    cudaFreeHost(h_ptRing);
+    cudaEventDestroy(frameStart);
+    cudaEventDestroy(frameStop);
+    cudaEventDestroy(ptStart);
+    cudaEventDestroy(ptMid);
+    cudaEventDestroy(ptNow);
+#endif
     cudaFree(r1Memory);
     cudaFree(r2Memory);
     cudaFree(gb1Memory);

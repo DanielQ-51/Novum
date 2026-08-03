@@ -1387,6 +1387,16 @@ __device__ int2 get_paired_neighbor(
 }
 
 __device__ __forceinline__ float3 debugVisualizeTechnique(uint32_t type, uint32_t rcInd) {
+    // 0. Special Reconnection Indices -> Overriding Colors
+    if (rcInd == 0xFF) {
+        // Full Replay Technique: White
+        return make_float3(1.0f, 1.0f, 1.0f); 
+    } 
+    else if (rcInd == 0xFE) {
+        // Direction Copy: black/greu
+        return make_float3(0.1f, 0.1f, 0.1f); 
+    }
+
     float3 color = make_float3(0.0f, 0.0f, 0.0f);
 
     // 1. Reconnection Depth -> Primary Color Axis

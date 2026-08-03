@@ -802,10 +802,15 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
         DEBUG_PRINT_PIXEL(restir.lastFrameReservoir, restir.prevGbuffer, historyIdx, params.frame_index - 1);
     }
 
+#if USE_DUPLICATION_MAP
     uint8_t dupe_val = __ldg(&restir.duplication_map[historyIdx]);
     float D = (float)dupe_val / 255.0f;
 
     float cCap = lerp(LERP_MCAP, 1.0f, powf(D, 0.1f));
+#else
+    // Duplication map disabled: original hard M-cap (Lin 2022), cCap = LERP_MCAP.
+    float cCap = LERP_MCAP;
+#endif
 
     uint32_t hist_M_int;
     uint32_t hist_pathLength;
@@ -897,7 +902,7 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     // ==============================================================================
     // 3. THE BACKWARD SHIFT (Current Path -> History Pixel)
     // ==============================================================================
-    ShiftResult bwdResult; 
+    ShiftResult bwdResult;
     bool needs_bwd_shift = (curr_cachedJacobianDenom != -1.0f);
 
     if (IS_DEBUG_PIXEL(x, y) && !needs_bwd_shift) {

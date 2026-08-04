@@ -30,7 +30,7 @@
 // ideally should be decoupled from ray epsilon type things; look into this
 __device__ __constant__ float EPSILON = 0.0000001f;
 __device__ __constant__ float EPSILON3 = 0.001f;
-__device__ __constant__ float EPSILON2 = 0.01f;
+__device__ __constant__ float EPSILON2 = 0.001f;
 __device__ __constant__ float RAY_EPSILON = 0.00001f;
 __device__ __constant__ float PI = 3.141592f;
 __device__ __constant__ float INVPI = 0.3183098f;
@@ -38,7 +38,7 @@ __device__ __constant__ float INVPI = 0.3183098f;
 
 
 __device__ __constant__ float SKY_RADIUS = 100.0f;
-__device__ __constant__ float MAX_FIREFLY_LUM = 1500000.0f;
+__device__ __constant__ float MAX_FIREFLY_LUM = 30.0f;
 __device__ __constant__ float MERGE_MAX_FIREFLY_LUM = 350.0f;
 __device__ __constant__ float MERGE_ROUGHNESS_BOUND = 0.0f;
 
@@ -857,6 +857,6 @@ __host__ __device__ __forceinline__ inline float lerp(float a, float b, float t)
 }
 
 __device__ __forceinline__ float targetFunction(float3 contribution) {
-    //return luminance(fireflyClamp(contribution));
-    return luminance(contribution);
+    return luminance(fireflyClamp(contribution));
+    //return luminance(contribution);
 }

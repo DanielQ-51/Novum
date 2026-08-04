@@ -35,7 +35,17 @@ __global__ void computeDualMV(
 
     int center_idx = y * w + x;
 
-    float closest_depth = gbuffer.getDepth_notstreaming(center_idx);
+    // 0xFFFFFFFF MV = environment miss: candidate gen never wrote depth for that pixel,
+    // so its depth is meaningless (garbage/stale). Treat such pixels as infinitely far
+    // so they can never win the closest-depth test below; otherwise their undefined
+    // depth drives a nondeterministic MV steal.
+    auto validDepth = [&](int idx) -> float {
+        half2 mv = gbuffer.getMV_notstreaming(idx);
+        if (reinterpret_cast<const uint32_t&>(mv) == 0xFFFFFFFFu) return 1e30f;
+        return gbuffer.getDepth_notstreaming(idx);
+    };
+
+    float closest_depth = validDepth(center_idx);
     half2 best_dual_mv = gbuffer.getMV_notstreaming(center_idx);
 
     for (int dy = -DUALMV_SEARCH_RADIUS; dy <= DUALMV_SEARCH_RADIUS; dy++) {
@@ -45,7 +55,7 @@ __global__ void computeDualMV(
             int ny = clamp(y + dy, 0, h - 1);
             int neighbor_idx = ny * w + nx;
 
-            float neighbor_depth = gbuffer.getDepth_notstreaming(neighbor_idx);
+            float neighbor_depth = validDepth(neighbor_idx);
 
             // If neighbor is significantly closer to the camera, steal its MV
             if (neighbor_depth < closest_depth) {

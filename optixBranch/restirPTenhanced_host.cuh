@@ -152,6 +152,23 @@ __host__ void launch_restir (
     std::filesystem::create_directories(ASSET_PATH("renders/unidirectional"));
 #endif
 
+    // The gbuffer/reservoir pools come straight from cudaMalloc (no zeroing), so on
+    // frame 0 the "previous" buffers and any pixel a shader doesn't write hold garbage
+    // VRAM. computeDualMV reads neighbor depth for every pixel, so an unwritten (env
+    // miss) depth feeds an uninitialized value into its closest-depth test -- a
+    // nondeterministic read that compute-sanitizer initcheck flags and that seeds the
+    // intermittent CUDA 719 fault once a static camera lets temporal reuse latch onto it.
+    // Zero all four pools so frame 0 reads defined values, and seed lastFrameCamera so
+    // the frame-0 temporal pass doesn't reproject through a garbage camera.
+    {
+        uint32_t numPix = ((commonParams.w * commonParams.h) + 31) & ~31;
+        cudaMemsetAsync(r1Memory,  0, (size_t)numPix * RESERVOIR_SIZE, stream);
+        cudaMemsetAsync(r2Memory,  0, (size_t)numPix * RESERVOIR_SIZE, stream);
+        cudaMemsetAsync(gb1Memory, 0, (size_t)numPix * GBUFFER_SIZE,   stream);
+        cudaMemsetAsync(gb2Memory, 0, (size_t)numPix * GBUFFER_SIZE,   stream);
+        allParams.restir.lastFrameCamera = allParams.common.camera;
+    }
+
     cudaEventRecord(start, stream);
 
     for (uint32_t frame = 0; frame < frameCount; frame++) {

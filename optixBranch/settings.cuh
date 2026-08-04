@@ -25,7 +25,7 @@
 #endif
 
 #ifndef SAVE_FOR_VIDEO
-#define SAVE_FOR_VIDEO 0
+#define SAVE_FOR_VIDEO 1
 #endif
 
 #ifndef ACCUMULATE_FRAMES
@@ -33,7 +33,7 @@
 #endif
 
 #ifndef DEBUG_VISUALIZE_TYPE
-#define DEBUG_VISUALIZE_TYPE 1
+#define DEBUG_VISUALIZE_TYPE 0
 #endif
 
 #ifndef TEMPORAL_SKIP_REVERSE_SHIFT

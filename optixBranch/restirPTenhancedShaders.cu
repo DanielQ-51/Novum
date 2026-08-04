@@ -229,7 +229,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
             bool occluded = traceVisibility(
                 params,
-                Ray((shadingPos + shadingPosToLightNormalized * RAY_EPSILON), shadingPosToLightNormalized),
+                Ray((shadingPos + (dot(shadingPosToLightNormalized, normal) > 0.0f ? normal : -normal) * RAY_EPSILON), shadingPosToLightNormalized),
                 t_max * (1.0f - EPSILON2)
             );
 
@@ -355,7 +355,8 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
                     rcInd = prevDelta ?
                         FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY : // direction copy is impossible if the prev vertex was full specular
                         FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_DIRECTION_COPY; // direction copy for environment map lowers variance
-                } else if (pathRcVertexIndex == depth) {
+                    rcInd = FLAG_HYBRID_SHIFT_RC_INDEX_K_IS_D_FULL_REPLAY;
+                    } else if (pathRcVertexIndex == depth) {
                     // k = d - 1
                     // This means the previous iteration, the previous vertex was marked as the rc vertex, thus, the rcvertexgeometry
                     // holds a rcWi that points towards this current vertex, which is correct.
@@ -629,7 +630,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
                 bool occluded = traceVisibility(
                     params,
-                    Ray((shadingPos + shadingPosToLightNormalized * RAY_EPSILON), shadingPosToLightNormalized),
+                    Ray((shadingPos + (dot(shadingPosToLightNormalized, normal) > 0.0f ? normal : -normal) * RAY_EPSILON), shadingPosToLightNormalized),
                     t_max * (1.0f - EPSILON2)
                 );
 

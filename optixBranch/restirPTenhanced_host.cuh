@@ -88,7 +88,7 @@ __host__ void launch_restir (
 #if CAMERA_MOVES == 0 
     TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.0f, 90.0f, 0.0f);
 #else
-    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.36f, 90.0f, 0.0f);
+    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, 0.66f, 90.0f, 0.0f);
 #endif
     //LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.01f, 0.0f, 0.0f) ,f3());
     //animation.update(allParams.common.camera, 0);
@@ -151,15 +151,6 @@ __host__ void launch_restir (
 
     std::filesystem::create_directories(ASSET_PATH("renders/unidirectional"));
 #endif
-
-    // The gbuffer/reservoir pools come straight from cudaMalloc (no zeroing), so on
-    // frame 0 the "previous" buffers and any pixel a shader doesn't write hold garbage
-    // VRAM. computeDualMV reads neighbor depth for every pixel, so an unwritten (env
-    // miss) depth feeds an uninitialized value into its closest-depth test -- a
-    // nondeterministic read that compute-sanitizer initcheck flags and that seeds the
-    // intermittent CUDA 719 fault once a static camera lets temporal reuse latch onto it.
-    // Zero all four pools so frame 0 reads defined values, and seed lastFrameCamera so
-    // the frame-0 temporal pass doesn't reproject through a garbage camera.
     {
         uint32_t numPix = ((commonParams.w * commonParams.h) + 31) & ~31;
         cudaMemsetAsync(r1Memory,  0, (size_t)numPix * RESERVOIR_SIZE, stream);

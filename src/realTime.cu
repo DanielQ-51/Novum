@@ -997,8 +997,8 @@ __global__ void calculateMaterialSortKeys(
     int materialID = (triID < 0) ? -1 : __ldg(&scene[triID].materialID);
 
     // as a hint as to which texture its using
-    int textureStartIndex = (materialID < 0) ? 
-        0 : __ldg(&materials[materialID].textureIndex);
+    int textureStartIndex = (materialID < 0) ?
+        0 : (__ldg(&materials[materialID].baseColorTex) + 1); // +1 so "no texture" (-1) maps to 0
 
     uint32_t key = generateMaterialSortKey(materialID, textureStartIndex);
     sortKeysIn[idx] = key;

@@ -5,6 +5,7 @@
 #include <math.h>
 #include "util.cuh"
 #include "objects.cuh"
+#include "textureView.cuh"
 #include <curand_kernel.h>
 
 __device__ inline void cosine_f(const float3& baseColor, float3& newColor)
@@ -421,54 +422,6 @@ __device__ inline void thin_dielectric_sample_f(RNGState& localState,
     }
 }
 
-__device__ inline void sampleTexture(const Material& mat, const float4* __restrict__ textures, const float2 uv, float3& albedo)
-{
-    int width = mat.width;
-    int height = mat.height;
-
-    // 1. Coordinate scaling
-    // We do not floor u/v here yet to preserve precision for the fraction
-    float fx = uv.x * width - 0.5f;
-    float fy = uv.y * height - 0.5f;
-
-    // 2. Determine grid corners (flooring)
-    int x_int = static_cast<int>(floorf(fx));
-    int y_int = static_cast<int>(floorf(fy));
-
-    // 3. Calculate fractions (The weights)
-    // We use the float coordinate minus the floor coordinate, BEFORE clamping/wrapping
-    float sx = fx - floorf(fx);
-    float sy = fy - floorf(fy);
-
-    // 4. Handle Wrapping (Modulo Arithmetic)
-    // This ensures pixel (width) wraps to 0, and pixel (-1) wraps to (width-1)
-    auto wrap = [](int val, int dim) {
-        int r = val % dim;
-        return r < 0 ? r + dim : r;
-    };
-
-    int x0 = wrap(x_int, width);
-    int y0 = wrap(y_int, height);
-    int x1 = wrap(x_int + 1, width);
-    int y1 = wrap(y_int + 1, height);
-
-    // 5. Fetch texels
-    // Note: Depending on memory layout, these 4 reads are likely uncoalesced
-    // and will cause significant memory latency.
-    float3 c00 = f3(__ldg(&textures[mat.startInd + y0 * width + x0]));
-    float3 c10 = f3(__ldg(&textures[mat.startInd + y0 * width + x1]));
-    float3 c01 = f3(__ldg(&textures[mat.startInd + y1 * width + x0]));
-    float3 c11 = f3(__ldg(&textures[mat.startInd + y1 * width + x1]));
-
-    // 6. Interpolate (Lerp)
-    // Using mix/lerp helper functions is usually cleaner:
-    // lerp(a, b, t) = a + t*(b-a)
-    float3 bottom = c00 * (1.0f - sx) + c10 * sx;
-    float3 top    = c01 * (1.0f - sx) + c11 * sx;
-
-    albedo = bottom * (1.0f - sy) + top * sy;
-}
-
 // convention: wi always faces away from the surface (same dir as surface normal)
 __device__ inline void leaf_f(const float3& albedo, float ior, float currIOR, float roughness, float transmission, const float3& wi, const float3& wo, float3& f_val)
 {
@@ -772,24 +725,131 @@ __device__ inline void microfacet_dielectric_sample_f(RNGState& localState,
     }
 }
 
+// =============================================================================
+// glTF metallic-roughness principled BSDF (MAT_GLTF_PRINCIPLED_BSDF)
+//
+// Two-lobe, opaque, energy-conserving per the glTF 2.0 spec (Appendix B):
+//   f = (1 - F) * baseColor*(1-metallic)/PI   +   F * D * G / (4 nv nl)
+// with F0 = lerp(0.04, baseColor, metallic), Schlick Fresnel.
+//
+// MARGINALIZED (evaluate-all-lobes) formulation: sample_f picks a lobe only to
+// generate a direction, then returns the FULL mixed f and the FULL marginal pdf
+// (identical to what f_eval / pdf_eval return for the same directions). The lobe
+// choice is a replayable RNG draw, so this stays compatible with ReSTIR shifts.
+//
+// Convention: v and l are both local, z-up, pointing AWAY from the surface
+// (callers pass v = -wi, l = wo), matching the microfacet_* helpers.
+// =============================================================================
+
+// Colored Schlick Fresnel from reflectance-at-normal-incidence F0.
+__device__ __forceinline__ float3 fresnelSchlickF0(float cosTheta, const float3& F0)
+{
+    float m  = clamp(1.0f - cosTheta, 0.0f, 1.0f);
+    float m5 = (m * m) * (m * m) * m;
+    return F0 + (f3(1.0f) - F0) * m5;
+}
+
+// Lobe-selection probability. MUST be identical in sample_f and pdf, so it lives
+// in one place. Naturally -> ~1 for pure metal (cDiff -> 0), floored so a
+// dielectric's specular lobe is always samplable.
+__device__ __forceinline__ float principled_specProb(const float3& F0, const float3& cDiff)
+{
+    float ls = luminance(F0);
+    float ld = luminance(cDiff);
+    return fmaxf(ls / (ls + ld + 1e-4f), 0.1f);
+}
+
+__device__ inline void principled_f(const float3& baseColor, float metallic, float roughness,
+    const float3& v, const float3& l, float3& f_val)
+{
+    if (v.z <= 0.0f || l.z <= 0.0f) { f_val = f3(0.0f); return; }
+
+    roughness = fmaxf(roughness, 0.025f); // avoid delta-limit NaNs at roughness 0
+    float alpha = roughness * roughness;
+
+    float3 h  = normalize(v + l);
+    float3 F0 = f3(0.04f) * (1.0f - metallic) + baseColor * metallic;
+    float3 F  = fresnelSchlickF0(fmaxf(dot(v, h), 0.0f), F0);
+
+    float D = D_GGX(h, alpha);
+    float G = G_Smith(v, l, h, alpha);
+
+    float3 spec  = (D * G) * F / fmaxf(4.0f * v.z * l.z, EPSILON);
+    float3 cDiff = baseColor * (1.0f - metallic);
+    float3 diff  = (f3(1.0f) - F) * cDiff * (1.0f / PI);
+
+    f_val = diff + spec;
+}
+
+__device__ inline void principled_pdf(const float3& baseColor, float metallic, float roughness,
+    const float3& v, const float3& l, float& pdf)
+{
+    if (v.z <= 0.0f || l.z <= 0.0f) { pdf = 0.0f; return; }
+
+    roughness = fmaxf(roughness, 0.025f);
+    float alpha = roughness * roughness;
+
+    float3 h = normalize(v + l);
+    float D  = D_GGX(h, alpha);
+
+    float specPdf = D * h.z / fmaxf(4.0f * dot(v, h), EPSILON);
+    float diffPdf = l.z * (1.0f / PI);
+
+    float3 F0    = f3(0.04f) * (1.0f - metallic) + baseColor * metallic;
+    float3 cDiff = baseColor * (1.0f - metallic);
+    float pSpec  = principled_specProb(F0, cDiff);
+
+    pdf = pSpec * specPdf + (1.0f - pSpec) * diffPdf;
+}
+
+__device__ inline void principled_sample_f(RNGState& localState, const float3& baseColor, float metallic, float roughness,
+    const float3& v, float3& l, float3& f_val, float& pdf)
+{
+    roughness = fmaxf(roughness, 0.025f);
+    float alpha = roughness * roughness;
+
+    float3 F0    = f3(0.04f) * (1.0f - metallic) + baseColor * metallic;
+    float3 cDiff = baseColor * (1.0f - metallic);
+    float pSpec  = principled_specProb(F0, cDiff);
+
+    if (rand(&localState) < pSpec)
+    {
+        // GGX NDF half-vector sampling (matches microfacet_metal_sample_f)
+        float u1  = rand(&localState);
+        float phi = 2.0f * PI * rand(&localState);
+        float cosT = sqrtf((1.0f - u1) / (1.0f + (alpha * alpha - 1.0f) * u1));
+        float sinT = sqrtf(fmaxf(1.0f - cosT * cosT, 0.0f));
+        float3 h = f3(sinT * cosf(phi), sinT * sinf(phi), cosT);
+        l = 2.0f * dot(v, h) * h - v; // reflect v about h
+    }
+    else
+    {
+        // cosine-weighted diffuse
+        float pdfTmp;
+        cosine_emit(localState, l, pdfTmp);
+    }
+
+    if (l.z <= 0.0f) { f_val = f3(0.0f); pdf = 0.0f; return; }
+
+    // Return the FULL mixed value and FULL marginal pdf (not the chosen lobe's).
+    principled_f(baseColor, metallic, roughness, v, l, f_val);
+    principled_pdf(baseColor, metallic, roughness, v, l, pdf);
+}
+
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ inline void f_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
+__device__ inline void f_eval(const Material* __restrict__ materials, int materialID, const TextureView& textures,
     const float3& wi, const float3& wo, float etaI, float etaT, float3& f_val, const float2 uv,
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
     const Material& mat = materials[materialID];
     float3 albedo = f3(mat.albedo);
-    if (mat.hasTexture)
-        sampleTexture(mat, textures, uv, albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
 
     float trans = mat.transmission;
-    float3 trans3;
-    if (mat.hasTransMap)
-    {
-        sampleTexture(mat, textures, uv, trans3);
-        trans = trans3.x;
-    }
+    if (mat.transTex >= 0)
+        trans = sampleTex(textures, mat.transTex, uv).x;
 
     if (mat.type == MAT_DIFFUSE)
     {
@@ -815,26 +875,33 @@ __device__ inline void f_eval(const Material* __restrict__ materials, int materi
     {
         microfacet_dielectric_f(etaI, etaT, mat.roughness, -wi, wo, f_val);
     }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
+    {
+        float metallic = mat.metallic;
+        float roughness = mat.roughness;
+        if (mat.mrTex >= 0) {
+            float4 mr = sampleTex(textures, mat.mrTex, uv);
+            roughness *= mr.y; // glTF: roughness in G
+            metallic  *= mr.z; // glTF: metallic in B
+        }
+        principled_f(albedo, metallic, roughness, -wi, wo, f_val);
+    }
 }
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ inline void sample_f_eval(RNGState& localState, const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
+__device__ inline void sample_f_eval(RNGState& localState, const Material* __restrict__ materials, int materialID, const TextureView& textures,
     const float3& wi, float etaI, float etaT, bool backface, float3& wo, float3& f_val, float& pdf, const float2 uv,
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
     const Material& mat = materials[materialID];
     float3 albedo = f3(mat.albedo);
-    if (mat.hasTexture)
-        sampleTexture(mat, textures, uv, albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
 
     float trans = mat.transmission;
-    float3 trans3;
-    if (mat.hasTransMap)
-    {
-        sampleTexture(mat, textures, uv, trans3);
-        trans = trans3.x;
-    }
+    if (mat.transTex >= 0)
+        trans = sampleTex(textures, mat.transTex, uv).x;
 
     if (mat.type == MAT_DIFFUSE)
     {
@@ -865,21 +932,28 @@ __device__ inline void sample_f_eval(RNGState& localState, const Material* __res
     {
         microfacet_dielectric_sample_f(localState, -wi, mat.ior, mat.roughness, backface, transportMode, wo, f_val, pdf);
     }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
+    {
+        float metallic = mat.metallic;
+        float roughness = mat.roughness;
+        if (mat.mrTex >= 0) {
+            float4 mr = sampleTex(textures, mat.mrTex, uv);
+            roughness *= mr.y;
+            metallic  *= mr.z;
+        }
+        principled_sample_f(localState, albedo, metallic, roughness, -wi, wo, f_val, pdf);
+    }
 }
 
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
-__device__ inline void pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures, const float3& wi, const float3& wo,
+__device__ inline void pdf_eval(const Material* __restrict__ materials, int materialID, const TextureView& textures, const float3& wi, const float3& wo,
     float etaI, float etaT, float& pdf, const float2 uv)
 {
     const Material& mat = materials[materialID];
     float trans = mat.transmission;
-    float3 trans3;
-    if (mat.hasTransMap)
-    {
-        sampleTexture(mat, textures, uv, trans3);
-        trans = trans3.x;
-    }
+    if (mat.transTex >= 0)
+        trans = sampleTex(textures, mat.transTex, uv).x;
 
     if (mat.type == MAT_DIFFUSE)
     {
@@ -905,23 +979,33 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     {
         microfacet_dielectric_pdf(etaI, etaT, mat.roughness, -wi, wo, pdf);
     }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
+    {
+        float3 albedo = f3(mat.albedo);
+        if (mat.baseColorTex >= 0)
+            albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
+        float metallic = mat.metallic;
+        float roughness = mat.roughness;
+        if (mat.mrTex >= 0) {
+            float4 mr = sampleTex(textures, mat.mrTex, uv);
+            roughness *= mr.y;
+            metallic  *= mr.z;
+        }
+        principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+    }
 }
-__device__ inline void f_pdf_eval(const Material* __restrict__ materials, int materialID, const float4* __restrict__ textures,
+__device__ inline void f_pdf_eval(const Material* __restrict__ materials, int materialID, const TextureView& textures,
     const float3& wi, const float3& wo, float etaI, float etaT, float3& f_val, float& pdf, const float2 uv,
     int transportMode = TRANSPORTMODE_RADIANCE)
 {
     const Material& mat = materials[materialID];
     float3 albedo = f3(mat.albedo);
-    if (mat.hasTexture)
-        sampleTexture(mat, textures, uv, albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
 
     float trans = mat.transmission;
-    float3 trans3;
-    if (mat.hasTransMap)
-    {
-        sampleTexture(mat, textures, uv, trans3);
-        trans = trans3.x;
-    }
+    if (mat.transTex >= 0)
+        trans = sampleTex(textures, mat.transTex, uv).x;
 
     if (mat.type == MAT_DIFFUSE)
     {
@@ -953,21 +1037,33 @@ __device__ inline void f_pdf_eval(const Material* __restrict__ materials, int ma
         microfacet_dielectric_f(etaI, etaT, mat.roughness, -wi, wo, f_val);
         microfacet_dielectric_pdf(etaI, etaT, mat.roughness, -wi, wo, pdf);
     }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
+    {
+        float metallic = mat.metallic;
+        float roughness = mat.roughness;
+        if (mat.mrTex >= 0) {
+            float4 mr = sampleTex(textures, mat.mrTex, uv);
+            roughness *= mr.y;
+            metallic  *= mr.z;
+        }
+        principled_f(albedo, metallic, roughness, -wi, wo, f_val);
+        principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+    }
 }
 
 
 __device__ inline void getAlbedo(
     const Material* __restrict__ materials,
     int materialID,
-    const float4* __restrict__ textures,
+    const TextureView& textures,
     const float2 uv,
 
     float3& albedo
 ) {
     const Material& mat = materials[materialID];
     albedo = f3(mat.albedo);
-    if (mat.hasTexture)
-        sampleTexture(mat, textures, uv, albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
 
     if (mat.type == MAT_METAL) {
         float3 eta = f3(mat.eta);

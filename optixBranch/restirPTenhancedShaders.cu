@@ -68,9 +68,9 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 #else
         params.accum_buffer[pixelIdx] = f4(contribution);
 #endif
-        restir.reservoir.pathFlags[pixelIdx] = 0;
+        restir.reservoir.setPathFlags(pixelIdx, 0);
         restir.reservoir.setCachedJacobian(pixelIdx, -1.0f); // gate this out of shifts, like the empty-hit case
-        restir.reservoir.F[pixelIdx] = 0u; // no reservoir here: zero contribution, not last-cycle stale radiance
+        restir.reservoir.setF(pixelIdx, 0u); // no reservoir here: zero contribution, not last-cycle stale radiance
         restir.gbuffer.setInvalidMotionVec(pixelIdx);
         save_rng(pixelIdx, &localState, nullptr);
         return;
@@ -725,8 +725,8 @@ finalize_pixel:
     if (w_sum <= 0.0f) {
         restir.reservoir.setW(pixelIdx, 1.0f);
         restir.reservoir.setCachedJacobian(pixelIdx, -1.0f);
-        restir.reservoir.pathFlags[pixelIdx] = packPathFlags(1, 0, 0, 0);
-        restir.reservoir.F[pixelIdx] = 0u; // empty sample: zero contribution, not last-cycle stale radiance
+        restir.reservoir.setPathFlags(pixelIdx, packPathFlags(1, 0, 0, 0));
+        restir.reservoir.setF(pixelIdx, 0u); // empty sample: zero contribution, not last-cycle stale radiance
         return;
     }
 
@@ -813,32 +813,29 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     float cCap = LERP_MCAP;
 #endif
 
-    uint32_t hist_M_int;
-    uint32_t hist_pathLength;
-    uint32_t hist_rcVertexIndex;
-    TechniqueType hist_type;
-    restir.lastFrameReservoir.getPathFlags(historyIdx, hist_M_int, hist_pathLength, hist_rcVertexIndex, hist_type);
-
-    float hist_M = fminf(cCap, hist_M_int);
-
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Proceed to perform shift
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
+    // One grouped 32B load of the whole history shift descriptor (was 4+ separate
+    // dependent __ldg's when the reservoir was SOA).
+    uint32_t hist_M_int;
+    uint32_t hist_pathLength;
+    uint32_t hist_rcVertexIndex;
+    TechniqueType hist_type;
     uint32_t hist_rcPrimID;
     float2 hist_rcBarycentrics;
     float3 hist_rcWi;
     float3 hist_rcRadiance;
     uint32_t hist_rcInstanceID;
+    float hist_cachedJacobianDenom;
+    float hist_cachedNeePdf;
+    restir.lastFrameReservoir.getShiftDescriptor(historyIdx,
+        hist_M_int, hist_pathLength, hist_rcVertexIndex, hist_type,
+        hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance, hist_rcInstanceID,
+        hist_cachedJacobianDenom, hist_cachedNeePdf);
 
-    restir.lastFrameReservoir.getRcVertexGeometry_globalLoad(historyIdx, hist_rcPrimID, hist_rcBarycentrics, hist_rcWi, hist_rcRadiance, hist_rcInstanceID);
-
-    float hist_cachedJacobianDenom = restir.lastFrameReservoir.getCachedJacobian_globalLoad(historyIdx);
-    float hist_cachedNeePdf = -1.0f;
-
-    if (needNeePDF(hist_type)) {
-        hist_cachedNeePdf = restir.lastFrameReservoir.getCachedNEE_globalLoad(historyIdx);
-    }
+    float hist_M = fminf(cCap, hist_M_int);
 
     uint32_t hist_seed = restir.lastFrameReservoir.getSeed_notstreaming(historyIdx);
 
@@ -849,34 +846,30 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
     // ==============================================================================
     // 1. UNPACK CURRENT PATH DATA (Needed for the Backward Shift)
     // ==============================================================================
-    uint32_t curr_pathFlags = restir.reservoir.pathFlags[pixelIdx];
-    uint32_t curr_M = extractM(curr_pathFlags);
-    uint32_t curr_pathLength = (curr_pathFlags >> 8) & 0xFF;
-    uint32_t curr_rcVertexIndex = (curr_pathFlags >> 16) & 0xFF;
-    TechniqueType curr_type = static_cast<TechniqueType>((curr_pathFlags >> 24) & 0xFF);
-
-    float3 curr_F = restir.reservoir.getF_globalLoad(pixelIdx);
-    float curr_W = restir.reservoir.getW_globalLoad(pixelIdx);
-    float curr_p_hat = targetFunction(curr_F);
-
-    uint32_t curr_seed = restir.reservoir.getSeed_notstreaming(pixelIdx);
-
+    // One grouped 32B load of the whole current shift descriptor.
+    uint32_t curr_M, curr_pathLength, curr_rcVertexIndex;
+    TechniqueType curr_type;
     uint32_t curr_rcPrimID;
     float2 curr_rcBarycentrics;
     float3 curr_rcWi;
     float3 curr_rcRadiance;
     uint32_t curr_rcInstanceID;
-    restir.reservoir.getRcVertexGeometry_globalLoad(pixelIdx, curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance, curr_rcInstanceID);
+    float curr_cachedJacobianDenom;
+    float curr_cachedNeePdf;
+    restir.reservoir.getShiftDescriptor(pixelIdx,
+        curr_M, curr_pathLength, curr_rcVertexIndex, curr_type,
+        curr_rcPrimID, curr_rcBarycentrics, curr_rcWi, curr_rcRadiance, curr_rcInstanceID,
+        curr_cachedJacobianDenom, curr_cachedNeePdf);
 
-    float curr_cachedJacobianDenom = restir.reservoir.getCachedJacobian_globalLoad(pixelIdx);
-    float curr_cachedNeePdf = -1.0f;
-    if (needNeePDF(curr_type)) {
-        curr_cachedNeePdf = restir.reservoir.getCachedNEE_globalLoad(pixelIdx);
-    }
+    float curr_W; float3 curr_F;
+    restir.reservoir.getWF(pixelIdx, curr_W, curr_F);
+    float curr_p_hat = targetFunction(curr_F);
+
+    uint32_t curr_seed = restir.reservoir.getSeed_notstreaming(pixelIdx);
 
     uint32_t new_M = curr_M + (uint32_t)hist_M;
-    float hist_W = restir.lastFrameReservoir.getW_globalLoad(historyIdx);
-    float3 hist_F = restir.lastFrameReservoir.getF_globalLoad(historyIdx);
+    float hist_W; float3 hist_F;
+    restir.lastFrameReservoir.getWF(historyIdx, hist_W, hist_F);
     float hist_p_hat = targetFunction(hist_F);
 
     // ==============================================================================
@@ -1003,10 +996,10 @@ extern "C" __global__ void __raygen__restirTemporalReuse() {
             restir.reservoir.setPathFlags(pixelIdx, packPathFlags(1, 0, 0, 0));
             restir.reservoir.setW_noCS(pixelIdx, 0.0f);
             restir.reservoir.setCachedJacobian(pixelIdx, -1.0f); // gate out of subsequent shifts, matching the candidate-gen empty case
-            restir.reservoir.F[pixelIdx] = 0u;                   // avoid stale radiance leaking into p_hat
+            restir.reservoir.setF(pixelIdx, 0u);                 // avoid stale radiance leaking into p_hat
         } else {
-            curr_pathFlags = updateM(curr_pathFlags, new_M);
-            restir.reservoir.setPathFlags(pixelIdx, curr_pathFlags);
+            // Only M changes; repack from the fields we already unpacked (equivalent to updateM).
+            restir.reservoir.setPathFlags(pixelIdx, packPathFlags(new_M, curr_pathLength, curr_rcVertexIndex, curr_type));
             restir.reservoir.setW_noCS(pixelIdx, W_final);
         }
     }

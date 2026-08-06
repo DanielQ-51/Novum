@@ -2,11 +2,12 @@
 
 #include "objects.cuh"
 #include "sampling.cuh"
+#include "textureView.cuh"
 
 struct SceneContext
 {
     const Material* __restrict__ materials;
-    const float4* __restrict__ textures;
+    TextureView textures;
     const BVHnode* __restrict__ BVH;
     const int2* __restrict__ BVHindices;
     const Vertices* __restrict__ vertices; 
@@ -32,7 +33,7 @@ struct BVHContext
 struct ShadeContext
 {
     const Material* __restrict__ materials;
-    const float4* __restrict__ textures;
+    TextureView textures;
     const Triangle* __restrict__ lights;
     const Triangle* __restrict__ scene;
     const Vertices* __restrict__ vertices; 

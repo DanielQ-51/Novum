@@ -22,6 +22,7 @@ add_executable(NovumRender
     src/fastIntegrators.cu
     src/volumeRendering.cu
     src/tinyexr_impl.cpp
+    src/stb_image_impl.cpp
     #src/realTime.cu
     thirdparty/tinyexr/miniz.c
 )

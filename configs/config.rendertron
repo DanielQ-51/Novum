@@ -3,8 +3,8 @@ Name: render
 width: 1400
 height: 1400
 
-Integrator: UNIDIRFAST
-Sample Count: 1000
+Integrator: OPTIXNORMAL
+Sample Count: 100000
 Post Process: true
 
 Unidirectional Max Depth: 12
@@ -38,9 +38,9 @@ Camera FOV: 40.0
 
 Meshes (path; multiplier * emission; materialID):
 assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2
-assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 4
+assets/scenedata/cornellbox/leftBox.obj; 0.0 * (0.0, 0.0, 0.0); 38
 assets/scenedata/cornellbox/bunny.obj; 0.0 * (0.0, 0.0, 0.0); 5
-.assets/scenedata/cornellbox/leftteapot.obj; 0.0 * (0.0, 0.0, 0.0); 5
+assets/scenedata/cornellbox/leftteapot.obj; 0.0 * (0.0, 0.0, 0.0); 38
 .assets/scenedata/cornellbox/dragon.obj; 0.0 * (0.0, 0.0, 0.0); 5
 assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 6
 .assets/scenedata/cornellbox/rightBox.obj; 0.0 * (0.0, 0.0, 0.0); 2

@@ -4,6 +4,12 @@
 #define USE_RESTIR_PT 1
 #endif
 
+// Reservoir memory layout. 0 = legacy SOA (one global buffer per field).
+// 1 = AOS split, tuned for SER (which destroys cross-thread coalescing anyway):
+#ifndef RESERVOIR_LAYOUT_AOS
+#define RESERVOIR_LAYOUT_AOS 1
+#endif
+
 // Equal-time comparison harness. When 1, launch_restir also runs the
 // unidirectional path tracer back-to-back each frame: it measures the ReSTIR
 // frame's GPU time with CUDA events, then adaptively fills exactly that time
@@ -33,7 +39,7 @@
 #endif
 
 #ifndef DEBUG_VISUALIZE_TYPE
-#define DEBUG_VISUALIZE_TYPE 0
+#define DEBUG_VISUALIZE_TYPE 1
 #endif
 
 #ifndef TEMPORAL_SKIP_REVERSE_SHIFT

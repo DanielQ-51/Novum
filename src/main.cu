@@ -20,6 +20,7 @@
 #include <set>
 #include <iomanip>
 #include "imageUtil.cuh"
+#include "textureManager.cuh"
 #include <fstream>
 #include <cuda_fp16.h>
 #include <string>
@@ -199,46 +200,27 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     // Loading Textures
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    vector<Image> images;
-    vector<float4> pixels;
-    vector<int> widths;
-    vector<int> heights;
-    vector<int> startIndices;
-    int currentStartIndex = 0;
+    TextureManager texManager;
 
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/enkidutexture.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/enkiduchibitexture.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/leaftex2.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/leafautumn.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wood.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wall.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/Material.006_baseColor.bmp"), false));
+    // All of these are 8-bit sRGB base-color maps; the hardware linearizes them.
+    int tex_enkidu      = texManager.addFromFile(ASSET_PATH("assets/textures/enkidutexture.bmp"), TEX_SRGB);
+    int tex_enkiduChibi = texManager.addFromFile(ASSET_PATH("assets/textures/enkiduchibitexture.bmp"), TEX_SRGB);
+    int tex_leaf        = texManager.addFromFile(ASSET_PATH("assets/textures/leaftex2.bmp"), TEX_SRGB);
+    int tex_leafAutumn  = texManager.addFromFile(ASSET_PATH("assets/textures/leafautumn.bmp"), TEX_SRGB);
+    int tex_wood        = texManager.addFromFile(ASSET_PATH("assets/textures/wood.bmp"), TEX_SRGB);
+    int tex_wall        = texManager.addFromFile(ASSET_PATH("assets/textures/wall.bmp"), TEX_SRGB);
+    int tex_glove       = texManager.addFromFile(ASSET_PATH("assets/textures/Material.006_baseColor.bmp"), TEX_SRGB);
 
-    for (Image i : images)
-    {
-        vector<float4> pix = i.data();
-
-        pixels.insert(pixels.end(), pix.begin(), pix.end());
-
-        widths.push_back(i.width);
-        heights.push_back(i.height);
-        startIndices.push_back(currentStartIndex);
-        currentStartIndex += i.width*i.height;
-    }
-
-    float4* textures_d;
-
-    cudaMalloc(&textures_d, pixels.size() * sizeof(float4));
-    cudaMemcpy(textures_d, pixels.data(), pixels.size() * sizeof(float4), cudaMemcpyHostToDevice);
+    TextureView texView = texManager.getView();
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Creating Materials
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    Material wood = Material::Leaf(4, startIndices[4], widths[4], heights[4], 1.5f, 0.3f, f4(), 0.00f);
-    Material wall = Material::DiffuseTextured(5, startIndices[5], widths[5], heights[5]);
-    Material lambertTextured = Material::DiffuseTextured(0, startIndices[0], widths[0], heights[0]);
-    Material lambert2Textured = Material::DiffuseTextured(1, startIndices[1], widths[1], heights[1]);
+    Material wood = Material::Leaf(tex_wood, 1.5f, 0.3f, f4(), 0.00f);
+    Material wall = Material::DiffuseTextured(tex_wall);
+    Material lambertTextured = Material::DiffuseTextured(tex_enkidu);
+    Material lambert2Textured = Material::DiffuseTextured(tex_enkiduChibi);
 
     Material lambertBlue = Material::Diffuse(f4(0.4f,0.4f,0.8f));
     Material lambertGrey = Material::Diffuse(f4(0.8f,0.8f,0.8f));
@@ -282,9 +264,9 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     Material air = Material::SmoothDielectric(1.0f, f4(0.0f), 99);
 
     //Material leaf = Material::Leaf(1.5f, 0.6f, f4(0.8f, 0.25f, 0.28f), 0.2f);
-    Material leaf = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
-    Material leafAutumn = Material::Leaf(3, startIndices[3], widths[3], heights[3], 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
-    Material canopy = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
+    Material leaf = Material::Leaf(tex_leaf, 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
+    Material leafAutumn = Material::Leaf(tex_leafAutumn, 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
+    Material canopy = Material::Leaf(tex_leaf, 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
     Material leafStem = Material::Diffuse(f4(0.90f, 0.9f, 0.83f));
     Material sky = Material::Diffuse(f4(0.4f, 0.4f, 1.00f));
 
@@ -301,7 +283,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     float4 cf_albedo = f4(0.03f, 0.03f, 0.03f);
     Material handles = Material::Diffuse(cf_albedo);
 
-    Material glove = Material::Leaf(6, startIndices[6], widths[6], heights[6], 1.5f, 0.4f, f4(), 0.00f);
+    Material glove = Material::Leaf(tex_glove, 1.5f, 0.4f, f4(), 0.00f);
 
     mats.push_back(air); // index 0
 
@@ -542,7 +524,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
     
     if (integratorChoice == UNIDIRECTIONAL)
-        launch_unidirectional(maxDepth, camera, mats_d, textures_d, BVH, BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, true, w, h, out_colors);
+        launch_unidirectional(maxDepth, camera, mats_d, texView, BVH, BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, true, w, h, out_colors);
     else if (integratorChoice == BIDIRECTIONAL)
     {
         int totalEyePathVertices = w * h * eyePathDepth;
@@ -618,7 +600,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
 
         cudaMemcpy(lightPath_d, &tempPaths1, sizeof(PathVertices), cudaMemcpyHostToDevice);
 
-        launch_bidirectional(eyePathDepth, lightPathDepth, camera, eyePath_d, lightPath_d, mats_d, textures_d, BVH, 
+        launch_bidirectional(eyePathDepth, lightPathDepth, camera, eyePath_d, lightPath_d, mats_d, texView, BVH, 
             BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, w, h, 
             sceneCenter, sceneRadius, out_colors, out_overlay, config.postProcess);
         cudaFree(eyePath_d);
@@ -654,7 +636,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     }
     else if (integratorChoice == NAIVE_UNIDIRECTIONAL)
     {
-        launch_naive_unidirectional(maxDepth, camera, mats_d, textures_d, BVH, BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, true, w, h, out_colors);
+        launch_naive_unidirectional(maxDepth, camera, mats_d, texView, BVH, BVHindices, verts, points.size(), scene, mesh.size(), lights, lightsvec.size(), sampleCount, true, w, h, out_colors);
     }
     else if (integratorChoice == SPPM)
     {
@@ -698,7 +680,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             eyePathDepth, lightPathDepth, 
             camera, 
             &tempPhotons, &tempPhotons1, 
-            mats_d, textures_d, 
+            mats_d, texView, 
             BVH, BVHindices, 
             verts, points.size(), 
             scene, mesh.size(), 
@@ -835,7 +817,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
             camera, 
             &tempPaths, 
             &tempPhotons, &tempPhotons1, 
-            mats_d, textures_d, 
+            mats_d, texView, 
             BVH, BVHindices, 
             verts, points.size(), 
             scene, mesh.size(), 
@@ -900,7 +882,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         sc.vertices = verts;
         sc.vertNum = points.size();
         sc.materials = mats_d;
-        sc.textures = textures_d;
+        sc.textures = texView;
         sc.lightSampler = lightManager.getSampler();
 
         lightManager.getSampler().printDebugState();
@@ -926,7 +908,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
         sc.vertices = verts;
         sc.vertNum = points.size();
         sc.materials = mats_d;
-        sc.textures = textures_d;
+        sc.textures = texView;
         sc.volumes = d_volumes;
         sc.lightSampler = lightManager.getSampler();
         
@@ -991,7 +973,7 @@ int initRender(string configPath, int renderNumber, string animatedObjPath = "in
     cudaFree(BVH);
     cudaFree(BVHindices);
     cudaFree(mats_d);
-    cudaFree(textures_d);
+    // textures are owned by texManager (RAII); no manual free needed
 
     for (const Volume& vol : volumes) {
         if (vol.density_pointer) cudaFree(vol.density_pointer);

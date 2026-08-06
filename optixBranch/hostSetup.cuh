@@ -7,12 +7,14 @@
 #include "sceneContexts.cuh"
 #include "optixStructs.cuh"
 #include "restirPTenhanced_host.cuh"
+#include "unidirectional_host.cuh"
 #include <chrono>
 #include <iostream>
 #include <exception>
 #include <set>
 #include <iomanip>
 #include "imageUtil.cuh"
+#include "textureManager.cuh"
 #include <fstream>
 #include <cuda_fp16.h>
 #include <string>
@@ -506,46 +508,27 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     // Loading Textures
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    vector<Image> images;
-    vector<float4> pixels;
-    vector<int> widths;
-    vector<int> heights;
-    vector<int> startIndices;
-    int currentStartIndex = 0;
+    TextureManager texManager;
 
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/enkidutexture.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/enkiduchibitexture.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/leaftex2.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/leafautumn.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wood.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/wall.bmp"), false));
-    images.push_back(loadBMPToImage(ASSET_PATH("assets/textures/Material.006_baseColor.bmp"), false));
-
-    for (Image i : images)
-    {
-        vector<float4> pix = i.data();
-
-        pixels.insert(pixels.end(), pix.begin(), pix.end());
-
-        widths.push_back(i.width);
-        heights.push_back(i.height);
-        startIndices.push_back(currentStartIndex);
-        currentStartIndex += i.width*i.height;
-    }
-
-    float4* textures_d;
-
-    cudaMalloc(&textures_d, pixels.size() * sizeof(float4));
-    cudaMemcpy(textures_d, pixels.data(), pixels.size() * sizeof(float4), cudaMemcpyHostToDevice);
+    // All of these are 8-bit sRGB base-color maps; the hardware linearizes them.
+    int tex_enkidu      = texManager.addFromFile(ASSET_PATH("assets/textures/enkidutexture.bmp"), TEX_SRGB);
+    int tex_enkiduChibi = texManager.addFromFile(ASSET_PATH("assets/textures/enkiduchibitexture.bmp"), TEX_SRGB);
+    int tex_leaf        = texManager.addFromFile(ASSET_PATH("assets/textures/leaftex2.bmp"), TEX_SRGB);
+    int tex_leafAutumn  = texManager.addFromFile(ASSET_PATH("assets/textures/leafautumn.bmp"), TEX_SRGB);
+    int tex_wood        = texManager.addFromFile(ASSET_PATH("assets/textures/wood.bmp"), TEX_SRGB);
+    int tex_wall        = texManager.addFromFile(ASSET_PATH("assets/textures/wall.bmp"), TEX_SRGB);
+    int tex_glove       = texManager.addFromFile(ASSET_PATH("assets/textures/Material.006_baseColor.bmp"), TEX_SRGB);
 
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Creating Materials
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
-    Material wood = Material::Leaf(4, startIndices[4], widths[4], heights[4], 1.5f, 0.3f, f4(), 0.00f);
-    Material wall = Material::DiffuseTextured(5, startIndices[5], widths[5], heights[5]);
-    Material lambertTextured = Material::DiffuseTextured(0, startIndices[0], widths[0], heights[0]);
-    Material lambert2Textured = Material::DiffuseTextured(1, startIndices[1], widths[1], heights[1]);
+    Material principledWood = Material::Principled(f4(1.0f), 0.0f, 0.15f, tex_wood, -1);
+
+    Material wood = Material::Leaf(tex_wood, 1.5f, 0.3f, f4(), 0.00f);
+    Material wall = Material::DiffuseTextured(tex_wall);
+    Material lambertTextured = Material::DiffuseTextured(tex_enkidu);
+    Material lambert2Textured = Material::DiffuseTextured(tex_enkiduChibi);
 
     Material lambertBlue = Material::Diffuse(f4(0.4f,0.4f,0.8f));
     Material lambertGrey = Material::Diffuse(f4(0.8f,0.8f,0.8f));
@@ -589,9 +572,9 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     Material air = Material::SmoothDielectric(1.0f, f4(0.0f), 99);
 
     //Material leaf = Material::Leaf(1.5f, 0.6f, f4(0.8f, 0.25f, 0.28f), 0.2f);
-    Material leaf = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
-    Material leafAutumn = Material::Leaf(3, startIndices[3], widths[3], heights[3], 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
-    Material canopy = Material::Leaf(2, startIndices[2], widths[2], heights[2], 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
+    Material leaf = Material::Leaf(tex_leaf, 1.5f, 0.10f, f4(0.22f, 0.75f, 0.28f), 0.15f);
+    Material leafAutumn = Material::Leaf(tex_leafAutumn, 1.5f, 0.8f, f4(0.22f, 0.75f, 0.28f), 0.6f);
+    Material canopy = Material::Leaf(tex_leaf, 1.5f, 0.9f, f4(0.22f, 0.75f, 0.28f), 0.7f);
     Material leafStem = Material::Diffuse(f4(0.90f, 0.9f, 0.83f));
     Material sky = Material::Diffuse(f4(0.4f, 0.4f, 1.00f));
 
@@ -608,7 +591,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     float4 cf_albedo = f4(0.03f, 0.03f, 0.03f);
     Material handles = Material::Diffuse(cf_albedo);
 
-    Material glove = Material::Leaf(6, startIndices[6], widths[6], heights[6], 1.5f, 0.4f, f4(), 0.00f);
+    Material glove = Material::Leaf(tex_glove, 1.5f, 0.4f, f4(), 0.00f);
 
     mats.push_back(air); // index 0
 
@@ -649,6 +632,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     mats.push_back(hardware); // index 35
     mats.push_back(handles); // index 36
     mats.push_back(glove); // index 37
+    mats.push_back(principledWood); // index 38
 
     Material* mats_d;
 
@@ -790,7 +774,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     sc.scene = scene;
     sc.vertices = verts;
     sc.materials = mats_d;
-    sc.textures = textures_d;
+    sc.textures = texManager.getView();
     sc.lightSampler = lightManager.getSampler();
     sc.triNum = mesh.size();
     sc.transformationMatrices = d_matrices;
@@ -816,11 +800,17 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     CUstream stream;
     cudaStreamCreate(&stream);
 
-    // The render loop lives in launch_restir. The unidirectional path tracer is
-    // no longer driven from here: when settings.cuh sets EQUAL_TIME_COMPARE == 1,
-    // launch_restir runs the PT back-to-back with ReSTIR each frame (same camera,
-    // equal GPU-time budget) and writes a parallel sequence to renders/unidirectional/.
-    launch_restir(engineState, params, sampleCount);
+    if (integratorChoice == OPTIX_NORMAL) {
+        launch_unidirectional(engineState, params, sampleCount);
+    } else if (integratorChoice == OPTIX_RESTIR_PT) {
+        launch_restir(engineState, params, sampleCount);
+    } else {
+        printf("Error: Integrator Unavaible in Optix Branch");
+    }
+    
+
+
+    
     cudaMemcpy(host_colors, out_colors, w * h * sizeof(float4), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < w; i++)
@@ -841,7 +831,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     cudaFree(verts);
     cudaFree(scene);
     cudaFree(mats_d);
-    cudaFree(textures_d);
+    // textures are owned by texManager (RAII); no manual free needed
 
     cudaFree(temp.positions);
     cudaFree(temp.normals);

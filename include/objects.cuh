@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util.cuh"
+#include "material.cuh"
 #include <numeric>
 #include <iostream>
 #include <fstream>
@@ -800,7 +801,8 @@ enum IntegratorChoice {
     SPPM = 4,
     WAVEFRONT_UNIDIRECTIONAL = 5,
     VOLUME_SIMPLE = 6,
-    OPTIX_NORMAL = 7
+    OPTIX_NORMAL = 7,
+    OPTIX_RESTIR_PT = 8
 };
 
 enum TransportMode {
@@ -818,228 +820,11 @@ __host__ inline int matchIntegrator(std::string name)
     else if (name == "UNIDIRFAST") return 5;
     else if (name == "SIMPLEVOL") return 6;
     else if (name == "OPTIXNORMAL") return 7;
+    else if (name == "RESTIRPT") return 8;
 
     std::cerr << "Invalid Integrator Choice!\n";
     return -1;
 }
-
-enum MaterialType {
-    MAT_DIFFUSE = 0,
-    MAT_METAL = 1,
-    MAT_SMOOTHDIELECTRIC = 2,
-    MAT_MICROFACETDIELECTRIC = 3,
-    MAT_LEAF = 4,
-    MAT_FLOWER = 5,
-    MAT_DELTAMIRROR = 6,
-    MAT_THINDIELECTRIC = 7
-};
-
-struct Material
-{
-    bool hasTexture;
-    int startInd;
-    int width;
-    int height;
-
-    int textureIndex;
-
-    bool hasTransMap;
-
-    int type;
-
-    float4 albedo;
-    float roughness;
-
-    float4 eta;
-    float4 k;
-    float ior;
-
-    float metallic;
-    float specular;
-    float transmission;
-
-    bool isSpecular;
-    bool boundary; // for mediums tack calculations
-
-    bool thinWalled;
-
-    float4 absorption;
-
-    int priority; // dielectric priority, for nested dielectrics/medium stack
-
-    __host__ Material()
-        : type(MAT_DIFFUSE), albedo(f4(0.8f)),
-          roughness(0.5f), eta(f4(0)), k(f4(0)),
-          ior(1.5f), metallic(0.0f), specular(1.0f), transmission(0.0f) {}
-
-    __host__ static Material Diffuse(const float4& color) {
-        Material m;
-        m.type = MAT_DIFFUSE;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-
-        m.albedo = color;
-        m.roughness = 1.0f;
-        m.boundary = false;
-        m.absorption = f4();
-        m.thinWalled = false;
-        m.isSpecular = false;
-        return m;
-    }
-
-    __host__ static Material DiffuseTextured(int tind, int sInd, int w, int h) {
-        Material m;
-        m.type = MAT_DIFFUSE;
-        m.hasTexture = true;
-        m.hasTransMap = false;
-        m.textureIndex = tind;
-        m.startInd = sInd;
-        m.width = w;
-        m.height = h;
-
-        m.roughness = 1.0f;
-        m.boundary = false;
-        m.absorption = f4();
-        m.thinWalled = false;
-
-        m.isSpecular = false;
-        return m;
-    }
-
-    __host__ static Material Metal(const float4& n, const float4& k, float roughness = 0.1f) {
-        Material m;
-        m.type = MAT_METAL;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-        m.eta = n;
-        m.k = k;
-        m.roughness = roughness;
-        m.albedo = f4(1.0f);  // metals usually reflect via Fresnel, not albedo tint
-        m.metallic = 1.0f;
-        m.boundary = false;
-        m.absorption = f4();
-        m.thinWalled = false;
-
-        m.isSpecular = false;
-        return m;
-    }
-
-    __host__ static Material SmoothDielectric(float ior = 1.5f, const float4& k = f4(), int pri = 0) {
-        Material m;
-        m.type = MAT_SMOOTHDIELECTRIC;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-        m.ior = ior;
-        m.albedo = f4(1.0f);
-        m.roughness = 0.0f;
-
-        m.priority = pri;
-        m.isSpecular = true;
-        m.boundary = true;
-
-        m.absorption = k;
-        m.thinWalled = false;
-        return m;
-    }
-
-    __host__ static Material ThinDielectric(float ior = 1.5f, const float4& k = f4(), int pri = 0) {
-        Material m;
-        m.type = MAT_THINDIELECTRIC;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-        m.ior = ior;
-        m.albedo = f4(1.0f);
-        m.roughness = 0.0f;
-
-        m.priority = pri;
-        m.isSpecular = true;
-        m.boundary = true;
-
-        m.absorption = k;
-        m.thinWalled = false;
-        return m;
-    }
-
-    __host__  static Material MicrofacetDielectric(float ior = 1.5f, float roughness = 0.0f, const float4& k = f4()) {
-        Material m;
-        m.type = MAT_MICROFACETDIELECTRIC;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-        m.ior = ior;
-        m.k = k;
-        m.roughness = roughness;
-        m.albedo = f4(1.0f);
-
-        m.thinWalled = false;
-        return m;
-    }
-
-    __host__ static Material Leaf(int tind, int sInd, int w, int h,float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
-    {
-        Material m;
-        m.type = MAT_LEAF;
-        m.textureIndex = tind;
-        m.hasTexture = true;
-        m.hasTransMap = false;
-
-        m.ior = ior;
-        m.roughness = roughness;
-        m.albedo = albedo;
-        m.transmission = transmission;
-        m.boundary = false;
-
-        m.startInd = sInd;
-        m.width = w;
-        m.height = h;
-
-        m.thinWalled = true;
-
-        m.isSpecular = false;
-
-        return m;
-    }
-
-    __host__ static Material Leaf(int tind, int sInd, int w, int h, int tsInd, int tw, int th, float ior = 1.5f, float roughness = 0.7, float4 albedo = f4(), float transmission = 0.05f)
-    {
-        Material m;
-        m.type = MAT_LEAF;
-        m.textureIndex = tind;
-        m.hasTexture = true;
-        m.hasTransMap = true;
-        
-        m.ior = ior;
-        m.roughness = roughness;
-        m.albedo = albedo;
-        m.transmission = transmission;
-        m.boundary = false;
-
-        m.startInd = sInd;
-        m.width = w;
-        m.height = h;
-
-        m.thinWalled = true;
-
-        m.isSpecular = false;
-
-        return m;
-    }
-    
-    __host__ static Material Mirror()
-    {
-        Material m;
-        m.type = MAT_DELTAMIRROR;
-        m.hasTransMap = false;
-        m.hasTexture = false;
-        m.hasTransMap = false;
-
-        m.isSpecular = true;
-        m.roughness = 0.0f;
-
-        m.albedo = f4(1.0f);
-
-        return m;
-    }
-};
 
 struct Medium {
     float ior;

@@ -128,7 +128,7 @@ __global__ void displayWinningReservoirs(PipelineParams params) {
 
     half2 mv = params.restir.gbuffer.getMV(pixelIdx);
     if (reinterpret_cast<const uint32_t&>(mv) != 0xFFFFFFFF && !params.restir.gbuffer.getSkipShade(pixelIdx)) {
-        float3 output = fireflyClamp(fromRGB9E5(__ldcs(&params.restir.reservoir.F[pixelIdx])) * __ldcs(&params.restir.reservoir.W[pixelIdx]));
+        float3 output = fireflyClamp(params.restir.reservoir.getShadingColor_streaming(pixelIdx));
 #if DEBUG_MODE == 1
         if ((isnan(output.x) || isnan(output.y) || isnan(output.z))) {
             DEBUG_PRINTF("nan at pixel idx: %d\n", pixelIdx);
@@ -136,7 +136,7 @@ __global__ void displayWinningReservoirs(PipelineParams params) {
 #endif
 
 #if DEBUG_VISUALIZE_TYPE == 1
-        uint32_t pathFlags = params.restir.reservoir.pathFlags[pixelIdx];
+        uint32_t pathFlags = params.restir.reservoir.getPathFlagsRaw(pixelIdx);
         output = debugVisualizeTechnique(extractType(pathFlags), extractRcInd(pathFlags));
 #endif
 
@@ -477,8 +477,8 @@ __global__ void resolveSpatialReuse(
     uint32_t currentConfidence, self_pathLength, self_rcVertexIndex;
     TechniqueType self_type;
     reservoirIn.getPathFlags(selfIdx, currentConfidence, self_pathLength, self_rcVertexIndex, self_type);
-    const float3 self_F = reservoirIn.getF_globalLoad(selfIdx);
-    const float self_W = reservoirIn.getW_globalLoad(selfIdx);
+    float3 self_F; float self_W;
+    reservoirIn.getWF(selfIdx, self_W, self_F);
     const float currentTargetPdf = targetFunction(self_F);
 
     if (currentConfidence == 0u) {
@@ -490,6 +490,11 @@ __global__ void resolveSpatialReuse(
     int2 neighborCoord[NUM_REUSE_TEXTURES];
     uint32_t neighborPixelIdx[NUM_REUSE_TEXTURES];
     uint32_t neighborConfidence[NUM_REUSE_TEXTURES];   // 0 if that partner doesn't exist
+    // Prefetch each accepted neighbor's {W,F} here in the confidence loop and stash it,
+    // so the resampling loop below consumes it from registers instead of making a second
+    // scattered global trip to the same pixel (the old SOA two-pass read).
+    float3 neighbor_F_cache[NUM_REUSE_TEXTURES];
+    float  neighbor_W_cache[NUM_REUSE_TEXTURES];
     float totalNeighborConfidence = 0.0f;
 
     for (uint32_t t = 0; t < NUM_REUSE_TEXTURES; ++t) {
@@ -513,6 +518,7 @@ __global__ void resolveSpatialReuse(
             }
             uint32_t m, pathLen, rcIdx; TechniqueType type;
             reservoirIn.getPathFlags(neighborPixelIdx[t], m, pathLen, rcIdx, type);
+            reservoirIn.getWF(neighborPixelIdx[t], neighbor_W_cache[t], neighbor_F_cache[t]);
 
             neighborConfidence[t] = m;
             totalNeighborConfidence += (float)m;
@@ -536,6 +542,7 @@ __global__ void resolveSpatialReuse(
     float3 winning_shiftedF = f3(0.0f);
     float  winning_shiftedTargetPdf = 0.0f;
     float  winning_newCachedJacobian = 0.0f;
+    uint32_t winning_pixelIdx = 0;
 
     RNGState localState = load_rng(
         hash_uint32(selfIdx),
@@ -569,8 +576,8 @@ __global__ void resolveSpatialReuse(
 
         // --- neighbor's resampling weight, evaluated at Y = T(neighbor -> current) ---
         if (!forwardValid) continue;
-        const float3 neighbor_F         = reservoirIn.getF_globalLoad(neighborPixelIdx[t]);
-        const float  neighbor_W         = reservoirIn.getW_globalLoad(neighborPixelIdx[t]);
+        const float3 neighbor_F         = neighbor_F_cache[t];  // prefetched in the confidence loop
+        const float  neighbor_W         = neighbor_W_cache[t];
         const float  neighbor_targetPdf = targetFunction(neighbor_F);          // p̂(X_neighbor)
         const float  shiftedTargetPdf   = targetFunction(forwardContribution); // p̂(Y)
 
@@ -599,6 +606,7 @@ __global__ void resolveSpatialReuse(
             winning_shiftedF = forwardContribution;
             winning_shiftedTargetPdf = shiftedTargetPdf;
             winning_newCachedJacobian = forwardNewCachedJacobian;
+            winning_pixelIdx = neighborPixelIdx[t];
         }
     }
 
@@ -617,17 +625,17 @@ __global__ void resolveSpatialReuse(
         float W_final = (winning_shiftedTargetPdf > 0.0f) ? (weightSum / winning_shiftedTargetPdf) : 0.0f;
         if (isnan(W_final) || isinf(W_final)) W_final = 0.0f;
 
-        const uint32_t winnerIdx = neighborPixelIdx[winningTexture];
+        const uint32_t winnerIdx = winning_pixelIdx;
+        // One grouped 32B load of the winner's descriptor (winner_M / winner_unusedJac
+        // aren't used downstream but ride along for free in the same cache line).
         uint32_t winner_M, winner_pathLength, winner_rcVertexIndex; TechniqueType winner_type;
-        reservoirIn.getPathFlags(winnerIdx, winner_M, winner_pathLength,
-                                 winner_rcVertexIndex, winner_type);
         uint32_t winner_rcPrimID, winner_rcInstanceID; float2 winner_rcBarycentrics;
         float3   winner_rcWi, winner_rcRadiance;
-        reservoirIn.getRcVertexGeometry_globalLoad(winnerIdx, winner_rcPrimID,
-            winner_rcBarycentrics, winner_rcWi, winner_rcRadiance, winner_rcInstanceID);
-        float winner_cachedNeePdf = -1.0f;
-        if (needNeePDF(winner_type))
-            winner_cachedNeePdf = reservoirIn.getCachedNEE_globalLoad(winnerIdx);
+        float    winner_unusedJac, winner_cachedNeePdf;
+        reservoirIn.getShiftDescriptor(winnerIdx,
+            winner_M, winner_pathLength, winner_rcVertexIndex, winner_type,
+            winner_rcPrimID, winner_rcBarycentrics, winner_rcWi, winner_rcRadiance, winner_rcInstanceID,
+            winner_unusedJac, winner_cachedNeePdf);
 
         reservoirOut.saveReservoirAll(
             selfIdx, W_final, winning_shiftedF,
@@ -693,8 +701,8 @@ __global__ void resolveSpatialReuse(
 #if DEBUG_VISUALIZE_TYPE == 1
             {
                 const uint32_t shownFlags = (winningTexture >= 0)
-                    ? reservoirIn.pathFlags[neighborPixelIdx[winningTexture]]
-                    : reservoirIn.pathFlags[selfIdx];
+                    ? reservoirIn.getPathFlagsRaw(neighborPixelIdx[winningTexture])
+                    : reservoirIn.getPathFlagsRaw(selfIdx);
                 shaded = debugVisualizeTechnique(extractType(shownFlags), extractRcInd(shownFlags));
             }
 #endif

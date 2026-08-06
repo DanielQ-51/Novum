@@ -53,10 +53,12 @@ target_compile_options(optix_ptx_restir PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use
 add_executable(renderer_optix
     main.cu
     restirPTenhanced_kernels.cu
-    ../src/tinyexr_impl.cpp 
+    ../src/tinyexr_impl.cpp
+    ../src/stb_image_impl.cpp
     ../thirdparty/tinyexr/miniz.c
     ../src/imageUtil.cu
     ../src/rng.cu
+    ../thirdparty/tinygltf/tiny_gltf_v3.c
 )
 
 # Reach UP one directory to link your shared headers to the host code

@@ -109,7 +109,42 @@ __device__ __forceinline__ uint4 updateRcVertexWi(const uint4& in, float3 wi) {
     return make_uint4(in.x, in.y, packOct(wi), in.w);
 }
 
+#if RESERVOIR_LAYOUT_AOS
+
+// 32B per-pixel shift descriptor: exactly what evaluateHybridShift consumes, so a
+// shift loads it as one unit (two adjacent 16B loads landing in a single 32B-aligned
+// region). See RESERVOIR_LAYOUT_AOS in settings.cuh.
+struct __align__(16) ReservoirDesc {
+    /**
+     *  x: rcVertexPrimID
+     *  y: rcVertexBarycentrics (2 x 16 bit unorm)
+     *  z: rcVertexWi (octahedral 2 x 16 bit snorm)
+     *  w: rcVertexInstanceID
+     */
+    uint4 geo;
+    /**
+     *  x: rcVertexRadiance (RGB9E5)
+     *  y: pathFlags  (M | pathLength<<8 | rcVertexInd<<16 | technique<<24)
+     *  z: cachedJacobian (float bit pattern)
+     *  w: cachedNeePdf   (float bit pattern)
+     */
+    uint4 misc;
+};
+
+// 8B per-pixel weights, always read as a pair (F*W display, MIS math).
+struct __align__(8) ReservoirWeights {
+    float    W;
+    uint32_t F; // RGB9E5 encoded
+};
+
+#endif // RESERVOIR_LAYOUT_AOS
+
 struct Reservoir {
+#if RESERVOIR_LAYOUT_AOS
+    ReservoirDesc*    __restrict__ desc;    // 32B shift descriptor
+    ReservoirWeights* __restrict__ weights; // 8B {W, F}
+    uint32_t*         __restrict__ initRandomSeed; 
+#else
     float* __restrict__ W;
 
     // RGB9E5 encoded
@@ -137,57 +172,171 @@ struct Reservoir {
 
     float* __restrict__ cachedJacobian;
     float* __restrict__ cachedNeePdf;
+#endif
 
     __device__ __forceinline__ float3 getF_globalLoad(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return fromRGB9E5(__ldg(&weights[idx].F));
+#else
         return fromRGB9E5(__ldg(&(F[idx])));
+#endif
     }
 
     __device__ __forceinline__ float getW_globalLoad(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return __ldg(&weights[idx].W);
+#else
         return __ldg(&(W[idx]));
+#endif
+    }
+
+    // W and F are always read together (MIS math, shading). One 8B load in AOS;
+    // the same two loads the SOA path always did otherwise.
+    __device__ __forceinline__ void getWF(uint32_t idx, float& outW, float3& outF) const {
+#if RESERVOIR_LAYOUT_AOS
+        uint2 raw = __ldg(reinterpret_cast<const uint2*>(&weights[idx]));
+        outW = __uint_as_float(raw.x);
+        outF = fromRGB9E5(raw.y);
+#else
+        outW = __ldg(&W[idx]);
+        outF = fromRGB9E5(__ldg(&F[idx]));
+#endif
+    }
+
+    // Streaming (evict-first) {W,F} read used by the standalone display kernel.
+    __device__ __forceinline__ float3 getShadingColor_streaming(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return fromRGB9E5(__ldcs(&weights[idx].F)) * __ldcs(&weights[idx].W);
+#else
+        return fromRGB9E5(__ldcs(&F[idx])) * __ldcs(&W[idx]);
+#endif
     }
 
     __device__ __forceinline__ float getCachedJacobian_globalLoad(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return __uint_as_float(__ldg(&desc[idx].misc.z));
+#else
         return __ldg(&(cachedJacobian[idx]));
+#endif
     }
 
     __device__ __forceinline__ float setCachedJacobian(uint32_t idx, float val) const {
+#if RESERVOIR_LAYOUT_AOS
+        desc[idx].misc.z = __float_as_uint(val);
+        return val;
+#else
         return cachedJacobian[idx] = val;
+#endif
     }
 
     __device__ __forceinline__ float getCachedNEE_globalLoad(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return __uint_as_float(__ldg(&desc[idx].misc.w));
+#else
         return __ldg(&(cachedNeePdf[idx]));
+#endif
     }
 
     __device__ __forceinline__ void getCachedValues_globalLoad(uint32_t idx, float& jacobian, float& neePDF) const {
+#if RESERVOIR_LAYOUT_AOS
+        uint4 m = __ldg(&desc[idx].misc);
+        jacobian = __uint_as_float(m.z);
+        neePDF   = __uint_as_float(m.w);
+#else
         jacobian = __ldg(&(cachedJacobian[idx]));
         neePDF = __ldg(&(cachedNeePdf[idx]));
+#endif
     }
 
     // Updated to output instanceID and fetch radiance from the new buffer
     __device__ __forceinline__ void getRcVertexGeometry_globalLoad(
-        uint32_t idx, 
-        uint32_t& primID, 
-        float2& bary, 
-        float3& wi, 
-        float3& radiance, 
+        uint32_t idx,
+        uint32_t& primID,
+        float2& bary,
+        float3& wi,
+        float3& radiance,
         uint32_t& instanceID
     ) const {
+#if RESERVOIR_LAYOUT_AOS
+        uint4 g = __ldg(&desc[idx].geo);
+        primID = g.x;
+        bary = unpackUnorm16ToFloat2(g.y);
+        wi = unpackOct(g.z);
+        instanceID = g.w;
+        radiance = fromRGB9E5(__ldg(&desc[idx].misc.x));
+#else
         uint4 data = __ldg(&rcVertexGeometry[idx]);
         primID = data.x;
         bary = unpackUnorm16ToFloat2(data.y);
         wi = unpackOct(data.z);
-        instanceID = data.w; 
-        
-        radiance = fromRGB9E5(__ldg(&rcVertexRadiance[idx])); 
+        instanceID = data.w;
+
+        radiance = fromRGB9E5(__ldg(&rcVertexRadiance[idx]));
+#endif
     }
 
     __device__ __forceinline__ void getPathFlags(
         uint32_t idx, uint32_t& M, uint32_t& pathLength, uint32_t& rcVertexInd, TechniqueType& technique) const {
+#if RESERVOIR_LAYOUT_AOS
+        uint32_t flags = __ldg(&desc[idx].misc.y);
+#else
         uint32_t flags = __ldg(&pathFlags[idx]);
+#endif
         M = flags & 0x000000FF;
         pathLength = (flags >> 8) & 0x000000FF;
         rcVertexInd = (flags >> 16) & 0x000000FF;
         technique = static_cast<TechniqueType>((flags >> 24) & 0x000000FF);
+    }
+
+    __device__ __forceinline__ uint32_t getPathFlagsRaw(uint32_t idx) const {
+#if RESERVOIR_LAYOUT_AOS
+        return __ldg(&desc[idx].misc.y);
+#else
+        return __ldg(&pathFlags[idx]);
+#endif
+    }
+
+    // Grouped load of the full 32B shift descriptor. In AOS this is two adjacent 16B
+    // loads; in SOA it degenerates to the same per-field __ldg calls the shift did
+    // before, so the two layouts stay behaviour-identical. cachedNeePdf follows the
+    // old semantics: only meaningful for needNeePDF() paths, else forced to -1.
+    __device__ __forceinline__ void getShiftDescriptor(
+        uint32_t idx,
+        uint32_t& M, uint32_t& pathLength, uint32_t& rcVertexInd, TechniqueType& technique,
+        uint32_t& rcPrimID, float2& bary, float3& wi, float3& radiance, uint32_t& instanceID,
+        float& outJacobian, float& outNeePdf) const {
+#if RESERVOIR_LAYOUT_AOS
+        uint4 g = __ldg(&desc[idx].geo);
+        uint4 m = __ldg(&desc[idx].misc);
+        rcPrimID   = g.x;
+        bary       = unpackUnorm16ToFloat2(g.y);
+        wi         = unpackOct(g.z);
+        instanceID = g.w;
+        radiance   = fromRGB9E5(m.x);
+        uint32_t flags = m.y;
+        M           = flags & 0x000000FF;
+        pathLength  = (flags >> 8) & 0x000000FF;
+        rcVertexInd = (flags >> 16) & 0x000000FF;
+        technique   = static_cast<TechniqueType>((flags >> 24) & 0x000000FF);
+        outJacobian = __uint_as_float(m.z);
+        bool nee    = (technique & (SHIFT_K_IS_D | SHIFT_K_IS_D_MINUS_1)) != 0;
+        outNeePdf   = nee ? __uint_as_float(m.w) : -1.0f;
+#else
+        uint4 data = __ldg(&rcVertexGeometry[idx]);
+        rcPrimID   = data.x;
+        bary       = unpackUnorm16ToFloat2(data.y);
+        wi         = unpackOct(data.z);
+        instanceID = data.w;
+        radiance   = fromRGB9E5(__ldg(&rcVertexRadiance[idx]));
+        uint32_t flags = __ldg(&pathFlags[idx]);
+        M           = flags & 0x000000FF;
+        pathLength  = (flags >> 8) & 0x000000FF;
+        rcVertexInd = (flags >> 16) & 0x000000FF;
+        technique   = static_cast<TechniqueType>((flags >> 24) & 0x000000FF);
+        outJacobian = __ldg(&cachedJacobian[idx]);
+        bool nee    = (technique & (SHIFT_K_IS_D | SHIFT_K_IS_D_MINUS_1)) != 0;
+        outNeePdf   = nee ? __ldg(&cachedNeePdf[idx]) : -1.0f;
+#endif
     }
 
     __device__ __forceinline__ void setInitRandomSeed(uint32_t idx, uint32_t seed) const {
@@ -208,15 +357,35 @@ struct Reservoir {
     }
 
     __device__ __forceinline__ void setW(uint32_t idx, float w) const {
+#if RESERVOIR_LAYOUT_AOS
+        __stcs(&weights[idx].W, w);
+#else
         __stcs(&W[idx], w);
+#endif
     }
 
     __device__ __forceinline__ void setW_noCS(uint32_t idx, float w) const {
+#if RESERVOIR_LAYOUT_AOS
+        weights[idx].W = w;
+#else
         W[idx] = w;
+#endif
+    }
+
+    __device__ __forceinline__ void setF(uint32_t idx, uint32_t f) const {
+#if RESERVOIR_LAYOUT_AOS
+        weights[idx].F = f;
+#else
+        F[idx] = f;
+#endif
     }
 
     __device__ __forceinline__ void setPathFlags(uint32_t idx, uint32_t currPathFlags) const {
+#if RESERVOIR_LAYOUT_AOS
+        desc[idx].misc.y = currPathFlags;
+#else
         pathFlags[idx] = currPathFlags;
+#endif
     }
 
     __device__ __forceinline__ void saveReservoirFinal(
@@ -229,6 +398,14 @@ struct Reservoir {
         float inRcVertexJacobian,
         float inNeePDF
     ) const {
+#if RESERVOIR_LAYOUT_AOS
+        desc[idx].geo  = inRcVertexGeometry;
+        desc[idx].misc = make_uint4(inRcVertexRadiance, inPathFlags,
+                                    __float_as_uint(inRcVertexJacobian),
+                                    __float_as_uint(inNeePDF));
+        weights[idx].W = inW;
+        weights[idx].F = inF;
+#else
         W[idx] = inW;
         F[idx] = inF;
         pathFlags[idx] = inPathFlags;
@@ -236,6 +413,7 @@ struct Reservoir {
         rcVertexRadiance[idx] = inRcVertexRadiance;
         cachedJacobian[idx] = inRcVertexJacobian;
         cachedNeePdf[idx] = inNeePDF;
+#endif
     }
 
     __device__ __forceinline__ void saveReservoirAll(
@@ -255,6 +433,16 @@ struct Reservoir {
         float inRcVertexJacobian,
         float inNeePDF
     ) const {
+#if RESERVOIR_LAYOUT_AOS
+        desc[idx].geo  = packRcGeometry(rcPrimID, rcBarycentrics, rcWi, rcInstanceID);
+        desc[idx].misc = make_uint4(toRGB9E5(rcRadiance),
+                                    packPathFlags(M, pathLength, rcVertexIndex, type),
+                                    __float_as_uint(inRcVertexJacobian),
+                                    __float_as_uint(inNeePDF));
+        weights[idx].W = inW;
+        weights[idx].F = toRGB9E5(inF);
+        initRandomSeed[idx] = seed;
+#else
         W[idx] = inW;
         F[idx] = toRGB9E5(inF);
         initRandomSeed[idx] = seed;
@@ -263,6 +451,7 @@ struct Reservoir {
         rcVertexRadiance[idx] = toRGB9E5(rcRadiance); // Pack directly to the new buffer
         cachedJacobian[idx] = inRcVertexJacobian;
         cachedNeePdf[idx] = inNeePDF;
+#endif
     }
 };
 
@@ -273,17 +462,23 @@ __host__ inline void* allocateReservoir(Reservoir& r, uint32_t numPixel) {
     cudaMalloc(&raw, numPixel * RESERVOIR_SIZE);
 
     char* ptr = static_cast<char*>(raw);
+#if RESERVOIR_LAYOUT_AOS
+    r.desc = reinterpret_cast<ReservoirDesc*>(ptr); ptr += numPixel * sizeof(ReservoirDesc);          // 32B
+    r.weights = reinterpret_cast<ReservoirWeights*>(ptr); ptr += numPixel * sizeof(ReservoirWeights); // 8B
+    r.initRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);          // 4B
+#else
     r.W = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
     r.F = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
 
     r.initRandomSeed = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.pathFlags = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
     r.rcVertexGeometry = reinterpret_cast<uint4*>(ptr); ptr += numPixel * sizeof(uint4);
-    
+
     r.rcVertexRadiance = reinterpret_cast<uint32_t*>(ptr); ptr += numPixel * sizeof(uint32_t);
-    
+
     r.cachedJacobian = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
     r.cachedNeePdf = reinterpret_cast<float*>(ptr); ptr += numPixel * sizeof(float);
+#endif
 
     return raw;
 }
@@ -410,30 +605,26 @@ __device__ inline void printPixelData(const Reservoir& r, const GBuffer& g, uint
     // ==========================================
     // 1. UNPACK RESERVOIR DATA
     // ==========================================
-    float W = r.W[pixelIdx];
-    uint32_t initSeed = r.initRandomSeed[pixelIdx];
-
-    // Unpack F
-    float3 unF = fromRGB9E5(r.F[pixelIdx]);
+    // Routed through accessors so this works under either reservoir layout.
+    float W; float3 unF;
+    r.getWF(pixelIdx, W, unF);
+    uint32_t initSeed = r.getInitRandomSeed(pixelIdx);
 
     // Unpack Path Flags
-    uint32_t flags = r.pathFlags[pixelIdx];
-    uint32_t M = flags & 0xFF;
-    uint32_t pathLength = (flags >> 8) & 0xFF;
-    uint32_t rcVertexInd = (flags >> 16) & 0xFF;
-    uint32_t tech = (flags >> 24) & 0xFF;
+    uint32_t M, pathLength, rcVertexInd;
+    TechniqueType technique;
+    r.getPathFlags(pixelIdx, M, pathLength, rcVertexInd, technique);
+    uint32_t tech = technique;
 
     // Unpack RC Vertex Geometry
-    uint4 geom = r.rcVertexGeometry[pixelIdx];
-    uint32_t rcPrimID = geom.x;
-    float2 rcBary = unpackUnorm16ToFloat2(geom.y);
-    float3 rcWi = unpackOct(geom.z);
-    uint32_t rcInstanceID = geom.w;
-    float3 rcRadiance = fromRGB9E5(r.rcVertexRadiance[pixelIdx]);
+    uint32_t rcPrimID, rcInstanceID;
+    float2 rcBary;
+    float3 rcWi, rcRadiance;
+    r.getRcVertexGeometry_globalLoad(pixelIdx, rcPrimID, rcBary, rcWi, rcRadiance, rcInstanceID);
 
     // Unpack Cached Values
-    float jacobian = r.cachedJacobian[pixelIdx];
-    float neePDF = r.cachedNeePdf[pixelIdx];
+    float jacobian, neePDF;
+    r.getCachedValues_globalLoad(pixelIdx, jacobian, neePDF);
 
     // ==========================================
     // 2. UNPACK GBUFFER DATA

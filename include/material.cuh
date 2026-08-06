@@ -196,6 +196,27 @@ struct Material
         return m;
     }
 
+    // A principled material that is a smooth (refractive) dielectric — glass.
+    // Stays MAT_GLTF_PRINCIPLED_BSDF; the isSpecular flag makes the dispatchers
+    // hand off wholesale to the smooth-dielectric functions (no other lobes).
+    // ior + backface drive refraction through the closed mesh; absorption/priority
+    // are for the medium stack (colored/nested glass) once that's wired.
+    __host__ static Material PrincipledGlass(float ior = 1.5f, const float4& absorption = f4(), int priority = 0)
+    {
+        Material m;
+        m.type = MAT_GLTF_PRINCIPLED_BSDF;
+        m.ior = ior;
+        m.albedo = f4(1.0f);
+        m.roughness = 0.0f;
+
+        m.isSpecular = true;   // -> dispatchers delegate to dumb_smooth_dielectric_*
+        m.boundary = true;
+        m.priority = priority;
+        m.absorption = absorption;
+        m.thinWalled = false;
+        return m;
+    }
+
     __host__ static Material Mirror()
     {
         Material m;

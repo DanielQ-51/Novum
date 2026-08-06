@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 89)
 
 find_package(CUDAToolkit REQUIRED)
@@ -77,9 +79,10 @@ target_include_directories(renderer_optix PRIVATE
 cmake_path(GET CMAKE_CURRENT_SOURCE_DIR PARENT_PATH PARENT_DIR)
 
 # Inject ROOT_DIR so your C++ ASSET_PATH macro works exactly like it did before
-target_compile_definitions(renderer_optix PRIVATE 
+target_compile_definitions(renderer_optix PRIVATE
     ROOT_DIR=\"${PARENT_DIR}\"
     PTX_DIR=\"$<TARGET_FILE_DIR:renderer_optix>\"
+    TINYGLTF3_ENABLE_FS
 )
 
 

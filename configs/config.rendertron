@@ -1,13 +1,13 @@
 Name: render
 
-width: 1400
-height: 1400
+width: 1920
+height: 1080
 
 Integrator: OPTIXNORMAL
-Sample Count: 100000
+Sample Count: 1000
 Post Process: true
 
-Unidirectional Max Depth: 12
+Unidirectional Max Depth: 20
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false
@@ -35,6 +35,20 @@ Camera Rotation: -0.0 -0.0 0.0
 Camera Apeture: 0.0
 Camera FocalDist: 0.0
 Camera FOV: 40.0
+
+Pinhole Camera: true
+Camera Position: 7.49543 14.5417 1.50138
+Camera Rotation: -11.8823 74.3642 0.0f
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 50.0
+
+Pinhole Camera: true
+Camera Position: -8.80743 1.59222 -0.858258
+Camera Rotation: 12.2 -100.69 0.0
+Camera Apeture: 0.0
+Camera FocalDist: 0.0
+Camera FOV: 50.0
 
 Meshes (path; multiplier * emission; materialID):
 assets/scenedata/cornellbox/boxOpenBack.obj; 0.0 * (0.0, 0.0, 0.0); 2

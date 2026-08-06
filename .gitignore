@@ -11,3 +11,4 @@ renders/
 *.exp
 *.lib
 *.exr
+assets/gltf/

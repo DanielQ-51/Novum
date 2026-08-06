@@ -21,7 +21,8 @@ private:
     std::vector<cudaMipmappedArray_t> mipArrays;
     std::vector<cudaTextureObject_t>  texObjects;
     cudaTextureObject_t* d_handles = nullptr;
-    bool dirty = true; // d_handles needs re-upload after the last add()
+    bool dirty = true;   // d_handles needs re-upload after the last add()
+    int  maxDim_ = 2048; // cap on texture width/height (VRAM control); halved past this
 
     // Box-filter downsample of a uchar4 level to the next-smaller mip level.
     // NOTE: for sRGB textures this averages in sRGB byte space rather than
@@ -76,6 +77,10 @@ public:
 
     int count() const { return (int)texObjects.size(); }
 
+    // Cap texture resolution (width & height). Any larger image is box-filtered
+    // down until it fits before upload. Set before loading textures.
+    void setMaxDimension(int d) { maxDim_ = (d > 0) ? d : 1; }
+
     int addFromMemory(const unsigned char* rgba, int w, int h, TexColorSpace cs)
     {
         if (!rgba || w <= 0 || h <= 0) {
@@ -85,6 +90,14 @@ public:
 
         std::vector<uchar4> cur(w * h);
         std::memcpy(cur.data(), rgba, (size_t)w * h * 4);
+
+        // Resolution cap: halve until within maxDim_ (each level costs w*h*4 B in
+        // VRAM, so a 4K->2K cap is a 4x saving, 4K->1K a 16x saving).
+        while (w > maxDim_ || h > maxDim_) {
+            int nw, nh;
+            cur = downsample(cur, w, h, nw, nh);
+            w = nw; h = nh;
+        }
 
         int numLevels = 1 + (int)std::floor(std::log2((float)std::max(w, h)));
 
@@ -143,6 +156,23 @@ public:
         if (!data) {
             std::cerr << "TextureManager::addFromFile: failed to load " << path
                       << " (" << stbi_failure_reason() << ")\n";
+            return -1;
+        }
+        int idx = addFromMemory(data, w, h, cs);
+        stbi_image_free(data);
+        return idx;
+    }
+
+    // Decode an in-memory encoded image (PNG/JPG bytes) via stb_image and add it.
+    // This is the path for glTF-embedded (GLB) images, whose encoded bytes live
+    // in a bufferView. Returns the texture index, or -1 on failure.
+    int addFromEncodedMemory(const unsigned char* encoded, size_t len, TexColorSpace cs)
+    {
+        int w, h, n;
+        unsigned char* data = stbi_load_from_memory(encoded, (int)len, &w, &h, &n, 4);
+        if (!data) {
+            std::cerr << "TextureManager::addFromEncodedMemory: decode failed ("
+                      << stbi_failure_reason() << ")\n";
             return -1;
         }
         int idx = addFromMemory(data, w, h, cs);

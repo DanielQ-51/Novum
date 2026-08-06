@@ -877,14 +877,21 @@ __device__ inline void f_eval(const Material* __restrict__ materials, int materi
     }
     else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
     {
-        float metallic = mat.metallic;
-        float roughness = mat.roughness;
-        if (mat.mrTex >= 0) {
-            float4 mr = sampleTex(textures, mat.mrTex, uv);
-            roughness *= mr.y; // glTF: roughness in G
-            metallic  *= mr.z; // glTF: metallic in B
+        if (mat.isSpecular)
+        {
+            // smooth-dielectric glass: delta BSDF, f not evaluated directly.
         }
-        principled_f(albedo, metallic, roughness, -wi, wo, f_val);
+        else
+        {
+            float metallic = mat.metallic;
+            float roughness = mat.roughness;
+            if (mat.mrTex >= 0) {
+                float4 mr = sampleTex(textures, mat.mrTex, uv);
+                roughness *= mr.y; // glTF: roughness in G
+                metallic  *= mr.z; // glTF: metallic in B
+            }
+            principled_f(albedo, metallic, roughness, -wi, wo, f_val);
+        }
     }
 }
 
@@ -934,14 +941,24 @@ __device__ inline void sample_f_eval(RNGState& localState, const Material* __res
     }
     else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
     {
-        float metallic = mat.metallic;
-        float roughness = mat.roughness;
-        if (mat.mrTex >= 0) {
-            float4 mr = sampleTex(textures, mat.mrTex, uv);
-            roughness *= mr.y;
-            metallic  *= mr.z;
+        if (mat.isSpecular)
+        {
+            // smooth-dielectric glass: full handoff to the tested dielectric
+            // sampler; no principled lobes. Refraction comes from mat.ior +
+            // backface (entry/exit through the closed mesh geometry).
+            dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
         }
-        principled_sample_f(localState, albedo, metallic, roughness, -wi, wo, f_val, pdf);
+        else
+        {
+            float metallic = mat.metallic;
+            float roughness = mat.roughness;
+            if (mat.mrTex >= 0) {
+                float4 mr = sampleTex(textures, mat.mrTex, uv);
+                roughness *= mr.y;
+                metallic  *= mr.z;
+            }
+            principled_sample_f(localState, albedo, metallic, roughness, -wi, wo, f_val, pdf);
+        }
     }
 }
 
@@ -981,17 +998,24 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     }
     else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
     {
-        float3 albedo = f3(mat.albedo);
-        if (mat.baseColorTex >= 0)
-            albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
-        float metallic = mat.metallic;
-        float roughness = mat.roughness;
-        if (mat.mrTex >= 0) {
-            float4 mr = sampleTex(textures, mat.mrTex, uv);
-            roughness *= mr.y;
-            metallic  *= mr.z;
+        if (mat.isSpecular)
+        {
+            pdf = 999999999.0f; // delta dielectric
         }
-        principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+        else
+        {
+            float3 albedo = f3(mat.albedo);
+            if (mat.baseColorTex >= 0)
+                albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
+            float metallic = mat.metallic;
+            float roughness = mat.roughness;
+            if (mat.mrTex >= 0) {
+                float4 mr = sampleTex(textures, mat.mrTex, uv);
+                roughness *= mr.y;
+                metallic  *= mr.z;
+            }
+            principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+        }
     }
 }
 __device__ inline void f_pdf_eval(const Material* __restrict__ materials, int materialID, const TextureView& textures,
@@ -1039,15 +1063,22 @@ __device__ inline void f_pdf_eval(const Material* __restrict__ materials, int ma
     }
     else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
     {
-        float metallic = mat.metallic;
-        float roughness = mat.roughness;
-        if (mat.mrTex >= 0) {
-            float4 mr = sampleTex(textures, mat.mrTex, uv);
-            roughness *= mr.y;
-            metallic  *= mr.z;
+        if (mat.isSpecular)
+        {
+            pdf = 999999999.0f; // delta dielectric; f not evaluated directly
         }
-        principled_f(albedo, metallic, roughness, -wi, wo, f_val);
-        principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+        else
+        {
+            float metallic = mat.metallic;
+            float roughness = mat.roughness;
+            if (mat.mrTex >= 0) {
+                float4 mr = sampleTex(textures, mat.mrTex, uv);
+                roughness *= mr.y;
+                metallic  *= mr.z;
+            }
+            principled_f(albedo, metallic, roughness, -wi, wo, f_val);
+            principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
+        }
     }
 }
 
@@ -1070,7 +1101,8 @@ __device__ inline void getAlbedo(
         float3 k = f3(mat.k);
         albedo = ((eta - f3(1.0f)) * (eta - f3(1.0f)) + k * k)/
                  ((eta + f3(1.0f)) * (eta + f3(1.0f)) + k * k);
-    } else if (mat.type == MAT_DELTAMIRROR || mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_THINDIELECTRIC) {
+    } else if (mat.type == MAT_DELTAMIRROR || mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_THINDIELECTRIC ||
+               (mat.type == MAT_GLTF_PRINCIPLED_BSDF && mat.isSpecular)) {
         albedo = f3(1.0f);
     }
 }

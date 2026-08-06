@@ -260,10 +260,18 @@ float4 Image::gammaCorrect(float4 c)
 
 std::vector<float4> Image::postProcessImage()
 {
-    std::vector<float4> processed;
-    for (int i = 0; i < width * height; i++)
+    int totalPixels = width * height;
+    
+    std::vector<float4> processed(totalPixels);
+    
+    float exposure = 2.0f;
+
+    #pragma omp parallel for
+    for (int i = 0; i < totalPixels; i++)
     {
-        processed.push_back(gammaCorrect(use_fitted_aces ? aces_fitted(pixels[i]) : toneMap(pixels[i])));
+        float4 exposedPixel = pixels[i] * f4(exposure, exposure, exposure, 1.0f);
+        
+        processed[i] = gammaCorrect(use_fitted_aces ? aces_fitted(exposedPixel) : toneMap(exposedPixel));
     }
     return processed;
 }

@@ -25,6 +25,7 @@
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>   // [STACK_FIX] needed for optixUtilComputeStackSizes / optixPipelineSetStackSize
 
+#include "sceneLoader.cuh"
 
 #define ASSET_PATH(path) (std::string(ROOT_DIR) + "/" + path)
 
@@ -41,6 +42,54 @@ __host__ std::string read_file_to_string(const std::string& filepath) {
     std::stringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
+}
+
+inline void gltfSmokeTest(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { std::cerr << "gltf: cannot open " << path << "\n"; return; }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+
+    tg3_parse_options opts;  tg3_parse_options_init(&opts);
+    tg3_error_stack errors;  tg3_error_stack_init(&errors);
+    tg3_model model;
+
+    tg3_error_code err = tg3_parse_auto(
+        &model, &errors,
+        bytes.data(), bytes.size(),
+        nullptr, 0,              // base_dir: unused for self-contained GLB
+        &opts);
+
+    if (err != TG3_OK || tg3_errors_has_error(&errors)) {
+        std::cerr << "gltf parse failed:\n";
+        for (uint32_t i = 0; i < errors.count; i++)
+            std::cerr << "  " << (errors.entries[i].message ? errors.entries[i].message : "(null)") << "\n";
+    } else {
+        std::cout << "glTF ok: "
+                  << model.meshes_count    << " meshes, "
+                  << model.materials_count << " materials, "
+                  << model.nodes_count     << " nodes, "
+                  << model.textures_count  << " textures, "
+                  << model.images_count    << " images, "
+                  << model.accessors_count << " accessors, "
+                  << model.buffers_count   << " buffers\n";
+    }
+
+    const tg3_mesh& mesh = model.meshes[0];
+    const tg3_primitive& prim = mesh.primitives[0];
+
+    AccessorView pv = resolveAccessor(model, findAttribute(prim, "POSITION"));
+    std::vector<float4> pos; readVec3(pv, pos);
+    std::cout << "POSITION: " << pos.size() << " verts\n";
+    for (int i = 0; i < 3 && i < (int)pos.size(); i++)
+        std::cout << "  (" << pos[i].x << ", " << pos[i].y << ", " << pos[i].z << ")\n";
+
+    AccessorView iv = resolveAccessor(model, prim.indices);
+    std::vector<uint32_t> idx; readIndices(iv, idx);
+    std::cout << "indices: " << idx.size() << "\n";
+
+    tg3_model_free(&model);      // one call frees the whole arena
+    tg3_error_stack_free(&errors);
 }
 
 __host__ int initOptixSystem(OptixEngineState& engineState) {
@@ -497,7 +546,8 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     //---------------------------------------------------------------------------------------------------------------------------------------------------
 
 #if USE_ENV_MAP == 1
-    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_1k.exr"));
+    //EnvironmentMapManager envManager(ASSET_PATH("assets/environment/lakeside_sunrise_1k.exr"));
+    EnvironmentMapManager envManager(ASSET_PATH("assets/environment/sunflowers_puresky_1k.exr"));
 #else
     EnvironmentMapManager envManager(ASSET_PATH("assets/environment/black.exr"));
 #endif
@@ -675,7 +725,18 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     //---------------------------------------------------------------------------------------------------------------------------------------------------
     // Computing BVH
     //---------------------------------------------------------------------------------------------------------------------------------------------------
-    
+    SceneLoader loader = {};
+    loader.textures.setMaxDimension(1024);
+    loader.setEmissiveScale(1.0f);
+    //loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/NewSponza_Main_glTF_003.gltf"));
+    loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/blendersponza/updatedsponza.gltf"));
+
+    printPrincipledMaterials(loader);
+    std::unique_ptr<GPUScene> gpuScene = loader.buildFlattened(envManager.getView(), 0.8f);
+
+    points = gpuScene->hostPositions;
+    mesh = gpuScene->hostTriangles;
+
     vector<float3> positions;
     vector<uint3> indices;
 
@@ -779,8 +840,6 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     sc.triNum = mesh.size();
     sc.transformationMatrices = d_matrices;
 
-    lightManager.getSampler().printDebugState();
-
     CommonParams params = {};
     params.w = w;
     params.h = h;
@@ -788,7 +847,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     params.bvh_handle = TLAShandle; 
     params.accum_buffer = out_colors; 
     params.camera = camera;
-    params.shadeContext = sc;
+    params.shadeContext = sc; // beep beep remove later
+    gpuScene->shadeContext.transformationMatrices = d_matrices;
+    params.shadeContext = gpuScene->shadeContext;
+    
+    params.shadeContext.lightSampler.printDebugState();
     params.max_depth = maxDepth;
 
     PipelineParams allParams = {};

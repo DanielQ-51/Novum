@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(CMAKE_CUDA_ARCHITECTURES 89)
 
@@ -25,6 +27,7 @@ add_executable(NovumRender
     src/stb_image_impl.cpp
     #src/realTime.cu
     thirdparty/tinyexr/miniz.c
+    thirdparty/tinygltf/tiny_gltf_v3.c
 )
 
 target_include_directories(NovumRender PRIVATE include)
@@ -34,8 +37,9 @@ target_include_directories(NovumRender PRIVATE thirdparty)
 target_include_directories(NovumRender PRIVATE thirdparty/tinyexr)
 
 
-target_compile_definitions(NovumRender PRIVATE 
+target_compile_definitions(NovumRender PRIVATE
     ROOT_DIR=\"${CMAKE_SOURCE_DIR}\"
+    TINYGLTF3_ENABLE_FS
 )
 
 target_compile_options(NovumRender PRIVATE

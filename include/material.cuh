@@ -24,6 +24,8 @@ struct Material
     int occlusionTex = -1; // likely wont be used
     int transTex     = -1; // transmission / opacity map (legacy leaf)
 
+    float normalScale = 1.0f; // glTF normalTexture.scale; multiplies the map's tangent-plane (xy)
+
     int type;
 
     float4 albedo;

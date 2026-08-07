@@ -88,9 +88,9 @@ __host__ void launch_restir (
 #if CAMERA_MOVES == 0 
     TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, -0.0f, 90.0f, 0.0f);
 #else
-    TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, 0.66f, 90.0f, 0.0f);
+    //TurntableCameraAnimation animation = TurntableCameraAnimation(f3(0.0f, 0.0f, -1.5f), 6.5f, 0.66f, 90.0f, 0.0f);
 #endif
-    //LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.01f, 0.0f, 0.0f) ,f3());
+    LinearCameraAnimation animation = LinearCameraAnimation(commonParams.camera.cameraOrigin, f3(commonParams.camera.xRot, commonParams.camera.yRot, commonParams.camera.zRot), f3(0.00f, 0.02f, 0.0f) ,f3());
     //animation.update(allParams.common.camera, 0);
 
     dim3 blockSize(32, 8);  

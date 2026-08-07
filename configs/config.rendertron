@@ -4,10 +4,11 @@ width: 1920
 height: 1080
 
 Integrator: OPTIXNORMAL
+Integrator: RESTIRPT
 Sample Count: 1000
 Post Process: true
 
-Unidirectional Max Depth: 20
+Unidirectional Max Depth: 10
 BVH recommended leaf size: 2
 
 SAMPLE_ENVIRONMENT: false
@@ -44,7 +45,7 @@ Camera FocalDist: 0.0
 Camera FOV: 50.0
 
 Pinhole Camera: true
-Camera Position: -8.80743 1.59222 -0.858258
+Camera Position: -7.40743 1.59222 -0.858258
 Camera Rotation: 12.2 -100.69 0.0
 Camera Apeture: 0.0
 Camera FocalDist: 0.0

@@ -80,11 +80,12 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     float2 uv;
     float3 shadingPos;
     bool backface;
+    float3 geoNormal;
     float3 normal;
     float3 ImplicitEmission;
     const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
-    getData(
+    getDataGeo(
         tri,
         params.shadeContext,
         hitData.barycentrics,
@@ -93,6 +94,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         materialID,
         uv,
         shadingPos,
+        geoNormal,
         normal,
         backface,
         ImplicitEmission,
@@ -229,7 +231,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
             bool occluded = traceVisibility(
                 params,
-                Ray((shadingPos + (dot(shadingPosToLightNormalized, normal) > 0.0f ? normal : -normal) * RAY_EPSILON), shadingPosToLightNormalized),
+                Ray((shadingPos + (dot(shadingPosToLightNormalized, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON), shadingPosToLightNormalized),
                 t_max * (1.0f - EPSILON2)
             );
 
@@ -310,7 +312,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
     lastCosine = fabsf(outgoing.z);
     toWorld(outgoing, normal, outgoing);
 
-    r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+    r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
     r.direction = outgoing;
 
     prevDelta = currDelta;
@@ -393,10 +395,11 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
         float2 uv;
         float3 shadingPos;
         bool backface;
+        float3 geoNormal;
         float3 normal;
         float3 emission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
-        getData(
+        getDataGeo(
             tri,
             params.shadeContext,
             hitData.barycentrics,
@@ -405,6 +408,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
             materialID,
             uv,
             shadingPos,
+            geoNormal,
             normal,
             backface,
             emission,
@@ -630,7 +634,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
                 bool occluded = traceVisibility(
                     params,
-                    Ray((shadingPos + (dot(shadingPosToLightNormalized, normal) > 0.0f ? normal : -normal) * RAY_EPSILON), shadingPosToLightNormalized),
+                    Ray((shadingPos + (dot(shadingPosToLightNormalized, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON), shadingPosToLightNormalized),
                     t_max * (1.0f - EPSILON2)
                 );
 
@@ -710,7 +714,7 @@ extern "C" __global__ void __raygen__restirCandidateGeneration() {
 
         toWorld(outgoing, normal, outgoing);
 
-        r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+        r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
         r.direction = outgoing;
 
         prevDelta = currDelta;

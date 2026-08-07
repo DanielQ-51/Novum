@@ -264,7 +264,7 @@ std::vector<float4> Image::postProcessImage()
     
     std::vector<float4> processed(totalPixels);
     
-    float exposure = 2.0f;
+    float exposure = 5.0f;
 
     #pragma omp parallel for
     for (int i = 0; i < totalPixels; i++)

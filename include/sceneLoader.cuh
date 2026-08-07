@@ -627,6 +627,7 @@ private:
 
             Material m = Material::Principled(baseColor, metallic, roughness, baseTex, mrTex);
             m.normalTex   = registerTexture(model, gm.normal_texture.index,   TEX_LINEAR);
+            m.normalScale = (float)gm.normal_texture.scale; // glTF normalTexture.scale (default 1.0)
             m.emissiveTex = registerTexture(model, gm.emissive_texture.index, TEX_SRGB);
 
             gltfMaterialMap_[i] = addMaterial(m);

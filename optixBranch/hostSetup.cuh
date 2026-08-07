@@ -531,6 +531,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
             sampleCount <<" with a max depth of " << 
             maxDepth << ".\nIntegrating with Optix Naive + NEE Unidirectional MIS." << 
             endl << endl;
+    } else if (integratorChoice == OPTIX_RESTIR_PT) {
+        std::cout << "Rendering at " << w << " by " << h << " pixels, with " << 
+            sampleCount <<" with a max depth of " << 
+            maxDepth << ".\nIntegrating with Optix ReSTIR PT." << 
+            endl << endl;
     }
 
     vector<float4> points;
@@ -728,11 +733,11 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     SceneLoader loader = {};
     loader.textures.setMaxDimension(1024);
     loader.setEmissiveScale(1.0f);
-    //loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/NewSponza_Main_glTF_003.gltf"));
-    loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/blendersponza/updatedsponza.gltf"));
+    loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/NewSponza_Main_glTF_003.gltf"));
+    //loader.loadGLTF(ASSET_PATH("assets/gltf/main_sponza/blendersponza/updatedsponza.gltf"));
 
     printPrincipledMaterials(loader);
-    std::unique_ptr<GPUScene> gpuScene = loader.buildFlattened(envManager.getView(), 0.8f);
+    std::unique_ptr<GPUScene> gpuScene = loader.buildFlattened(envManager.getView(), 0.9f);
 
     points = gpuScene->hostPositions;
     mesh = gpuScene->hostTriangles;

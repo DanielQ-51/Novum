@@ -91,11 +91,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float2 uv;
         float3 shadingPos;
         bool backface;
+        float3 geoNormal;
         float3 normal;
         float3 ImplicitEmission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
-        getData(
+        getDataGeo(
             tri,
             params.shadeContext,
             hitData.barycentrics,
@@ -104,6 +105,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             materialID,
             uv,
             shadingPos,
+            geoNormal,
             normal,
             backface,
             ImplicitEmission,
@@ -182,7 +184,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         lastCosine = fabsf(outgoing.z);
         toWorld(outgoing, normal, outgoing);
 
-        r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+        r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
         r.direction = outgoing;
 
         prevDelta = currDelta;
@@ -206,11 +208,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float2 uv;
             float3 shadingPos;
             bool backface;
+            float3 geoNormal;
             float3 normal;
             float3 lightEmission;
             const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
-            getData(
+            getDataGeo(
                 tri,
                 params.shadeContext,
                 hitData.barycentrics,
@@ -219,6 +222,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 materialID,
                 uv,
                 shadingPos,
+                geoNormal,
                 normal,
                 backface,
                 lightEmission,
@@ -319,7 +323,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
 
             throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
             toWorld(outgoing, normal, outgoing);
-            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+            r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
             r.direction = outgoing;
 
             prevDelta = currDelta;
@@ -463,11 +467,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
         float2 uv;
         float3 shadingPos;
         bool backface;
+        float3 geoNormal;
         float3 normal;
         float3 ImplicitEmission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
-        getData(
+        getDataGeo(
             tri,
             params.shadeContext,
             hitData.barycentrics,
@@ -476,6 +481,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             materialID,
             uv,
             shadingPos,
+            geoNormal,
             normal,
             backface,
             ImplicitEmission,
@@ -560,7 +566,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             lastCosine = fabsf(outgoing.z);
             toWorld(outgoing, normal, outgoing);
 
-            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+            r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
             r.direction = outgoing;
 
             prevDelta = currDelta;
@@ -589,11 +595,12 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             float2 uv;
             float3 shadingPos;
             bool backface;
+            float3 geoNormal;
             float3 normal;
             float3 lightEmission;
             const Triangle& tri = params.shadeContext.scene[hitData.primId];
 
-            getData(
+            getDataGeo(
                 tri,
                 params.shadeContext,
                 hitData.barycentrics,
@@ -602,6 +609,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
                 materialID,
                 uv,
                 shadingPos,
+                geoNormal,
                 normal,
                 backface,
                 lightEmission,
@@ -711,7 +719,7 @@ __device__ __forceinline__ ShiftResult evaluateHybridShift(
             throughput *= f_val_bsdf * fabsf(outgoing.z) / pdf_bsdf;
 
             toWorld(outgoing, normal, outgoing);
-            r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+            r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
             r.direction = outgoing;
 
             prevDelta = currDelta;

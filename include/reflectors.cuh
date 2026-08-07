@@ -836,6 +836,110 @@ __device__ inline void principled_sample_f(RNGState& localState, const float3& b
     principled_pdf(baseColor, metallic, roughness, v, l, pdf);
 }
 
+// =============================================================================
+// Lobe-specific principled BSDF (for ReSTIR PT shift mappings).
+//
+// The marginalized principled_* above blend BOTH lobes -- ideal for NEE and MIS,
+// but a blended pdf contaminates a specular reconnection's Jacobian. These split
+// the same diffuse/specular terms into a SINGLE lobe so the shift can evaluate
+// exactly the lobe the base path used -- reconstructed via RNG replay, so no lobe
+// index is ever stored.
+//
+//   p_total (generation pdf) = P_select * p_dir       // what the shift / throughput use
+//   marginal pdf (above)     = sum over lobes of p_total
+// =============================================================================
+
+enum PrincipledLobe { PRINCIPLED_LOBE_DIFFUSE = 0, PRINCIPLED_LOBE_SPECULAR = 1 };
+
+// Pick a lobe from one uniform sample. Mirrors the branch in principled_sample_f
+// (u < pSpec -> specular). Returns the lobe and its discrete selection probability.
+__device__ __forceinline__ int principled_lobeFromU(float u, const float3& F0, const float3& cDiff, float& P_select)
+{
+    float pSpec = principled_specProb(F0, cDiff);
+    if (u < pSpec) { P_select = pSpec;        return PRINCIPLED_LOBE_SPECULAR; }
+    else           { P_select = 1.0f - pSpec; return PRINCIPLED_LOBE_DIFFUSE;  }
+}
+
+// Evaluate ONLY the given lobe's contribution (no blend). Same terms as principled_f.
+__device__ inline void principled_f_lobe(const float3& baseColor, float metallic, float roughness,
+    const float3& v, const float3& l, int lobe, float3& f_val)
+{
+    if (v.z <= 0.0f || l.z <= 0.0f) { f_val = f3(0.0f); return; }
+
+    roughness = fmaxf(roughness, 0.025f);
+    float alpha = roughness * roughness;
+
+    float3 h  = normalize(v + l);
+    float3 F0 = f3(0.04f) * (1.0f - metallic) + baseColor * metallic;
+    float3 F  = fresnelSchlickF0(fmaxf(dot(v, h), 0.0f), F0);
+
+    if (lobe == PRINCIPLED_LOBE_SPECULAR) {
+        float D = D_GGX(h, alpha);
+        float G = G_Smith(v, l, h, alpha);
+        f_val = (D * G) * F / fmaxf(4.0f * v.z * l.z, EPSILON);
+    } else {
+        float3 cDiff = baseColor * (1.0f - metallic);
+        f_val = (f3(1.0f) - F) * cDiff * (1.0f / PI);
+    }
+}
+
+// Directional pdf of ONLY the given lobe (NOT multiplied by P_select). Same terms
+// as the two halves of principled_pdf.
+__device__ inline void principled_pdf_lobe(const float3& baseColor, float metallic, float roughness,
+    const float3& v, const float3& l, int lobe, float& pdf)
+{
+    if (v.z <= 0.0f || l.z <= 0.0f) { pdf = 0.0f; return; }
+
+    roughness = fmaxf(roughness, 0.025f);
+    float alpha = roughness * roughness;
+
+    if (lobe == PRINCIPLED_LOBE_SPECULAR) {
+        float3 h = normalize(v + l);
+        float D  = D_GGX(h, alpha);
+        pdf = D * h.z / fmaxf(4.0f * dot(v, h), EPSILON);
+    } else {
+        pdf = l.z * (1.0f / PI);
+    }
+}
+
+// Lobe-specific counterpart of principled_sample_f: picks a lobe (1 rng draw) then a
+// direction (2 draws) -- SAME rng footprint -- but returns the chosen lobe's f and its
+// generation pdf p_total = P_select * p_dir (not the blended f / marginal pdf).
+__device__ inline void principled_sample_f_lobe(RNGState& localState, const float3& baseColor, float metallic, float roughness,
+    const float3& v, float3& l, float3& f_val, float& pdf)
+{
+    roughness = fmaxf(roughness, 0.025f);
+    float alpha = roughness * roughness;
+
+    float3 F0    = f3(0.04f) * (1.0f - metallic) + baseColor * metallic;
+    float3 cDiff = baseColor * (1.0f - metallic);
+
+    float P_select;
+    int lobe = principled_lobeFromU(rand(&localState), F0, cDiff, P_select);
+
+    if (lobe == PRINCIPLED_LOBE_SPECULAR)
+    {
+        float u1  = rand(&localState);
+        float phi = 2.0f * PI * rand(&localState);
+        float cosT = sqrtf((1.0f - u1) / (1.0f + (alpha * alpha - 1.0f) * u1));
+        float sinT = sqrtf(fmaxf(1.0f - cosT * cosT, 0.0f));
+        float3 h = f3(sinT * cosf(phi), sinT * sinf(phi), cosT);
+        l = 2.0f * dot(v, h) * h - v; // reflect v about h
+    }
+    else
+    {
+        float pdfTmp;
+        cosine_emit(localState, l, pdfTmp); // consumes 2 draws
+    }
+
+    if (l.z <= 0.0f) { f_val = f3(0.0f); pdf = 0.0f; return; }
+
+    principled_f_lobe(baseColor, metallic, roughness, v, l, lobe, f_val);
+    float p_dir;
+    principled_pdf_lobe(baseColor, metallic, roughness, v, l, lobe, p_dir);
+    pdf = P_select * p_dir;
+}
+
 // For dielectrics, when this function is called, we know whether or not it refracts, and that etaI and etaT are in fact correct
 // wi passed in is facing the surface, so we flip it normally. The shading uses wi as pointing away
 __device__ inline void f_eval(const Material* __restrict__ materials, int materialID, const TextureView& textures,
@@ -1079,6 +1183,148 @@ __device__ inline void f_pdf_eval(const Material* __restrict__ materials, int ma
             principled_f(albedo, metallic, roughness, -wi, wo, f_val);
             principled_pdf(albedo, metallic, roughness, -wi, wo, pdf);
         }
+    }
+}
+
+// =============================================================================
+// ReSTIR PT lobe-specific dispatchers.
+//
+// sample_f_eval_lobe  -- forward BSDF-sampled continuation bounces.
+// f_pdf_eval_replayLobe -- reconnection endpoints, where the outgoing direction is
+//                          fixed and the lobe is reconstructed by replaying the rng.
+//
+// Both keep the SAME rng footprint as sample_f_eval, so a replayed stream stays
+// aligned. Only the principled opaque BSDF is genuinely multi-lobe; every other
+// material is single-lobe (p_total == marginal) and behaves identically to the
+// marginal path. NEE and all MIS weights must keep using the marginal f_eval /
+// pdf_eval -- do NOT route those through these.
+// =============================================================================
+
+// Lobe-specific continuation sampling. Identical to sample_f_eval except the
+// principled opaque branch returns the sampled lobe's f and generation pdf (p_total)
+// instead of the blended f / marginal pdf. No lobe index escapes.
+__device__ inline void sample_f_eval_lobe(RNGState& localState, const Material* __restrict__ materials, int materialID, const TextureView& textures,
+    const float3& wi, float etaI, float etaT, bool backface, float3& wo, float3& f_val, float& pdf, const float2 uv,
+    int transportMode = TRANSPORTMODE_RADIANCE)
+{
+    const Material& mat = materials[materialID];
+    float3 albedo = f3(mat.albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
+
+    float trans = mat.transmission;
+    if (mat.transTex >= 0)
+        trans = sampleTex(textures, mat.transTex, uv).x;
+
+    if (mat.type == MAT_DIFFUSE)
+    {
+        cosine_sample_f(localState, albedo, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_METAL)
+    {
+        microfacet_metal_sample_f(localState, f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    {
+        dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_LEAF)
+    {
+        leaf_sample_f(localState, -wi, mat.ior, etaI, mat.roughness, albedo, trans, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_DELTAMIRROR)
+    {
+        mirror_sample_f(-wi, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_THINDIELECTRIC)
+    {
+        thin_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_MICROFACETDIELECTRIC)
+    {
+        microfacet_dielectric_sample_f(localState, -wi, mat.ior, mat.roughness, backface, transportMode, wo, f_val, pdf);
+    }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF)
+    {
+        if (mat.isSpecular)
+        {
+            dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
+        }
+        else
+        {
+            float metallic = mat.metallic;
+            float roughness = mat.roughness;
+            if (mat.mrTex >= 0) {
+                float4 mr = sampleTex(textures, mat.mrTex, uv);
+                roughness *= mr.y;
+                metallic  *= mr.z;
+            }
+            principled_sample_f_lobe(localState, albedo, metallic, roughness, -wi, wo, f_val, pdf);
+        }
+    }
+}
+
+// Replay-and-evaluate for a reconnection endpoint. `wo` is fixed by the reconnection
+// geometry. This rolls the SAME rng sequence sample_f_eval would have consumed for
+// this material -- the lobe-selection draw reconstructs the lobe the base path used,
+// the remaining direction draws are rolled purely to carry the stream forward -- then
+// returns that lobe's f and generation pdf (p_total).
+//
+// Only the reconnectable rough materials are rng-aligned here: diffuse, metal, and the
+// principled opaque BSDF. Delta materials are never reconnection endpoints. Leaf and
+// microfacet-dielectric are intentionally NOT handled (their sample paths have
+// branch-dependent draw counts that need padding first); they fall back to marginal
+// evaluation WITHOUT advancing the stream, so they must not be used as endpoints yet.
+__device__ inline void f_pdf_eval_replayLobe(RNGState& localState, const Material* __restrict__ materials, int materialID, const TextureView& textures,
+    const float3& wi, const float3& wo, float etaI, float etaT, bool backface, float3& f_val, float& pdf, const float2 uv,
+    int transportMode = TRANSPORTMODE_RADIANCE)
+{
+    const Material& mat = materials[materialID];
+    float3 albedo = f3(mat.albedo);
+    if (mat.baseColorTex >= 0)
+        albedo = f3(sampleTex(textures, mat.baseColorTex, uv));
+
+    if (mat.type == MAT_DIFFUSE)
+    {
+        rand(&localState); rand(&localState); // cosine_sample_f consumes 2 draws
+        cosine_f(albedo, f_val);
+        cosine_pdf(wo, pdf);
+    }
+    else if (mat.type == MAT_METAL)
+    {
+        rand(&localState); rand(&localState); // microfacet_metal_sample_f consumes 2 draws
+        microfacet_metal_f(f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val);
+        microfacet_pdf(mat.roughness, -wi, wo, pdf);
+    }
+    else if (mat.type == MAT_GLTF_PRINCIPLED_BSDF && !mat.isSpecular)
+    {
+        float metallic = mat.metallic;
+        float roughness = mat.roughness;
+        if (mat.mrTex >= 0) {
+            float4 mr = sampleTex(textures, mat.mrTex, uv);
+            roughness *= mr.y;
+            metallic  *= mr.z;
+        }
+
+        float3 v = -wi;
+        float3 F0    = f3(0.04f) * (1.0f - metallic) + albedo * metallic;
+        float3 cDiff = albedo * (1.0f - metallic);
+
+        // Draw 1: reconstruct the lobe. Draws 2-3: advance past the discarded direction.
+        float P_select;
+        int lobe = principled_lobeFromU(rand(&localState), F0, cDiff, P_select);
+        rand(&localState); rand(&localState);
+
+        principled_f_lobe(albedo, metallic, roughness, v, wo, lobe, f_val);
+        float p_dir;
+        principled_pdf_lobe(albedo, metallic, roughness, v, wo, lobe, p_dir);
+        pdf = P_select * p_dir;
+    }
+    else
+    {
+        // Unsupported reconnection endpoint (delta / leaf / microfacet dielectric):
+        // marginal fallback, no rng consumed. Not a valid endpoint yet -- see note above.
+        f_pdf_eval(materials, materialID, textures, wi, wo, etaI, etaT, f_val, pdf, uv, transportMode);
     }
 }
 

@@ -54,10 +54,11 @@ extern "C" __global__ void __raygen__unidirectional() {
         float2 uv;
         float3 shadingPos;
         bool backface;
+        float3 geoNormal;
         float3 normal;
         float3 emission;
         const Triangle& tri = params.shadeContext.scene[hitData.primId];
-        getData(
+        getDataGeo(
             tri,
             params.shadeContext,
             hitData.barycentrics,
@@ -66,6 +67,7 @@ extern "C" __global__ void __raygen__unidirectional() {
             materialID,
             uv,
             shadingPos,
+            geoNormal,
             normal,
             backface,
             emission
@@ -216,7 +218,7 @@ extern "C" __global__ void __raygen__unidirectional() {
         toWorld(outgoing, normal, outgoing);
 
         // write to next rayQueue
-        r.origin = shadingPos + (dot(outgoing, normal) > 0.0f ? normal : -normal) * RAY_EPSILON;
+        r.origin = shadingPos + (dot(outgoing, geoNormal) > 0.0f ? geoNormal : -geoNormal) * RAY_EPSILON;
         r.direction = outgoing;
 
         prevDelta = currDelta;

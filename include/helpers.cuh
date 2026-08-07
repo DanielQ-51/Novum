@@ -166,6 +166,67 @@ __device__ __forceinline__ float3 interpolateNormal(
     return (1.0f - u - v) * a_n + u * b_n + v * c_n;
 }
 
+// Perturbs the interpolated (world-space) shading normal `N` by the material's
+// tangent-space normal map. The tangent frame is derived per-triangle from the
+// UV parameterization (dP/dU, dP/dV), which is exact on planar surfaces and needs
+// no per-vertex TANGENT stream. Returns `N` unchanged when the material has no
+// normal map or the primitive lacks the UVs / has degenerate UVs to build a frame.
+//
+// `apos/bpos/cpos` are in the same space the positions were read in (object space
+// before an instance transform, already-world for the flattened path); the derived
+// tangent is pushed to world with the same rigid transform used for the normal, so
+// it ends up in `N`'s space regardless.
+__device__ __forceinline__ float3 applyNormalMap(
+    const Triangle& tri, const ShadeContext& sc, int materialID,
+    const float3& apos, const float3& bpos, const float3& cpos,
+    float2 uv, float3 N, uint32_t instanceID)
+{
+    const Material& mat = sc.materials[materialID];
+    const int normalTex = mat.normalTex;
+    if (normalTex < 0) return N;
+    if (tri.uvaInd < 0 || tri.uvbInd < 0 || tri.uvcInd < 0) return N;
+
+    const float2 uv0 = __ldg(&sc.vertices->uvs[tri.uvaInd]);
+    const float2 uv1 = __ldg(&sc.vertices->uvs[tri.uvbInd]);
+    const float2 uv2 = __ldg(&sc.vertices->uvs[tri.uvcInd]);
+
+    const float3 e1 = bpos - apos;
+    const float3 e2 = cpos - apos;
+    const float du1 = uv1.x - uv0.x, dv1 = uv1.y - uv0.y;
+    const float du2 = uv2.x - uv0.x, dv2 = uv2.y - uv0.y;
+
+    const float det = du1 * dv2 - du2 * dv1;
+    if (fabsf(det) < 1e-12f) return N; // degenerate / collapsed UVs
+    const float invDet = 1.0f / det;
+
+    float3 T = (e1 * dv2 - e2 * dv1) * invDet; // dP/dU
+    float3 B = (e2 * du1 - e1 * du2) * invDet; // dP/dV
+
+    // Match the normal's trip to world space (rigid == direction transform here).
+    if (instanceID != 0xFFFFFFFF) {
+        T = transformNormalRigid(sc.transformationMatrices, instanceID, T);
+        B = transformNormalRigid(sc.transformationMatrices, instanceID, B);
+    }
+
+    // Gram-Schmidt T against N, then rebuild B so the frame is orthonormal while
+    // keeping the handedness the UVs implied (green channel orientation).
+    T = T - N * dot(N, T);
+    const float tl = length(T);
+    if (tl < 1e-8f) return N;
+    T = T / tl;
+    float3 Bo = cross(N, T);
+    if (dot(Bo, B) < 0.0f) Bo = -Bo;
+
+    // Linear-space map, [0,1] -> [-1,1]. glTF uses the +Y (OpenGL) convention.
+    float3 n = f3(sampleTex(sc.textures, normalTex, uv)) * 2.0f - f3(1.0f);
+    n.x *= mat.normalScale; // glTF normalTexture.scale: strength on the tangent plane only
+    n.y *= mat.normalScale;
+
+    const float3 Np = n.x * T + n.y * Bo + n.z * N;
+    const float nl = length(Np);
+    return (nl > 1e-8f) ? (Np / nl) : N;
+}
+
 __device__ __forceinline__ void getData(
     const Triangle& tri,
     ShadeContext shadeContext,
@@ -202,8 +263,70 @@ __device__ __forceinline__ void getData(
         normal = transformNormalRigid(shadeContext.transformationMatrices, instanceID, normal);
     }
 
+    normal = applyNormalMap(tri, shadeContext, materialID, apos, bpos, cpos, uv, normal, instanceID);
+
     backface = dot(normal, inDirection) > 0.0f;
     normal = backface ? -normal : normal;
+    emission = f3(tri.emission);
+}
+
+// Same as getData, but also returns the flat-triangle GEOMETRIC normal alongside
+// the (interpolated + normal-mapped) shading normal. `geoNormal` is for spawning
+// rays -- offsetting the origin along the true surface avoids self-intersection on
+// curved / normal-mapped geometry, which the shading normal cannot guarantee.
+//
+// `normal`, `backface`, and every other output are computed identically to getData
+// (facing is still decided by the shading normal), so this can be swapped in for
+// getData anywhere without perturbing the ReSTIR target functions -- only the
+// geometric normal is added. `geoNormal` is aligned to the shading normal's side
+// and flipped with the same backface decision, so both face consistently.
+__device__ __forceinline__ void getDataGeo(
+    const Triangle& tri,
+    ShadeContext shadeContext,
+    float2 barycentrics,
+    float3 inDirection,
+
+    int& materialID,
+    float2& uv,
+    float3& shadingPos,
+    float3& geoNormal,
+    float3& normal,
+    bool& backface,
+    float3& emission,
+
+    uint32_t instanceID = 0xFFFFFFFF
+) {
+    materialID = tri.materialID;
+    float u = barycentrics.x;
+    float v = barycentrics.y;
+
+    uv = interpolateUV(tri, shadeContext, u, v);
+
+    float3 apos = f3(__ldg(&shadeContext.vertices->positions[tri.aInd]));
+    float3 bpos = f3(__ldg(&shadeContext.vertices->positions[tri.bInd]));
+    float3 cpos = f3(__ldg(&shadeContext.vertices->positions[tri.cInd]));
+
+    shadingPos = (1.0f - u - v) * apos + u * bpos + v * cpos;
+
+    float3 gnObj = cross(bpos - apos, cpos - apos); // object-space geometric normal
+    normal = interpolateNormal(tri, shadeContext, u, v, apos, bpos, cpos);
+
+    if (instanceID != 0xFFFFFFFF) {
+        shadingPos = transformPosition(shadeContext.transformationMatrices, instanceID, shadingPos);
+        normal     = transformNormalRigid(shadeContext.transformationMatrices, instanceID, normal);
+        geoNormal  = transformNormalRigid(shadeContext.transformationMatrices, instanceID, gnObj);
+    } else {
+        geoNormal = normalize(gnObj);
+    }
+
+    // Keep the geometric normal on the same side as the interpolated shading normal
+    // (winding-independent), before either is perturbed or flipped.
+    if (dot(geoNormal, normal) < 0.0f) geoNormal = -geoNormal;
+
+    normal = applyNormalMap(tri, shadeContext, materialID, apos, bpos, cpos, uv, normal, instanceID);
+
+    backface = dot(normal, inDirection) > 0.0f;
+    if (backface) { normal = -normal; geoNormal = -geoNormal; }
     emission = f3(tri.emission);
 }
 
@@ -241,6 +364,8 @@ __device__ __forceinline__ void getDataWithoutInDirection(
         shadingPos = transformPosition(shadeContext.transformationMatrices, instanceID, shadingPos);
         normal = transformNormalRigid(shadeContext.transformationMatrices, instanceID, normal);
     }
+
+    normal = applyNormalMap(tri, shadeContext, materialID, apos, bpos, cpos, uv, normal, instanceID);
 
     float3 inDirection = normalize(shadingPos - origin);
     backface = dot(normal, inDirection) > 0.0f;
@@ -283,6 +408,8 @@ __device__ __forceinline__ void getDataSkipEmission(
         normal = transformNormalRigid(shadeContext.transformationMatrices, instanceID, normal);
     }
 
+    normal = applyNormalMap(tri, shadeContext, materialID, apos, bpos, cpos, uv, normal, instanceID);
+
     backface = dot(normal, inDirection) > 0.0f;
     normal = backface ? -normal : normal;
 }
@@ -322,6 +449,8 @@ __device__ __forceinline__ void getDataWithoutInDirectionAndEmission(
         shadingPos = transformPosition(shadeContext.transformationMatrices, instanceID, shadingPos);
         normal = transformNormalRigid(shadeContext.transformationMatrices, instanceID, normal);
     }
+
+    normal = applyNormalMap(tri, shadeContext, materialID, apos, bpos, cpos, uv, normal, instanceID);
 
     float3 inDirection = normalize(shadingPos - origin);
     backface = dot(normal, inDirection) > 0.0f;

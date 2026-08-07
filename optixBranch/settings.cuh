@@ -17,7 +17,7 @@
 // under renders/unidirectional/. 0 = clean ReSTIR-only build (no PT code, no
 // per-frame timing overhead compiled in).
 #ifndef EQUAL_TIME_COMPARE
-#define EQUAL_TIME_COMPARE 0
+#define EQUAL_TIME_COMPARE 1
 #endif
 
 // Master switch for device side debug instrumentation.
@@ -39,7 +39,7 @@
 #endif
 
 #ifndef DEBUG_VISUALIZE_TYPE
-#define DEBUG_VISUALIZE_TYPE 1
+#define DEBUG_VISUALIZE_TYPE 0
 #endif
 
 #ifndef TEMPORAL_SKIP_REVERSE_SHIFT

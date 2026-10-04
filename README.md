@@ -92,10 +92,12 @@ There is a substantial amount of engineering on top of the algorithm itself: a f
 | ReSTIR PT (Enhanced) | Lin et al. 2026 | Real time, hardware RT via OptiX + SER (`optixBranch/`) |
 | Vertex Connection and Merging (VCM) | Georgiev et al. 2012 | Offline, software BVH |
 | Bidirectional Path Tracing (BDPT) | Veach & Guibas 1994 | Offline, software BVH |
-| Stochastic Progressive Photon Mapping (SPPM) | Hachisuka & Jensen 2009 | Offline, software BVH |
+| Stochastic Progressive Photon Mapping (SPPM*) | Hachisuka & Jensen 2009 | Offline, software BVH |
 | Heterogeneous Volumetric Path Tracing | - | nanovdb-backed participating media |
 | Unidirectional PT + NEE | - | Offline, software BVH |
 | Naive Path Tracing | - | Offline, software BVH |
+
+*Technically the "SPPM" integrator in this engine is not truly the SPPM in the 2009 paper. It is a custom version with a different radius reduction scheme. However, SPPM is the most similar thing to what it would actually be called.
 
 Also supported: priority-based nested dielectrics, thin-lens depth of field with polygonal bokeh, custom layered BSDFs, and SAH-accelerated BVH scene intersection.
 

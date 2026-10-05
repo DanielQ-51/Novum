@@ -69,6 +69,18 @@ target_include_directories(optix_ptx_restir PRIVATE
 )
 target_compile_options(optix_ptx_restir PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 
+# --- DEVICE MODULE 3: Spectral PPM Shaders ---
+add_library(optix_ptx_spectralPPM OBJECT spectralPPM/spectralPPM_shaders.cu)
+set_property(TARGET optix_ptx_spectralPPM PROPERTY ${OPTIX_DEVICE_COMPILE_PROP} ON)
+
+target_include_directories(optix_ptx_spectralPPM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}   # optixBranch headers (settings.cuh, optixStructs.cuh, ...)
+    ../include
+    ../thirdparty
+    ${OPTIX_INCLUDE_DIR}
+)
+target_compile_options(optix_ptx_spectralPPM PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+
 # ==============================================================================
 # 2. COMPILE THE HOST CODE (EXECUTABLE)
 # ==============================================================================
@@ -76,6 +88,8 @@ target_compile_options(optix_ptx_restir PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use
 add_executable(renderer_optix
     main.cu
     restirPTenhanced_kernels.cu
+    spectralPPM/spectralPPM_kernels.cu
+    spectralPPM/rgbspectrum_srgb.cpp
     ../src/tinyexr_impl.cpp
     ../src/stb_image_impl.cpp
     ../thirdparty/tinyexr/miniz.c
@@ -85,7 +99,8 @@ add_executable(renderer_optix
 )
 
 # Reach UP one directory to link your shared headers to the host code
-target_include_directories(renderer_optix PRIVATE 
+target_include_directories(renderer_optix PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}   # optixBranch headers, for sources in subfolders (spectralPPM/)
     ../include
     ../thirdparty
     ../thirdparty/tinyexr
@@ -138,4 +153,9 @@ add_custom_command(TARGET renderer_optix POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
     $<TARGET_OBJECTS:optix_ptx_restir>
     $<TARGET_FILE_DIR:renderer_optix>/restirPTenhancedShaders.${OPTIX_DEVICE_MODULE_EXT}
+
+    # Copy the spectral PPM device module
+    COMMAND ${CMAKE_COMMAND} -E copy
+    $<TARGET_OBJECTS:optix_ptx_spectralPPM>
+    $<TARGET_FILE_DIR:renderer_optix>/spectralPPM_shaders.${OPTIX_DEVICE_MODULE_EXT}
 )

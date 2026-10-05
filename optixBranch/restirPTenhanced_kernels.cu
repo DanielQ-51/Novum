@@ -712,6 +712,13 @@ __global__ void resolveSpatialReuse(
             }
 #endif
 
+#if DEBUG_VISUALIZE_DUP == 1
+            float dbgD    = float(restir.duplication_map[selfIdx]) / 255.0f;
+            float dbgCap  = lerp(LERP_MCAP, 1.0f, pow(dbgD, 0.1f));
+            float dbgFrac = __saturatef((dbgCap - 1.0f) / (LERP_MCAP - 1.0f));
+            shaded = f3(1.0f - dbgFrac, dbgFrac, 0.0f); // red = cratered, green = intact
+#endif
+
 #if ACCUMULATE_FRAMES == 1
             params.accum_buffer[selfIdx] += f4(shaded);
 #else

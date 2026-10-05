@@ -55,7 +55,7 @@ There is a substantial amount of engineering on top of the algorithm itself: a f
 <br><br>
 
 <img src="savedRenders/watercausticfull.gif" alt="animation of water caustic" width="80%"/>
-<small><i>Water caustics rendered with SPPM.</i></small>
+<small><i>Water caustics rendered with photon mapping.</i></small>
 <br><br>
 
 <img src="savedRenders/smokerender.png" alt="a smoke cloud lit by red and blue lights" width="50%"/>

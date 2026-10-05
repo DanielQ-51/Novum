@@ -19,6 +19,7 @@
 #include <string>
 #include <iomanip>
 
+#include "spectralPPM/spectralPPM_Utils.cuh"
 
 struct OptixEngineState {
     OptixDeviceContext context = nullptr;
@@ -29,16 +30,21 @@ struct OptixEngineState {
     OptixShaderBindingTable sbt_restirTemporal = {};
     OptixShaderBindingTable sbt_restirTemporalFwd = {};
     OptixShaderBindingTable sbt_restirTemporalBwd = {};
+    OptixShaderBindingTable sbt_spectralPPMLight = {};
+    OptixShaderBindingTable sbt_spectralPPMEye = {};
     OptixProgramGroup raygenUnidirectionalProgramGroup = nullptr;
     OptixProgramGroup raygenRestirCandidateProgramGroup = nullptr;
     OptixProgramGroup raygenRestirSpatialProgramGroup = nullptr;
     OptixProgramGroup raygenRestirTemporalProgramGroup = nullptr;
     OptixProgramGroup raygenRestirTemporalFwdProgramGroup = nullptr;
     OptixProgramGroup raygenRestirTemporalBwdProgramGroup = nullptr;
+    OptixProgramGroup raygenSpectralPPMLightProgramGroup = nullptr;
+    OptixProgramGroup raygenSpectralPPMEyeProgramGroup = nullptr;
     OptixProgramGroup missProgramGroup = nullptr;
     OptixProgramGroup hitgroupProgramGroup = nullptr;
     OptixModule module = nullptr;
     OptixModule restirModule = nullptr;
+    OptixModule spectralPPMModule = nullptr;
 
     CUdeviceptr d_rgRecord = 0;
     CUdeviceptr d_msRecord = 0;
@@ -88,6 +94,31 @@ struct SpatialReuseParams {
 };
 
 struct TemporalReuseParams {
+
+};
+
+struct SpectralParams {
+    // constant per render
+    float* __restrict__ sRGBToSpectrumTable_Scale; // device, [64]
+    float* __restrict__ sRGBToSpectrumTable_Data;  // device, [3][64][64][64][3] flattened
+
+    SpectralPhotonMap photons;
+    SpectralPhotonMap photonsSorted;
+    uint32_t* __restrict__ photonCounter;
+    uint32_t maxPhotons;
+
+    uint32_t hashTableSize;
+    uint32_t* __restrict__ cellStart;
+    uint32_t* __restrict__ cellEnd;
+
+    // Per frame change
+
+    Wavelengths wl;
+    float wR[N], wG[N], wB[N];
+    float3 heroW;
+    float d65[N];
+    float mergeRadius;
+    float invMergeNorm;
 
 };
 

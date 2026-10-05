@@ -9,6 +9,9 @@
 #include "restirPTenhanced_host.cuh"
 #include "unidirectional_host.cuh"
 #include "profiling.cuh"
+
+#include "spectralPPM/spectralPPM_host.cuh"
+
 #include <chrono>
 #include <iostream>
 #include <exception>
@@ -303,7 +306,6 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         }
     }
 
-    // [STACK_FIX] BEGIN - set an explicit pipeline stack size.
     // Previously no stack size was set, so OptiX used a default derived from
     // maxTraceDepth=0 and assumed a single-GAS scene. Adding the IAS -> GAS
     // (2-level) traversal pushed the deepest raygen (temporal reuse) past that
@@ -332,7 +334,6 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
             /* maxTraversableGraphDepth */ 2   // IAS -> GAS
         );
     }
-    // [STACK_FIX] END
 
     struct RaygenRecord {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE];
@@ -774,6 +775,8 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
         launch_unidirectional(engineState, params, sampleCount);
     } else if (integratorChoice == OPTIX_RESTIR_PT) {
         launch_restir(engineState, params, sampleCount, config);
+    } else if (integratorChoice == SPECTRAL_PPM) {
+
     } else {
         printf("Error: Integrator Unavaible in Optix Branch");
     }

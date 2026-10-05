@@ -17,7 +17,7 @@
 // Master switch for device side debug instrumentation.
 // Host side prints (timings, memory usage) are deliberately not gated.
 #ifndef DEBUG_MODE
-#define DEBUG_MODE 0
+#define DEBUG_MODE 1
 #endif
 
 // Technique-profiling suite. When 1, initRender routes to launchProfile instead
@@ -44,12 +44,16 @@
 #define DEBUG_VISUALIZE_TYPE 0
 #endif
 
+#ifndef DEBUG_VISUALIZE_DUP
+#define DEBUG_VISUALIZE_DUP 0
+#endif
+
 #ifndef TEMPORAL_SKIP_REVERSE_SHIFT
 #define TEMPORAL_SKIP_REVERSE_SHIFT 1
 #endif
 
 #ifndef CAMERA_MOVES
-#define CAMERA_MOVES 0
+#define CAMERA_MOVES 1
 #endif
 
 #ifndef LERP_MCAP

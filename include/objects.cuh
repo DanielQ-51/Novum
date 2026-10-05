@@ -845,7 +845,8 @@ enum IntegratorChoice {
     WAVEFRONT_UNIDIRECTIONAL = 5,
     VOLUME_SIMPLE = 6,
     OPTIX_NORMAL = 7,
-    OPTIX_RESTIR_PT = 8
+    OPTIX_RESTIR_PT = 8,
+    SPECTRAL_PPM = 9
 };
 
 enum TransportMode {
@@ -864,6 +865,7 @@ __host__ inline int matchIntegrator(std::string name)
     else if (name == "SIMPLEVOL") return 6;
     else if (name == "OPTIXNORMAL") return 7;
     else if (name == "RESTIRPT") return 8;
+    else if (name == "SPECTRALPPM") return 9;
 
     std::cerr << "Invalid Integrator Choice!\n";
     return -1;

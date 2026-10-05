@@ -174,11 +174,6 @@ __host__ void renderFrameRestir(
         allParams.restir.lastFrameReservoir, allParams.restir.duplication_map, w, h);
 #endif
 
-    // 2) Temporal reuse (skipped on frame 0 -- no history yet). Two-launch split: forward
-    // shift, then backward shift + MIS + resolve. Each launch inlines evaluateHybridShift
-    // ONCE vs twice single-launch -> ~5% on sponza. The legacy single-launch kernel
-    // (__raygen__restirTemporalReuse) and its SBT entry (sbt_restirTemporal) are kept but no
-    // longer launched.
     if (frame > 0) {
         optixLaunch(engineState.pipeline, stream, d_params, sizeof(PipelineParams),
                     &engineState.sbt_restirTemporalFwd, w, h, 1);
@@ -583,7 +578,7 @@ __host__ void launch_restir (
     #if DEBUG_VISUALIZE_TYPE == 1
         ss << "renders/restirDebug/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
     #elif DEBUG_VISUALIZE_TYPE == 0
-        ss << "renders/restir/sponza/rende" << std::setfill('0') << std::setw(4) << frame << ".bmp";
+        ss << "renders/restir/sponza/render" << std::setfill('0') << std::setw(4) << frame << ".bmp";
     #endif  
 #endif
 

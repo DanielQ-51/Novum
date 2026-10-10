@@ -64,7 +64,7 @@ There is a substantial amount of engineering on top of the algorithm itself: a f
 
 <img src="savedRenders/spectralDiamond.webp" alt="a diamond with dispersion in its caustics" width="100%"/>
 <small><i>Spectral PPM render of a diamond. Dispersion scale is tuned up to make it prettier.</i></small>
-<br><br>
+<br><br> 
 
 <img src="savedRenders/smokerender.png" alt="a smoke cloud lit by red and blue lights" width="50%"/>
 <small><i>Heterogeneous Volume Render via NanoVDB, done with delta and ratio tracking.</i></small>

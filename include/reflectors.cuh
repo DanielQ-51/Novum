@@ -69,6 +69,24 @@ __device__ inline void cosine_emit(RNGState& localState, float3& wo, float& pdf)
     cosine_pdf(wo, pdf);
 }
 
+__device__ inline void cosine_emit(float2 rand_2, float3& wo, float& pdf)
+{
+    float u1 = rand_2.x;
+
+    u1 = fminf(u1, 1.0f-EPSILON);
+    float u2 = rand_2.y;
+
+    float r = sqrtf(u1);
+    float phi = 2.0f * PI * u2;
+
+    float x = r * cosf(phi);
+    float y = r * sinf(phi);
+    float z = sqrtf(1.0f - u1);
+
+    wo = f3(x,y,z);
+    cosine_pdf(wo, pdf);
+}
+
 __device__ inline void mirror_f(float3& f_val, float3 wo)
 {
     float cos_theta = fmaxf(wo.z, EPSILON);
@@ -975,7 +993,7 @@ __device__ inline void f_eval(const Material* __restrict__ materials, int materi
     {
         microfacet_metal_f(f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         //smooth_dielectric_f(-wi, wo, etaI, etaT, reflect_dielectric, TIR, f_val);
     }
@@ -1034,7 +1052,7 @@ __device__ inline void sample_f_eval(RNGState& localState, const Material* __res
     {
         microfacet_metal_sample_f(localState, f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val, pdf);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
         //smooth_dielectric_sample_f(localState, -wi, etaI, etaT, wo, f_val, pdf);
@@ -1096,7 +1114,7 @@ __device__ inline void pdf_eval(const Material* __restrict__ materials, int mate
     {
         microfacet_pdf(mat.roughness, -wi, wo, pdf);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         pdf = 999999999.0f;
     }
@@ -1157,7 +1175,7 @@ __device__ inline void f_pdf_eval(const Material* __restrict__ materials, int ma
         microfacet_metal_f(f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val);
         microfacet_pdf(mat.roughness, -wi, wo, pdf);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         //smooth_dielectric_f(-wi, wo, etaI, etaT, reflect_dielectric, TIR, f_val);
         pdf = 999999999.0f;
@@ -1243,7 +1261,7 @@ __device__ inline void sample_f_eval_lobe(RNGState& localState, const Material* 
     {
         microfacet_metal_sample_f(localState, f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val, pdf);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
     }
@@ -1320,7 +1338,7 @@ __device__ inline void sample_f_eval_lobe_returnRoughness(RNGState& localState, 
     {
         microfacet_metal_sample_f(localState, f3(mat.eta), f3(mat.k), mat.roughness, -wi, wo, f_val, pdf);
     }
-    else if (mat.type == MAT_SMOOTHDIELECTRIC)
+    else if (mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC)
     {
         dumb_smooth_dielectric_sample_f(localState, -wi, mat.ior, backface, transportMode, wo, f_val, pdf);
     }
@@ -1461,7 +1479,8 @@ __device__ inline void getAlbedo(
         float3 k = f3(mat.k);
         albedo = ((eta - f3(1.0f)) * (eta - f3(1.0f)) + k * k)/
                  ((eta + f3(1.0f)) * (eta + f3(1.0f)) + k * k);
-    } else if (mat.type == MAT_DELTAMIRROR || mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_THINDIELECTRIC ||
+    } else if (mat.type == MAT_DELTAMIRROR || mat.type == MAT_SMOOTHDIELECTRIC || mat.type == MAT_DISPERSIVEDIELECTRIC ||
+               mat.type == MAT_THINDIELECTRIC ||
                (mat.type == MAT_GLTF_PRINCIPLED_BSDF && mat.isSpecular)) {
         albedo = f3(1.0f);
     }

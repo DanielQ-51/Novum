@@ -47,3 +47,11 @@ METAL; eta=(0.14,0.16,0.13,0), k=(4.1,2.3,3.1,0), roughness=0.45
 DIFFUSE; albedo=(0.03,0.03,0.03,0)
 LEAF; baseColorTex=tex_glove, ior=1.5, roughness=0.4, albedo=(0,0,0,0), transmission=0.0
 PRINCIPLED; baseColor=(1.0,1.0,1.0,0), metallic=0.0, roughness=0.15, baseColorTex=tex_wood
+DISPERSIVE_DIELECTRIC; sellB=(1.73759695,0.313747346,1.89878101), sellC=(0.013188707,0.0623068142,155.23629), priority=1
+DISPERSIVE_DIELECTRIC; sellB=(1.73759695,0.313747346,1.89878101), sellC=(0.013188707,0.0623068142,155.23629), dispersionScale=4, priority=1
+DISPERSIVE_DIELECTRIC; sellB=(0.3306,4.3356,0), sellC=(0.030625,0.011236,0), priority=1
+DISPERSIVE_DIELECTRIC; ior=1.333, abbe=55.7, priority=2
+DISPERSIVE_DIELECTRIC; ior=1.333, abbe=55.7, dispersionScale=32, priority=2
+DISPERSIVE_DIELECTRIC; sellB=(0.3306,4.3356,0), sellC=(0.030625,0.011236,0), dispersionScale=4, priority=1
+DIFFUSE; albedo=(0.8,0.8,0.8,0)
+DISPERSIVE_DIELECTRIC; ior=1.333, abbe=55.7, dispersionScale=2, priority=2

@@ -111,6 +111,9 @@ struct SpectralParams {
     uint32_t* __restrict__ cellStart;
     uint32_t* __restrict__ cellEnd;
 
+    float3 sceneCenter;
+    float sceneRadius;
+
     // Per frame change
 
     Wavelengths wl;
@@ -128,4 +131,5 @@ struct PipelineParams {
     CandidateGenParams candidateGen;
     SpatialReuseParams spatial;
     TemporalReuseParams temporal;
+    SpectralParams spectralPPM;
 };

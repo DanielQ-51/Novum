@@ -6,6 +6,10 @@
 #define RNG_MODE 3 // 1 = Philox, 2 = Sobol, 3 = Stateless PCG
 #endif
 
+#ifndef RNG_STATE_64
+#define RNG_STATE_64 0 // 1 = 64-bit StatelessRNG state, defined per-module before includes
+#endif
+
 __device__ inline uint32_t hash_pixel(uint32_t x) {
     x = ((x >> 16) ^ x) * 0x45d9f3b;
     x = ((x >> 16) ^ x) * 0x45d9f3b;
@@ -43,6 +47,30 @@ __device__ __forceinline__ uint32_t hash_uint32(uint32_t x) {
         return __uint_as_float(0x3f800000 | (x >> 9)) - 1.0f;
     }
 
+#if RNG_STATE_64
+    // PCG32 (64-bit state). No 32-bit seed replay, so ReSTIR modules must not define RNG_STATE_64.
+    struct StatelessRNG {
+        uint64_t state;
+
+        __forceinline__ __device__ __host__ void init(uint32_t pixel_id, uint32_t frame, uint32_t depth) {
+            uint64_t z = (((uint64_t)frame << 32) | pixel_id) ^ ((uint64_t)(depth + 1u) * 0x9E3779B97F4A7C15ull);
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+            state = z ^ (z >> 31);
+        }
+
+        __forceinline__ __device__ __host__ float next_float() {
+            uint64_t old_state = state;
+            state = old_state * 6364136223846793005ull + 1442695040888963407ull;
+
+            uint32_t xorshifted = (uint32_t)(((old_state >> 18u) ^ old_state) >> 27u);
+            uint32_t rot = (uint32_t)(old_state >> 59u);
+            uint32_t result = (xorshifted >> rot) | (xorshifted << ((32u - rot) & 31u));
+
+            return (float)(result >> 8) * 5.9604645e-8f;
+        }
+    };
+#else
     struct StatelessRNG {
         uint32_t state;
 
@@ -80,6 +108,7 @@ __device__ __forceinline__ uint32_t hash_uint32(uint32_t x) {
         }
     };
 #endif
+#endif
 
 #if RNG_MODE == 1
     typedef curandStatePhilox4_32_10_t RNGState;
@@ -107,6 +136,14 @@ __device__ inline float4 rand4(RNGState* state) {
 #endif
 }
 
+__device__ inline float2 rand2(RNGState* state) {
+#if RNG_MODE == 3
+    return make_float2(state->next_float(), state->next_float());
+#else
+    return make_float2(curand_uniform(state), curand_uniform(state));
+#endif
+}
+
 namespace RNGManager {
     void launchInitRNG(RNGState* d_rngStates, int width, int height, unsigned long seed);
     void cleanup();
@@ -123,7 +160,7 @@ __device__ inline RNGState load_rng(int pixel_id, int frame_num, int depth, RNGS
 
     return local_state;
 }
-#if RNG_MODE == 3
+#if RNG_MODE == 3 && !RNG_STATE_64
 __device__ inline RNGState load_rng(uint32_t seed) {
     RNGState local_state;
     

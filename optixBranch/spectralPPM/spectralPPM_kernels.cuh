@@ -6,7 +6,6 @@ __global__ void computeHashes(
     int photonCount,
     uint32_t* d_hash_keys,
     uint32_t* d_indices,
-    float3 sceneMin,
     float mergeRadius,
     int hashTableSize
 );
@@ -38,8 +37,18 @@ __host__ void buildHashGrid(
     size_t temp_storage_bytes,
     uint32_t* d_cell_start,
     uint32_t* d_cell_end,
-    float3 sceneMin,
     float mergeRadius,
     int hashTableSize,
     cudaStream_t stream
+);
+
+// Debug: splat every stride-th photon into accum (overwrite mode, see SPECTRAL_PPM_DISPLAY_PHOTONS).
+// Finite photons add 1 to each channel; a photon with non-finite radiance adds NaN, which the format kernel shows as magenta.
+__global__ void paintPhotons(
+    SpectralPhotonMap photons,
+    int numPhotons,
+    int stride,
+    float4* __restrict__ accum,
+    int w, int h,
+    Camera camera
 );

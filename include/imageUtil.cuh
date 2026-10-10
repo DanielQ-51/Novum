@@ -45,8 +45,9 @@ __global__ void cleanAndFormatImage(
 __global__ void cleanAndFormatImageNoOverlay(
     float4* accumulationBuffer, // Your raw 'colors' buffer (Sum of samples)
     float4* outputBuffer,       // A temporary buffer to store the result for saving
-    int w, int h, 
-    int currentSampleCount);
+    int w, int h,
+    int currentSampleCount,
+    bool ignoreNegatives = false);
 
 __global__ void cleanFormatAndPostProcessImage(
     float4* accumulationBuffer,
@@ -55,7 +56,8 @@ __global__ void cleanFormatAndPostProcessImage(
     int w, int h,
     int currentSampleCount,
     float exposure,
-    bool use_fitted_aces);
+    bool use_fitted_aces,
+    bool ignoreNegatives = false);
 
 // Applies exposure/tonemap/gamma to an already-normalized linear buffer
 // (e.g. post-denoise output), writing into a separate output buffer so the

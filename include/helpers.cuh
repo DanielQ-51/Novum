@@ -3,6 +3,7 @@
 #include "sceneContexts.cuh"
 #include "util.cuh"
 #include "objects.cuh"
+#include "reflectors.cuh"
 
 __device__ __forceinline__ float3 transformPosition(
     const float4& r0, const float4& r1, const float4& r2, 
@@ -790,6 +791,129 @@ __device__ inline bool sample(
         outDir = normalize(pos - probePos);
 
         t_max = length(pos-probePos);
+        return 0;
+    }
+}
+
+__device__ inline bool sampleEmission(
+    const LightSampler& sampler,
+    float3 sceneCenter, float sceneRadius,
+    float rand_macro,
+    float4 rand_micro,
+    float2 rand_super_micro,
+    const Vertices* verts,
+    float3& outPos,
+    float3& outDir,
+    float3& power,
+    float& pdf_sa,
+    float& cosine,
+    
+    const float4* matrices = nullptr
+) {
+    if (rand_macro < sampler.envWeight) {
+        float microPDF;
+
+        float3 emission;
+        float3 dir_to_sky;
+        sampler.envMap.sample(rand_micro, dir_to_sky, emission, microPDF);
+        float dir_pdf = microPDF * sampler.envWeight;
+
+        float rand_r = sceneRadius * sqrtf(rand_super_micro.x);
+        float rand_phi = 2 * PI * rand_super_micro.y;
+
+        float3 disc_center = sceneCenter + dir_to_sky * sceneRadius;
+
+        float3 disc_offset;
+        toWorld(make_float3(rand_r * cosf(rand_phi), rand_r * sinf(rand_phi), 0.0f), dir_to_sky, disc_offset);
+
+        outPos = disc_center + disc_offset;
+        outDir = -dir_to_sky;                          // photon travels from the sky into the scene
+
+        float pos_pdf = 1.0f / (PI * sceneRadius * sceneRadius);
+        pdf_sa = (dir_pdf * pos_pdf);              // no cosine: the disc faces the beam head-on
+        power = emission;                                // photon flux = weight * emission (RGB, upsample in the raygen)
+        cosine = 1.0f;
+        return 1;
+    } else {
+        if (sampler.numLights == 0) {
+            pdf_sa = 0.0f;
+            return 0; // Edge case: branched to mesh but none exist
+        }
+
+        // Remap rand_macro to [0, 1) to search the mesh-only CDF
+        float mapped_rand = (rand_macro - sampler.envWeight) / (1.0f - sampler.envWeight);
+
+        int index = sampler.binarySearchCDF(sampler.topLevelCDF, sampler.numLights, mapped_rand);
+        LightDescriptor light = sampler.lights[index];
+
+        // PDF of choosing this specific mesh light given we chose the mesh category
+
+        int lightTriInd = light.startInd +
+            sampler.binarySearchCDF(sampler.bottomLevelCDF + light.startInd, light.numPrim, rand_micro.x);
+
+        float3 pos;
+        float3 lightNorm;
+        float area;
+        {
+            Triangle l = sampler.triLights[lightTriInd];
+
+            power = f3(l.emission);
+
+            float3 apos = f3(__ldg(&verts->positions[l.aInd]));
+            float3 bpos = f3(__ldg(&verts->positions[l.bInd]));
+            float3 cpos = f3(__ldg(&verts->positions[l.cInd]));
+
+            float u = sqrtf(rand_micro.y);
+            float v = rand_micro.z;
+
+            float3 localPos = (1.0f - u) * apos + u * (1.0f - v) * bpos + u * v * cpos;
+            // Guard on the id sentinel, not the pointer: buildFlattened bakes world-space
+            // geometry and tags lights with instanceID == 0xFFFFFFFF, yet the OptiX path
+            // now hands us a non-null (identity) matrix array for the closest-hit code.
+            // Testing `matrices` here would transform already-world verts with a garbage
+            // 0xFFFFFFFF*3 offset. Matches getData/getBarycentrics.
+            if (matrices && light.instanceID != 0xFFFFFFFF)
+                pos = transformPosition(matrices, light.instanceID, localPos);
+            else
+                pos = localPos;
+
+            area = 0.5f * length(cross(bpos-apos, cpos-apos));
+
+            // -1 sentinels for an emitter with no "vn" lines; fall back to the face normal.
+            float3 localNorm;
+            if (l.naInd < 0 || l.nbInd < 0 || l.ncInd < 0) {
+                localNorm = cross(bpos - apos, cpos - apos);
+            } else {
+                float3 anorm = f3(__ldg(&verts->normals[l.naInd]));
+                float3 bnorm = f3(__ldg(&verts->normals[l.nbInd]));
+                float3 cnorm = f3(__ldg(&verts->normals[l.ncInd]));
+
+                localNorm = (1.0f - u) * anorm + u * (1.0f - v) * bnorm + u * v * cnorm;
+            }
+            if (matrices && light.instanceID != 0xFFFFFFFF)
+                lightNorm = transformNormalRigid(matrices, light.instanceID, localNorm);
+            else
+                lightNorm = normalize(localNorm);
+
+            float3 geoN = normalize(cross(bpos - apos, cpos - apos));
+            if (dot(geoN, lightNorm) < 0.0f) geoN = -geoN;
+            outPos = pos + geoN * RAY_EPSILON;
+        }
+
+        float pdf_chooseLight = (1.0f - sampler.envWeight) * (light.totalPower / sampler.totalMeshPower);
+
+        float triPdf = (area * luminance(power) * PI) / light.totalPower;
+        float pdf_sa_sans_direction = pdf_chooseLight * triPdf * (1.0f / area);
+
+        float3 outDir_local;
+        float dir_pdf;
+        cosine_emit(rand_super_micro, outDir_local, dir_pdf);
+
+        cosine = outDir_local.z; // should be pos
+
+        pdf_sa = dir_pdf * pdf_sa_sans_direction;
+
+        outDir = normalize(toWorld(outDir_local, lightNorm));
         return 0;
     }
 }

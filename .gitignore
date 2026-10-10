@@ -12,5 +12,6 @@ renders/
 *.lib
 *.exr
 assets/gltf/
+assets/
 
 READMETEMP.md

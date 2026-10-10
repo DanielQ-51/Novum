@@ -7,7 +7,6 @@ __global__ void computeHashes(
     int photonCount,
     uint32_t* d_hash_keys,
     uint32_t* d_indices,
-    float3 sceneMin,
     float mergeRadius,
     int hashTableSize
 )
@@ -17,7 +16,7 @@ __global__ void computeHashes(
 
     float3 p = getPos_cs(photons, i);
 
-    d_hash_keys[i] = ComputeGridHash(p, sceneMin, mergeRadius, hashTableSize);
+    d_hash_keys[i] = photonGridHash(photonGridCell(p, mergeRadius), hashTableSize);
     d_indices[i] = i;
 }
 
@@ -74,7 +73,6 @@ __host__ void buildHashGrid(
     size_t temp_storage_bytes,
     uint32_t* d_cell_start,
     uint32_t* d_cell_end,
-    float3 sceneMin,
     float mergeRadius,
     int hashTableSize,
     cudaStream_t stream
@@ -88,7 +86,6 @@ __host__ void buildHashGrid(
         photonCount,
         d_hash_keys_in,
         d_indices_in,
-        sceneMin,
         mergeRadius,
         hashTableSize
     );
@@ -122,4 +119,33 @@ __host__ void buildHashGrid(
     );
 
     //checkCudaErrors("build table");
+}
+
+__global__ void paintPhotons(
+    SpectralPhotonMap photons,
+    int numPhotons,
+    int stride,
+    float4* __restrict__ accum,
+    int w, int h,
+    Camera camera
+)
+{
+    int i = (blockIdx.x * blockDim.x + threadIdx.x) * stride;
+    if (i >= numPhotons) return;
+
+    float2 pixelPos;
+    if (!camera.worldToRaster(getPos_ldg(photons, i), pixelPos)) return;   // a NaN position slips through and converts to pixel (0,0)
+    int px = (int)pixelPos.x;
+    int py = (int)pixelPos.y;
+    if (px < 0 || px >= w || py < 0 || py >= h) return;                     // worldToRaster can return exactly w or h
+
+    SampledSpectrum radiance = getRadiance_ldg(photons, i);
+    bool finite = true;
+    for (int k = 0; k < N; ++k) finite = finite && isfinite(radiance.v[k]);
+    float v = finite ? 1.0f : __int_as_float(0x7fffffff);
+
+    float4* p = &accum[py * w + px];
+    atomicAdd(&p->x, v);
+    atomicAdd(&p->y, v);
+    atomicAdd(&p->z, v);
 }

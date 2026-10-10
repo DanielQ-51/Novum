@@ -349,8 +349,9 @@ __global__ void cleanAndFormatImage(
 __global__ void cleanAndFormatImageNoOverlay(
     float4* accumulationBuffer, // Your raw 'colors' buffer (Sum of samples)
     float4* outputBuffer,       // A temporary buffer to store the result for saving
-    int w, int h, 
-    int currentSampleCount) 
+    int w, int h,
+    int currentSampleCount,
+    bool ignoreNegatives)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -366,17 +367,17 @@ __global__ void cleanAndFormatImageNoOverlay(
     // 2. Check for NaNs/Infs BEFORE normalization
     if (isnan(acc.x) || isnan(acc.y) || isnan(acc.z)) {
         finalColor = f4(1.0f, 0.0f, 1.0f);
-    } 
+    }
     else if (isinf(acc.x) || isinf(acc.y) || isinf(acc.z)) {
         finalColor = f4(0.0f, 1.0f, 0.0f);
-    } 
-    else if (acc.x < 0 || acc.y < 0 || acc.z < 0) {
+    }
+    else if (!ignoreNegatives && (acc.x < 0 || acc.y < 0 || acc.z < 0)) {
         finalColor = f4(0.0f, 0.0f, 1.0f);
-    } 
+    }
     else {
-        // 3. Normalize (Average the samples)
+        // 3. Normalize (Average the samples). Out-of-gamut negatives are clamped for display only.
         float scale = 1.0f / (float)(currentSampleCount + 1);
-        finalColor = make_float4(acc.x * scale, acc.y * scale, acc.z * scale, 1.0f);
+        finalColor = make_float4(fmaxf(acc.x * scale, 0.0f), fmaxf(acc.y * scale, 0.0f), fmaxf(acc.z * scale, 0.0f), 1.0f);
     }
 
     outputBuffer[pixelIndex] = finalColor;
@@ -461,7 +462,8 @@ __global__ void cleanFormatAndPostProcessImage(
     int w, int h, 
     int currentSampleCount,
     float exposure,
-    bool use_fitted_aces) 
+    bool use_fitted_aces,
+    bool ignoreNegatives)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -474,12 +476,13 @@ __global__ void cleanFormatAndPostProcessImage(
 
     // 1. Check for NaNs/Infs
     if (isnan(acc.x) || isnan(acc.y) || isnan(acc.z)) {
+        printf("nan!!!");
         color = make_float3(1.0f, 0.0f, 1.0f);
     } 
     else if (isinf(acc.x) || isinf(acc.y) || isinf(acc.z)) {
         color = make_float3(0.0f, 1.0f, 0.0f);
     } 
-    else if (acc.x < 0 || acc.y < 0 || acc.z < 0) {
+    else if (!ignoreNegatives && (acc.x < 0 || acc.y < 0 || acc.z < 0)) {
         printf("negative!");
         color = make_float3(0.0f, 0.0f, 1.0f);
     } 
@@ -487,7 +490,12 @@ __global__ void cleanFormatAndPostProcessImage(
         // 2. Normalize
         float scale = 1.0f / (float)(currentSampleCount + 1);
         color = make_float3(acc.x * scale, acc.y * scale, acc.z * scale);
-        
+
+        // Out-of-gamut (e.g. spectral) results: negatives stay in the accumulator, clamp only for display.
+        // The tonemappers below map negative input to bright or NaN output.
+        if (ignoreNegatives)
+            color = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
+
         // 3. Post-Process (Exposure -> ToneMap -> Gamma)
         color = make_float3(color.x * exposure, color.y * exposure, color.z * exposure);
         

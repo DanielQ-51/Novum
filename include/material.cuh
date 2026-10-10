@@ -21,7 +21,8 @@ enum MaterialType {
     MAT_FLOWER = 5,
     MAT_DELTAMIRROR = 6,
     MAT_THINDIELECTRIC = 7,
-    MAT_GLTF_PRINCIPLED_BSDF = 8
+    MAT_GLTF_PRINCIPLED_BSDF = 8,
+    MAT_DISPERSIVEDIELECTRIC = 9  // smooth delta dielectric with a Sellmeier n(lambda); RGB integrators treat it as SMOOTHDIELECTRIC with ior = nd
 };
 
 struct Material
@@ -57,6 +58,13 @@ struct Material
     float4 absorption;
 
     int priority; // dielectric priority, for nested dielectrics/medium stack
+
+    // Dispersive dielectric: n(lambda)^2 = 1 + sum_i sellB[i] * l^2 / (l^2 - sellC[i]), l in micrometers.
+    // nd = n(587.6 nm), the reference index; dispersionScale exaggerates the spread around it (1 = physical, 0 = none).
+    float sellB[3] = { 0.0f, 0.0f, 0.0f };
+    float sellC[3] = { 0.0f, 0.0f, 0.0f };
+    float nd = 1.5f;
+    float dispersionScale = 1.0f;
 
     __host__ Material()
         : type(MAT_DIFFUSE), albedo(f4(0.8f)),
@@ -120,6 +128,54 @@ struct Material
         m.absorption = k;
         m.thinWalled = false;
         return m;
+    }
+
+    // Catalog glass: three published Sellmeier terms (C in micrometers^2).
+    __host__ static Material DispersiveDielectric(const float3& B, const float3& C, float dispersionScale = 1.0f, int pri = 0)
+    {
+        Material m;
+        m.type = MAT_DISPERSIVEDIELECTRIC;
+        m.sellB[0] = B.x; m.sellB[1] = B.y; m.sellB[2] = B.z;
+        m.sellC[0] = C.x; m.sellC[1] = C.y; m.sellC[2] = C.z;
+
+        const float l2 = 0.5876f * 0.5876f; // d line
+        m.nd = sqrtf(1.0f + B.x * l2 / (l2 - C.x) + B.y * l2 / (l2 - C.y) + B.z * l2 / (l2 - C.z));
+        m.ior = m.nd; // what the RGB integrators and the medium stack see
+        m.dispersionScale = dispersionScale;
+
+        m.albedo = f4(1.0f);
+        m.roughness = 0.0f;
+        m.priority = pri;
+        m.isSpecular = true;
+        m.boundary = true;
+        m.absorption = f4();
+        m.thinWalled = false;
+        return m;
+    }
+
+    // Artist-facing: index at 587.6 nm plus an Abbe number V = (n_d - 1) / (n_F - n_C), fit to a one-term Sellmeier.
+    // abbe <= 0 means no dispersion (constant ior). Lower abbe = stronger dispersion; real glass goes down to ~20.
+    __host__ static Material DispersiveDielectricFromAbbe(float ior, float abbe, float dispersionScale = 1.0f, int pri = 0)
+    {
+        if (abbe <= 0.0f)
+            return DispersiveDielectric(make_float3(ior * ior - 1.0f, 0.0f, 0.0f), make_float3(0.0f, 0.0f, 0.0f), dispersionScale, pri);
+
+        // For a given C, B follows from n(d) = ior, and the spread n_F - n_C grows with C, so bisect C.
+        // The pole sits at l^2 = C and must stay below the shortest rendered wavelength, (0.36 um)^2 = 0.1296.
+        const float ld2 = 0.5876f * 0.5876f, lF2 = 0.4861f * 0.4861f, lC2 = 0.6563f * 0.6563f;
+        const float target = (ior - 1.0f) / abbe;
+        float lo = 0.0f, hi = 0.12f, B = 0.0f, C = 0.0f;
+        for (int it = 0; it < 64; ++it) {
+            C = 0.5f * (lo + hi);
+            B = (ior * ior - 1.0f) * (ld2 - C) / ld2;
+            float spread = sqrtf(1.0f + B * lF2 / (lF2 - C)) - sqrtf(1.0f + B * lC2 / (lC2 - C));
+            if (spread < target) lo = C; else hi = C;
+        }
+        if (hi >= 0.1199f)
+            std::cerr << "DispersiveDielectricFromAbbe: abbe " << abbe << " is too dispersive for ior " << ior
+                      << " with one Sellmeier term; clamped. Use dispersionScale to exaggerate further.\n";
+
+        return DispersiveDielectric(make_float3(B, 0.0f, 0.0f), make_float3(C, 0.0f, 0.0f), dispersionScale, pri);
     }
 
     __host__ static Material ThinDielectric(float ior = 1.5f, const float4& k = f4(), int pri = 0) {

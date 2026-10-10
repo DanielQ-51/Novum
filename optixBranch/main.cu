@@ -30,8 +30,19 @@ int main(int argc, char* argv[]) {
     OptixEngineState engineState;
     initOptixSystem(engineState);
 
-    for (std::string str : args) {
-        initRender(engineState,  ASSET_PATH(str), 0);
+    // temporary: "config first last" renders the watersim sequence
+    if (args.size() == 3) {
+        int first = std::stoi(args[1]);
+        int last = std::stoi(args[2]);
+        for (int f = first; f <= last; f++) {
+            char path[256];
+            snprintf(path, sizeof(path), "assets/scenedata/watersim/tenbillionobj/wateranim%04d.obj", f);
+            initRender(engineState, ASSET_PATH(args[0]), f, path);
+        }
+    } else {
+        for (std::string str : args) {
+            initRender(engineState,  ASSET_PATH(str), 0);
+        }
     }
 
     optixEngineCleanup(engineState);

@@ -1,0 +1,97 @@
+Name: causticdemo
+
+MaterialsFile: configs/materials.rendertron
+
+.EnvMap: assets/environment/lakeside_sunrise_2k.exr
+EnvMap: assets/environment/derelict_highway_noon_1k.exr
+EnvMap: assets/environment/derelict_highway_noon_1k.exr
+
+
+
+EnvMap Rotation: 130.0
+EnvMap Rotation: 310.0
+
+width: 2581
+height: 1080
+
+Exposure: 4.0
+
+Integrator: SPECTRALPPM
+
+VCM Merge Radius Power Factor: 0.85
+VCM Initial Merge Radius Multiplier: 0.003
+
+Sample Count: 2000000
+Post Process: true
+Post Process: false
+
+Unidirectional Max Depth: 48
+BVH recommended leaf size: 2
+
+Pinhole Camera: true
+Camera Position: 1.32861 0.992172 0.95923
+Camera Rotation: -36.555 -322.482 0
+Camera FOV: 40
+
+Camera Position: 0.187 3.664 3.362
+Camera Rotation: 5.062 -338.600 0
+
+
+Camera Position: -0.0405116 3.53724 3.41652
+Camera Rotation: 5.062 -338.6 0
+Camera FOV: 40
+
+Camera Position: 2.59807 0.513343 2.09287
+Camera Rotation: -5.25126 -304.967 0
+Camera FOV: 40
+
+Camera Position: 2.6226 4.36276 3.87583
+Camera Rotation: -35.7899 -325.25 0
+Camera FOV: 25
+
+Camera Position: 2.12974 0.815856 1.8043
+Camera Rotation: -16.8043 -322.672 0
+Camera FOV: 20
+
+Camera Position: 2.6226 4.36276 3.87583
+Camera Rotation: -35.7899 -325.25 0
+Camera FOV: 25
+
+.sponzawater2
+Camera Position: -2.61829 1.02193 -5.08079
+Camera Rotation: -10.5139 223.519 0
+Camera FOV: 40
+
+.sponza water
+Camera Position: -7.78897 6.06291 1.1757
+Camera Rotation: -26.041 285.054 0
+Camera FOV: 40
+
+.sponza water ground
+Camera Position: -6.66008 0.412454 -1.75835
+Camera Rotation: 13.6077 259.329 0
+Camera FOV: 40
+
+.sponza water
+Camera Position: -7.78897 5.76291 1.1757
+Camera Rotation: -15.041 285.054 0
+Camera FOV: 55
+
+Meshes (path; multiplier * emission; materialID):
+.assets/scenedata/causticdemo/floor.obj; 0.0 * (0.0, 0.0, 0.0); 2
+.assets/scenedata/causticdemo/water.obj; 0.0 * (0.0, 0.0, 0.0); 43
+.assets/scenedata/causticdemo/dragon.obj; 0.0 * (0.0, 0.0, 0.0); 40
+.assets/scenedata/causticdemo/bunny.obj; 0.0 * (0.0, 0.0, 0.0); 40
+.assets/scenedata/causticdemo/diamond.obj; 0.0 * (0.0, 0.0, 0.0); 44
+.assets/scenedata/causticdemo/meshsun.obj; 5000.0 * (0.5, 0.5, 0.8); 2
+.assets/scenedata/causticdemo/splash.obj; 0.0 * (0.0, 0.0, 0.0); 43
+.assets/scenedata/causticdemo/splashbackwall.obj; 0.0 * (0.0, 0.0, 0.0); 45
+.assets/scenedata/causticdemo/light1splash.obj; 120.0 * (0.5, 0.5, 0.8); 45
+
+.assets/scenedata/causticdemo/pooloutside2.obj; 0.0 * (0.0, 0.0, 0.0); 1
+.assets/scenedata/causticdemo/poolwater.obj; 0.0 * (0.0, 0.0, 0.0); 43
+.assets/scenedata/sponzaflood.obj; 0.0 * (0.0, 0.0, 0.0); 43
+assets/scenedata/sponzaaboveflood.obj; 0.0 * (0.0, 0.0, 0.0); 46
+
+GLTFs (path; maxTextureDim; emissionScale):
+assets/gltf/main_sponza/NewSponza_Main_glTF_003.gltf; 1024; 0.0

@@ -9,7 +9,7 @@
 
 > **This README is a technical reference.** For the long-form writeups, implementation deep-dives, and the intuitive **[Guide to Advanced GI](https://danielq.org/gi-guide/)**, visit **[danielq.org](https://danielq.org/novum/)**.
 
-Novum is a research-oriented GPU rendering engine built to demonstrate the capabilities of modern global illumination algorithms, both offline and in real time. It supports Vertex Connection and Merging (VCM), Stochastic Progressive Photon Mapping (SPPM), Bidirectional Path Tracing (BDPT), Heterogeneous Volumetric Path Tracing, and Unidirectional Path Tracing with NEE, all running on a fully software BVH. Novum also has a hardware-accelerated real-time **ReSTIR PT (Enhanced)** integrator, running via OptiX, that hits 30–70 fps at 2 megapixels on a laptop RTX 4060.
+Novum is a research-oriented GPU rendering engine built to demonstrate the capabilities of modern global illumination algorithms, both offline and in real time. It supports Vertex Connection and Merging (VCM), Progressive Photon Mapping (PPM), Bidirectional Path Tracing (BDPT), Heterogeneous Volumetric Path Tracing, and Unidirectional Path Tracing with NEE. Novum also has an OptiX branch with a hardware-accelerated real-time **ReSTIR PT (Enhanced)** integrator that hits 30–70 fps at 2 megapixels on a laptop RTX 4060, and a **spectral PPM** integrator that renders dispersion.
 
 <details>
   <summary><b>Table of Contents (Click to Toggle)</b></summary>
@@ -54,8 +54,20 @@ There is a substantial amount of engineering on top of the algorithm itself: a f
 <small><i>New Sponza rendered with Unidirectional PT - loaded from GLTF, shaded with a GLTF-style principled BSDF.</i></small>
 <br><br>
 
-<img src="savedRenders/watercausticfull.gif" alt="animation of water caustic" width="80%"/>
-<small><i>Water caustics rendered with photon mapping.</i></small>
+<img src="savedRenders/watercausticSpectral.gif" alt="animation of water caustic with dispersion" width="80%"/>
+<small><i>Spectral PPM render of a water simulation. Dispersion scale is tuned up to make it prettier.</i></small>
+<br><br>
+
+<img src="savedRenders/spectralDroplets.webp" alt="water droplets with dispersion" width="100%"/>
+<small><i>Spectral PPM render of water droplets. Dispersion scale is tuned up to make it prettier.</i></small>
+<br><br>
+
+<img src="savedRenders/spectralDiamond.webp" alt="a diamond with dispersion in its caustics" width="100%"/>
+<small><i>Spectral PPM render of a diamond. Dispersion scale is tuned up to make it prettier.</i></small>
+<br><br>
+
+<img src="savedRenders/spectralSponzaWater.webp" alt="water splashing in Sponza" width="100%"/>
+<small><i>Spectral PPM render of water splashing in Sponza. Dispersion scale is tuned up to make it prettier.</i></small>
 <br><br>
 
 <img src="savedRenders/smokerender.png" alt="a smoke cloud lit by red and blue lights" width="50%"/>
@@ -92,23 +104,23 @@ There is a substantial amount of engineering on top of the algorithm itself: a f
 | ReSTIR PT (Enhanced) | Lin et al. 2026 | Real time, hardware RT via OptiX + SER (`optixBranch/`) |
 | Vertex Connection and Merging (VCM) | Georgiev et al. 2012 | Offline, software BVH |
 | Bidirectional Path Tracing (BDPT) | Veach & Guibas 1994 | Offline, software BVH |
-| Stochastic Progressive Photon Mapping (SPPM*) | Hachisuka & Jensen 2009 | Offline, software BVH |
+| Progressive Photon Mapping (PPM*) | - | Offline, spectral (hero wavelengths), hardware RT via OptiX (`optixBranch/spectralPPM/`) |
 | Heterogeneous Volumetric Path Tracing | - | nanovdb-backed participating media |
 | Unidirectional PT + NEE | - | Offline, software BVH |
 | Naive Path Tracing | - | Offline, software BVH |
 
-*Technically the "SPPM" integrator in this engine is not truly the SPPM in the 2009 paper. It is a custom version with a different radius reduction scheme. However, SPPM is the most similar thing to what it would actually be called.
+*Novum's PPM is a custom variant. It uses a single scene-wide merge radius, shrunk each iteration on the same schedule as VCM's merge radius, rather than a per-pixel radius. This shares infrastructure with VCM and suits a spatial hash grid rebuilt every iteration.
 
 Also supported: priority-based nested dielectrics, thin-lens depth of field with polygonal bokeh, custom layered BSDFs, and SAH-accelerated BVH scene intersection.
 
-For the theory behind these algorithms - importance sampling, NEE, MIS, and what VCM/BDPT/SPPM are actually doing mathematically - see the **[Novum Guide to Advanced GI](https://danielq.org/gi-guide/)**.
+For the theory behind these algorithms - importance sampling, NEE, MIS, and what VCM/BDPT/PPM are actually doing mathematically - see the **[Novum Guide to Advanced GI](https://danielq.org/gi-guide/)**.
 
 ## Architecture
 
 Novum is split into two engines that share the `include/` headers but are otherwise independent:
 
-- **The main engine** (`src/`, root `CMakeLists.txt`) - a fully software-BVH renderer where the offline integrators (VCM, BDPT, SPPM, Unidirectional, Naive) live. Scene setup is entirely host-side: reading the config, building the BVH, and allocating integrator-specific buffers (photon maps, light path vertices, etc.) all happen on the CPU before a single host-side launch kicks off the render kernels.
-- **The OptiX branch** (`optixBranch/`, its own `CMakeLists.txt`) - a hardware ray tracing engine built on OptiX, home to ReSTIR PT (Enhanced), and a simple unidirectional path tracer for testing against. This is mainly to facilitate real-time rendering, since hardware raytracing is the only way to get competetive frame rates. Importantly, Novum's OptiX branch uses the same shading system as the main engine. Furthermore, it completely circumvents the traditional recursive model of hardware raytracing and instead emulates ray queries instead, that call OptixTraverse without invoking any closest hit shaders. This means that, **no SBT is used to perform shading**. This was a deliberate choice to optimize ReSTIR PT and other heavy-kernel algorithms, since a context switch to a closest hit shader would be very expensive for such high-live-state kernels. Read more about the decisions **[here](https://danielq.org/novum/restir-pt-enhanced/)**.
+- **The main engine** (`src/`, root `CMakeLists.txt`) - a fully software-BVH renderer where the offline integrators (VCM, BDPT, PPM, Unidirectional, Naive) live. Scene setup is entirely host-side: reading the config, building the BVH, and allocating integrator-specific buffers (photon maps, light path vertices, etc.) all happen on the CPU before a single host-side launch kicks off the render kernels.
+- **The OptiX branch** (`optixBranch/`, its own `CMakeLists.txt`) - a hardware ray tracing engine built on OptiX, home to ReSTIR PT (Enhanced), a spectral PPM integrator, and a simple unidirectional path tracer for testing against. This is mainly to facilitate real-time rendering, since hardware raytracing is the only way to get competetive frame rates. Importantly, Novum's OptiX branch uses the same shading system as the main engine. Furthermore, it completely circumvents the traditional recursive model of hardware raytracing and instead emulates ray queries instead, that call OptixTraverse without invoking any closest hit shaders. This means that, **no SBT is used to perform shading**. This was a deliberate choice to optimize ReSTIR PT and other heavy-kernel algorithms, since a context switch to a closest hit shader would be very expensive for such high-live-state kernels. Read more about the decisions **[here](https://danielq.org/novum/restir-pt-enhanced/)**.
 
 Both engines are developed and tested on a laptop RTX 4060 (8 GB VRAM).
 
@@ -116,9 +128,11 @@ Both engines are developed and tested on a laptop RTX 4060 (8 GB VRAM).
 
 ```
 Novum/
-├── src/            # main engine host + device code (integrators, image I/O, rng)
+├── src/            # main engine host + device code (integrators incl. software-BVH PPM, image I/O, rng)
 ├── include/         # shared headers used by both engines
-├── optixBranch/     # real-time OptiX/SER engine (ReSTIR PT Enhanced), own CMakeLists
+├── optixBranch/     # OptiX engine, own CMakeLists
+│   ├── restirPTenhanced_*   # real-time ReSTIR PT (Enhanced) with SER
+│   └── spectralPPM/         # spectral PPM (hero wavelengths, RGB-to-spectrum uplifting)
 ├── thirdparty/      # nanovdb, tinygltf, tinyexr, stb_image
 ├── assets/          # scene data, textures, environment maps, gltf, vdb volumes
 ├── configs/         # .rendertron scene/render config files
@@ -150,12 +164,14 @@ cmake --build build --config Release
 ./build/renderer_optix configs/sponza.rendertron
 ```
 
+To run spectral PPM, set `Integrator: SPECTRALPPM` in the config (see `configs/causticdemo.rendertron`).
+
 Both executables take one or more `.rendertron` config paths (relative to the project root) as arguments - example configs live in `configs/`. Novum is developed entirely from the command line; there's no interactive viewport, and renders are written out to image files.
 
 ## Learn More
 
 - **[danielq.org/novum](https://danielq.org/novum/)** - project landing page, more demo videos and renders
-- **[Guide to Advanced GI](https://danielq.org/gi-guide/)** - intuitive, from-scratch guide to importance sampling, NEE, MIS, BDPT, SPPM, and VCM
+- **[Guide to Advanced GI](https://danielq.org/gi-guide/)** - intuitive, from-scratch guide to importance sampling, NEE, MIS, BDPT, PPM, and VCM
 - **[Novum Documentation](https://danielq.org/novum/docs/)** - additional implementation notes
 - **[Blog](https://danielq.org/posts/)** - general rendering/GPU writing
 

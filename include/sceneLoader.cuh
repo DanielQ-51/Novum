@@ -721,6 +721,14 @@ private:
             return Material::Metal(getV4("eta", f4(1, 1, 1, 1)), getV4("k", f4(1, 1, 1, 1)), getF("roughness", 0.1f));
         if (mc.type == "SMOOTH_DIELECTRIC")
             return Material::SmoothDielectric(getF("ior", 1.5f), getV4("absorption", f4()), getI("priority", 0));
+        if (mc.type == "DISPERSIVE_DIELECTRIC") {
+            // either catalog Sellmeier terms (sellB, sellC in um^2), or ior + abbe (abbe <= 0: no dispersion)
+            float scale = getF("dispersionScale", 1.0f);
+            int pri = getI("priority", 0);
+            if (mc.params.count("sellB"))
+                return Material::DispersiveDielectric(f3(getV4("sellB", f4())), f3(getV4("sellC", f4())), scale, pri);
+            return Material::DispersiveDielectricFromAbbe(getF("ior", 1.5f), getF("abbe", 0.0f), scale, pri);
+        }
         if (mc.type == "THIN_DIELECTRIC")
             return Material::ThinDielectric(getF("ior", 1.5f), getV4("absorption", f4()), getI("priority", 0));
         if (mc.type == "MICROFACET_DIELECTRIC")

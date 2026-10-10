@@ -148,7 +148,19 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
 
         std::cout << "Loading device module from: " << ptxPath << std::endl;
         restirPTX = read_file_to_string(ptxPath);
-        
+
+    } catch (const std::exception& e) {
+        std::cerr << "CRITICAL ERROR: " << e.what() << std::endl;
+        return -1;
+    }
+
+    std::string spectralPPMCode;
+    try {
+        std::string modulePath = std::string(PTX_DIR) + "/spectralPPM_shaders." OPTIX_MODULE_EXT;
+
+        std::cout << "Loading device module from: " << modulePath << std::endl;
+        spectralPPMCode = read_file_to_string(modulePath);
+
     } catch (const std::exception& e) {
         std::cerr << "CRITICAL ERROR: " << e.what() << std::endl;
         return -1;
@@ -211,6 +223,25 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         }
     }
 
+    OptixModule spectralPPMModule = nullptr;
+    optixLogSize = sizeof(optixLog);
+    {
+        OptixResult res = optixModuleCreate(
+            context,
+            &moduleOptions,
+            &pipelineOptions,
+            spectralPPMCode.c_str(),
+            spectralPPMCode.size(),
+            optixLog, &optixLogSize,
+            &spectralPPMModule
+        );
+        if (optixLogSize > 1) std::cerr << "[module spectralPPM log]: " << optixLog << std::endl;
+        if (res != OPTIX_SUCCESS) {
+            std::cerr << "optixModuleCreate(spectralPPM) FAILED: " << optixGetErrorString(res) << std::endl;
+            return -1;
+        }
+    }
+
     OptixProgramGroupOptions pgOptions = {};
     
     OptixProgramGroupDesc raygenUnidirectionalDesc = {};
@@ -253,6 +284,16 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     restirTemporalBwdDesc.raygen.module            = restirModule;
     restirTemporalBwdDesc.raygen.entryFunctionName = "__raygen__restirTemporalBackwardResolve";
 
+    OptixProgramGroupDesc spectralPPMLightDesc = {};
+    spectralPPMLightDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    spectralPPMLightDesc.raygen.module            = spectralPPMModule;
+    spectralPPMLightDesc.raygen.entryFunctionName = "__raygen__spectralPPM_traceLight";
+
+    OptixProgramGroupDesc spectralPPMEyeDesc = {};
+    spectralPPMEyeDesc.kind                     = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    spectralPPMEyeDesc.raygen.module            = spectralPPMModule;
+    spectralPPMEyeDesc.raygen.entryFunctionName = "__raygen__spectralPPM_traceEye";
+
     OptixProgramGroupDesc programGroupDescs[] = {
         raygenUnidirectionalDesc,
         missDesc,
@@ -261,13 +302,15 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         restirSpatialDesc,
         restirTemporalDesc,
         restirTemporalFwdDesc,
-        restirTemporalBwdDesc
+        restirTemporalBwdDesc,
+        spectralPPMLightDesc,
+        spectralPPMEyeDesc
     };
-    OptixProgramGroup programGroups[8];
+    OptixProgramGroup programGroups[10];
 
     optixLogSize = sizeof(optixLog);
     {
-        OptixResult res = optixProgramGroupCreate(context, programGroupDescs, 8, &pgOptions,
+        OptixResult res = optixProgramGroupCreate(context, programGroupDescs, 10, &pgOptions,
                                                   optixLog, &optixLogSize, programGroups);
         if (optixLogSize > 1) std::cerr << "[program groups log]: " << optixLog << std::endl;
         if (res != OPTIX_SUCCESS) {
@@ -284,6 +327,8 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     OptixProgramGroup restirTemporalGroup              = programGroups[5];
     OptixProgramGroup restirTemporalFwdGroup           = programGroups[6];
     OptixProgramGroup restirTemporalBwdGroup           = programGroups[7];
+    OptixProgramGroup spectralPPMLightGroup            = programGroups[8];
+    OptixProgramGroup spectralPPMEyeGroup              = programGroups[9];
 
     OptixPipeline pipeline = nullptr;
     OptixPipelineLinkOptions linkOptions = {};
@@ -295,7 +340,7 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
             context,
             &pipelineOptions,
             &linkOptions,
-            programGroups, 8,
+            programGroups, 10,
             optixLog, &optixLogSize,
             &pipeline
         );
@@ -339,17 +384,19 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
         char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     };
 
-    RaygenRecord rgRecords[6];
+    RaygenRecord rgRecords[8];
     optixSbtRecordPackHeader(programGroups[0], &rgRecords[0]);
     optixSbtRecordPackHeader(programGroups[3], &rgRecords[1]);
     optixSbtRecordPackHeader(programGroups[4], &rgRecords[2]);
     optixSbtRecordPackHeader(programGroups[5], &rgRecords[3]);
     optixSbtRecordPackHeader(programGroups[6], &rgRecords[4]); // temporal forward
     optixSbtRecordPackHeader(programGroups[7], &rgRecords[5]); // temporal backward+resolve
+    optixSbtRecordPackHeader(programGroups[8], &rgRecords[6]); // spectral PPM light paths
+    optixSbtRecordPackHeader(programGroups[9], &rgRecords[7]); // spectral PPM eye paths
 
     CUdeviceptr d_rgRecordArray;
-    cudaMalloc(reinterpret_cast<void**>(&d_rgRecordArray), sizeof(RaygenRecord) * 6);
-    cudaMemcpy(reinterpret_cast<void*>(d_rgRecordArray), rgRecords, sizeof(RaygenRecord) * 6, cudaMemcpyHostToDevice);
+    cudaMalloc(reinterpret_cast<void**>(&d_rgRecordArray), sizeof(RaygenRecord) * 8);
+    cudaMemcpy(reinterpret_cast<void*>(d_rgRecordArray), rgRecords, sizeof(RaygenRecord) * 8, cudaMemcpyHostToDevice);
 
     RaygenRecord hgRecord;
     optixSbtRecordPackHeader(hitgroupProgramGroup, &hgRecord); 
@@ -385,6 +432,8 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     engineState.sbt_restirTemporal    = buildMenu(3);
     engineState.sbt_restirTemporalFwd = buildMenu(4);
     engineState.sbt_restirTemporalBwd = buildMenu(5);
+    engineState.sbt_spectralPPMLight  = buildMenu(6);
+    engineState.sbt_spectralPPMEye    = buildMenu(7);
 
     engineState.context = context;
     engineState.pipeline = pipeline;
@@ -394,9 +443,12 @@ __host__ int initOptixSystem(OptixEngineState& engineState) {
     engineState.raygenRestirTemporalProgramGroup = restirTemporalGroup;
     engineState.raygenRestirTemporalFwdProgramGroup = restirTemporalFwdGroup;
     engineState.raygenRestirTemporalBwdProgramGroup = restirTemporalBwdGroup;
+    engineState.raygenSpectralPPMLightProgramGroup = spectralPPMLightGroup;
+    engineState.raygenSpectralPPMEyeProgramGroup = spectralPPMEyeGroup;
     engineState.hitgroupProgramGroup = hitgroupProgramGroup;
     engineState.module = module;
     engineState.restirModule = restirModule;
+    engineState.spectralPPMModule = spectralPPMModule;
     engineState.d_rgRecord = d_rgRecordArray;
     engineState.d_hgRecord = d_hgRecord;
     engineState.d_msRecord = d_msRecord;
@@ -416,10 +468,13 @@ __host__ int optixEngineCleanup(OptixEngineState& engineState) {
     optixProgramGroupDestroy(engineState.raygenRestirTemporalProgramGroup);
     optixProgramGroupDestroy(engineState.raygenRestirTemporalFwdProgramGroup);
     optixProgramGroupDestroy(engineState.raygenRestirTemporalBwdProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenSpectralPPMLightProgramGroup);
+    optixProgramGroupDestroy(engineState.raygenSpectralPPMEyeProgramGroup);
     optixProgramGroupDestroy(engineState.hitgroupProgramGroup);
     optixProgramGroupDestroy(engineState.missProgramGroup);
     optixModuleDestroy(engineState.module);
     optixModuleDestroy(engineState.restirModule);
+    optixModuleDestroy(engineState.spectralPPMModule);
     optixDeviceContextDestroy(engineState.context);
 
     std::cout << "OptiX engine cleanup complete." << std::endl;
@@ -561,7 +616,7 @@ __host__ OptixTraversableHandle buildOptixIAS(
     return iasHandle;
 }
 
-int initRender(OptixEngineState& engineState, string configPath, int renderNumber)
+int initRender(OptixEngineState& engineState, string configPath, int renderNumber, string animatedObjPath = "")
 {
     RenderConfig config;
     loadConfig(configPath, config);
@@ -631,6 +686,16 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
                            // gpuScene->shadeContext borrows device handles loader.textures owns.
     loader.loadFromConfig(config);
 
+    // temporary: watersim sequence frame
+    if (!animatedObjPath.empty()) {
+        MeshConfig animCfg;
+        animCfg.path = animatedObjPath;
+        animCfg.materialID = 43;
+        animCfg.emissionMultiplier = 0.0f;
+        animCfg.emissionColor = make_float3(0.0f, 0.0f, 0.0f);
+        loader.loadOBJ(animCfg, make_float3(0.0f, -0.0f, 0.0f));
+    }
+
     std::unique_ptr<GPUScene> gpuScene = loader.buildFlattened(envManager.getView(), 0.5f);
 
     if (gpuScene->hostTriangles.empty()) {
@@ -652,11 +717,19 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
 
     positions.reserve(gpuScene->hostPositions.size());
 
-    std::transform(gpuScene->hostPositions.begin(), gpuScene->hostPositions.end(), std::back_inserter(positions),
-        [](const float4& v) {
-            return make_float3(v.x, v.y, v.z);
-        }
-    );
+    float3 sceneMin = f3(1e30f);
+    float3 sceneMax = f3(-1e30f);
+
+    for (const float4& v : gpuScene->hostPositions) {
+        positions.push_back(make_float3(v.x, v.y, v.z));
+
+        sceneMin = make_float3(fminf(sceneMin.x, v.x), fminf(sceneMin.y, v.y), fminf(sceneMin.z, v.z));
+        sceneMax = make_float3(fmaxf(sceneMax.x, v.x), fmaxf(sceneMax.y, v.y), fmaxf(sceneMax.z, v.z));
+    }
+
+    // same as the software BVH path (src/main.cu): half the AABB diagonal
+    float3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
+    float sceneRadius = length(sceneMax - sceneCenter) + 0.01f;
 
     for (Triangle& t : gpuScene->hostTriangles) {
         indices.push_back(make_uint3(t.aInd, t.bInd, t.cInd));
@@ -776,7 +849,7 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     } else if (integratorChoice == OPTIX_RESTIR_PT) {
         launch_restir(engineState, params, sampleCount, config);
     } else if (integratorChoice == SPECTRAL_PPM) {
-
+        launch_spectral_PPM(engineState, params, sampleCount, sceneRadius, sceneCenter, config);
     } else {
         printf("Error: Integrator Unavaible in Optix Branch");
     }
@@ -786,7 +859,8 @@ int initRender(OptixEngineState& engineState, string configPath, int renderNumbe
     // this pipeline, so the NoOverlay variant. Divisor is
     // currentSampleCount + 1, so pass sampleCount - 1 to divide by sampleCount.
     cleanAndFormatImageNoOverlay<<<gridSize, blockSize, 0, stream>>>(
-        out_colors, d_finalOutput, w, h, sampleCount - 1
+        out_colors, d_finalOutput, w, h, sampleCount - 1,
+        integratorChoice == SPECTRAL_PPM // spectral -> sRGB can legitimately go negative (out of gamut)
     );
 
     if (gpuPostProcess) {

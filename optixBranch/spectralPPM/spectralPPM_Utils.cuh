@@ -96,6 +96,10 @@ constexpr int RGB2SPEC_RES = 64;
 
 // rgb in [0,1]. Returns (c0, c1, c2): s(lambda) = S(c0*lambda^2 + c1*lambda + c2), lambda in nm.
 __forceinline__ __device__ __host__ float3 rgbToSigmoidCoeffs(float3 rgb, const float* __restrict__ scale, const float* __restrict__ coeffs) {
+    // The table is only defined on [0,1]^3: a negative component (e.g. an HDR texel slightly below 0) would index
+    // outside it. fmaxf also maps NaN to 0.
+    rgb = make_float3(fminf(fmaxf(rgb.x, 0.0f), 1.0f), fminf(fmaxf(rgb.y, 0.0f), 1.0f), fminf(fmaxf(rgb.z, 0.0f), 1.0f));
+
     if (rgb.x == rgb.y && rgb.y == rgb.z)
         return make_float3(0.0f, 0.0f, (rgb.x - 0.5f) / sqrtf(rgb.x * (1.0f - rgb.x)));
 
@@ -183,6 +187,20 @@ __host__ inline void* allocateSpectralPhotonMap(SpectralPhotonMap& r, uint32_t n
     r.wi = reinterpret_cast<uint32_t*>(ptr); ptr += numPhoton * sizeof(uint32_t);          // 4B
 
     return raw;
+}
+
+// ---------------------------------------------------------------------------
+// Photon hash grid. Cell size = merge radius, grid origin = world origin (the grid is hashed, so negative
+// cells are fine). Used by both computeHashes (binning) and the eye raygen (lookup), so they can't disagree.
+// ---------------------------------------------------------------------------
+
+__forceinline__ __device__ __host__ int3 photonGridCell(float3 p, float cellSize) {
+    return make_int3((int)floorf(p.x / cellSize), (int)floorf(p.y / cellSize), (int)floorf(p.z / cellSize));
+}
+
+__forceinline__ __device__ __host__ uint32_t photonGridHash(int3 cell, uint32_t hashTableSize) {
+    uint32_t n = (73856093u * (uint32_t)cell.x) ^ (19349663u * (uint32_t)cell.y) ^ (83492791u * (uint32_t)cell.z);
+    return n % hashTableSize;
 }
 
 
